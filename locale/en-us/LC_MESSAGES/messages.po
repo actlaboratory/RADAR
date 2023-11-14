@@ -1,0 +1,517 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the test package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: test\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2022-09-18 15:45+0900\n"
+"PO-Revision-Date: 2022-09-18 15:47+0900\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: en_US\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 3.0.1\n"
+
+#: AppBase.py:49
+msgid ""
+"ログ機能の初期化に失敗しました。下記のファイルへのアクセスが可能であることを"
+"確認してください。"
+msgstr ""
+"Failed to initialize logger. Make sure you have permission to access to the "
+"following file:"
+
+#: AppBase.py:58
+msgid "音声エンジンエラー"
+msgstr "Speech Synthesizer Error"
+
+#: AppBase.py:58
+msgid ""
+"音声読み上げ機能の初期化に失敗したため、読み上げ機能を使用できません。出力先"
+"の変更をお試しください。"
+msgstr ""
+"Failed to initialize speech function. You cannot use speech. Please try to "
+"change speech output."
+
+#: keymapHandlerBase.py:696 keymapHandlerBase.py:726
+#, python-format
+msgid "%s は存在しないキーです。"
+msgstr "%s does not exist."
+
+#: keymapHandlerBase.py:767
+#, python-format
+msgid "%s は使用できないキーです。"
+msgstr "%s is unusable key."
+
+#: keymapHandlerBase.py:776
+msgid "修飾キーのみのパターンは設定できません。"
+msgstr "Keystroke which consists of only modifier keys cannot be added."
+
+#: keymapHandlerBase.py:778
+msgid "このキーは修飾キーと合わせて指定する必要があります。"
+msgstr "This key must be added with some modifier keys."
+
+#: keymapHandlerBase.py:783
+msgid "修飾キーでないキーを複数指定することはできません。"
+msgstr "This key combination is not supported."
+
+#: keymapHandlerBase.py:786 keymapHandlerBase.py:794
+msgid "このキーは、SHIFTキー以外の修飾キーと合わせて指定する必要があります。"
+msgstr "This key cannot be added with Shift key."
+
+#: keymapHandlerBase.py:789
+msgid "修飾キーのみの組み合わせは指定できません。"
+msgstr "Keystroke which consists of only modifier keys cannot be added."
+
+#: keymapHandlerBase.py:798
+msgid "この組み合わせは別の用途で予約されているため、利用できません。"
+msgstr "This keystroke is already reserved."
+
+#: menuItemsDic.py:12
+msgid "テストダイアログを閲覧"
+msgstr ""
+
+#: menuItemsDic.py:13
+msgid "終了(&X)"
+msgstr "E&xit"
+
+#: menuItemsDic.py:15 views\main.py:70
+msgid "オプション(&O)"
+msgstr "&Options"
+
+#: menuItemsDic.py:16
+msgid "ショートカットキーの設定(&K)"
+msgstr "Shortcut &Key Settings"
+
+#: menuItemsDic.py:18
+msgid "最新バージョンを確認(&U)"
+msgstr "Check For &Updates"
+
+#: menuItemsDic.py:19
+msgid "バージョン情報(&V)"
+msgstr "&Version Info"
+
+#: update.py:50 update.py:59 update.py:73 update.py:79 update.py:90
+#: update.py:98 update.py:103 update.py:108 update.py:160
+#: views\updateDialog.py:39
+msgid "アップデート"
+msgstr "update"
+
+#: update.py:50
+msgid "このバージョンではアップデートを使用できません。"
+msgstr "You cannot use update with this version."
+
+#: update.py:59
+msgid ""
+"アップデータが利用できません。お手数ですが、再度ソフトウェアをダウンロードし"
+"てください。"
+msgstr "Updater is not available. Please download this software again."
+
+#: update.py:73
+msgid "サーバーへの通信がタイムアウトしました。"
+msgstr "Connection timed out."
+
+#: update.py:79
+msgid "サーバーへの接続に失敗しました。インターネット接続などをご確認ください"
+msgstr "Connection failed. Please check your internet connection."
+
+#: update.py:85
+msgid "サーバーとの通信中に不明なエラーが発生しました。"
+msgstr "Unknown error has occurred while connecting."
+
+#: update.py:90
+msgid "サーバーとの通信に失敗しました。"
+msgstr "Connection failed."
+
+#: update.py:98
+msgid "現在のバージョンが最新です。アップデートの必要はありません。"
+msgstr "This is the latest version."
+
+#: update.py:103
+msgid "リクエストパラメーターが不正です。開発者まで連絡してください"
+msgstr ""
+"Request parameter is invalid. Please contact the developer for further "
+"assistance."
+
+#: update.py:108
+msgid "アップデーターが登録されていません。開発者に連絡してください。"
+msgstr "Updater is not registered. Please contact the developer."
+
+#: update.py:160
+msgid ""
+"ダウンロードが完了しました。\n"
+"ソフトウェア終了時に、自動でアップデートされます。"
+msgstr ""
+"Download has successfully finished.\n"
+"Update will be started when closing the application."
+
+#: views\base.py:68
+msgid "現在メニューは操作できません"
+msgstr "You cannot use the menu at the moment."
+
+#: views\base.py:116
+msgid ""
+"で設定されたショートカットキーが正しくありません。キーの重複、存在しないキー"
+"名の指定、使用できないキーパターンの指定などが考えられます。以下のキーの設定"
+"内容をご確認ください。\n"
+"\n"
+msgstr ""
+"keyboard shortcut is invalid. Please check for conflicting / unusable key "
+"combinations and key names.\n"
+
+#: views\base.py:119 views\fontManager.py:25 views\fontManager.py:50
+#: views\globalKeyConfig.py:61 views\KeyValueSettingDialogBase.py:297
+#: views\KeyValueSettingDialogBase.py:348 views\updateDialog.py:66
+msgid "エラー"
+msgstr "error"
+
+#: views\fontManager.py:25
+msgid ""
+"設定されているフォント情報が不正です。デフォルトのフォントを適用します。"
+msgstr "Font configuration is invalid. Default settings will be applied."
+
+#: views\fontManager.py:50
+msgid "原因不明のエラーにより、フォントの変更に失敗しました。"
+msgstr "Font configuration has failed."
+
+#: views\globalKeyConfig.py:20 views\globalKeyConfig.py:74
+msgid "名前"
+msgstr "name"
+
+#: views\globalKeyConfig.py:21
+msgid "ショートカット"
+msgstr "shortcut"
+
+#: views\globalKeyConfig.py:22 views\globalKeyConfig.py:74
+msgid "識別子"
+msgstr "identifier"
+
+#: views\globalKeyConfig.py:31 views\main.py:90
+msgid "ショートカットキーの設定"
+msgstr "Shortcut Key Configuration"
+
+#: views\globalKeyConfig.py:54 views\globalKeyConfig.py:71
+#: views\globalKeyConfig.py:102 views\globalKeyConfig.py:107
+#: views\globalKeyConfig.py:120 views\globalKeyConfig.py:128
+#: views\globalKeyConfig.py:138 views\globalKeyConfig.py:143
+#: views\keyConfig.py:57 views\KeyValueSettingDialogBase.py:333
+#: views\main.py:122 views\main.py:136
+msgid "なし"
+msgstr "None"
+
+#: views\globalKeyConfig.py:61
+#, python-format
+msgid ""
+"以下の項目において、重複するキー %(key)s が設定されています。\n"
+"\n"
+"%(command)s"
+msgstr ""
+"%(key)s is configured in following items.\\n\n"
+"\n"
+"%(command)s"
+
+#: views\globalKeyConfig.py:74
+msgid "ショートカット1"
+msgstr "shortcut 1"
+
+#: views\globalKeyConfig.py:74
+msgid "ショートカット2"
+msgstr "shortcut 2"
+
+#: views\globalKeyConfig.py:74
+msgid "ショートカット3"
+msgstr "shortcut 3"
+
+#: views\globalKeyConfig.py:74
+msgid "ショートカット4"
+msgstr "shortcut 4"
+
+#: views\globalKeyConfig.py:74
+msgid "ショートカット5"
+msgstr "shortcut 5"
+
+#: views\globalKeyConfig.py:75 views\settingsDialog.py:57
+msgid "設定"
+msgstr "settings"
+
+#: views\globalKeyConfig.py:80
+msgid "登録内容の入力"
+msgstr "register set contents"
+
+#: views\globalKeyConfig.py:122
+msgid "このショートカットは変更できません。"
+msgstr "This shortcut cannot be modified."
+
+#: views\globalKeyConfig.py:127 views\globalKeyConfig.py:130
+msgid "設定完了"
+msgstr "Setup has been completed"
+
+#: views\globalKeyConfig.py:127
+msgid "解除しました。"
+msgstr "unregistered."
+
+#: views\globalKeyConfig.py:130
+#, python-format
+msgid "%s に設定しました。"
+msgstr "Registered as %s."
+
+#: views\keyConfig.py:31
+msgid "キー設定"
+msgstr "Key Configuration"
+
+#: views\keyConfig.py:39
+msgid ""
+"設定するには、使用したいキーの組み合わせを押します。\n"
+"設定を解除するには、Escキーを押します。"
+msgstr ""
+"Press preferred key combination to register.\n"
+"Press Esc to remove configuration."
+
+#: views\keyConfig.py:45
+msgid "設定解除"
+msgstr "remove registered configuration"
+
+#: views\KeyValueSettingDialogBase.py:54
+msgid "現在の登録内容"
+msgstr "Current Settings"
+
+#: views\KeyValueSettingDialogBase.py:75
+msgid "追加(&A)"
+msgstr "&Add "
+
+#: views\KeyValueSettingDialogBase.py:76
+msgid "変更(&M)"
+msgstr "&Modify"
+
+#: views\KeyValueSettingDialogBase.py:78
+msgid "削除(&D)"
+msgstr "&Delete"
+
+#: views\KeyValueSettingDialogBase.py:83 views\KeyValueSettingDialogBase.py:274
+#: views\SimpleInputDialog.py:39
+msgid "ＯＫ"
+msgstr "OK"
+
+#: views\KeyValueSettingDialogBase.py:84 views\KeyValueSettingDialogBase.py:275
+#: views\settingsDialog.py:92 views\SimpleInputDialog.py:40
+#: views\updateDialog.py:45
+msgid "キャンセル"
+msgstr "cancel"
+
+#: views\KeyValueSettingDialogBase.py:125
+#: views\KeyValueSettingDialogBase.py:155
+#, python-format
+msgid "この%sは既に登録されています。登録を上書きしますか？"
+msgstr "This %s is already registered. Do you wish to overwrite?"
+
+#: views\KeyValueSettingDialogBase.py:125
+#: views\KeyValueSettingDialogBase.py:155
+msgid "上書き確認"
+msgstr "Overwriting Confirmation"
+
+#: views\KeyValueSettingDialogBase.py:297
+#, python-format
+msgid "%sを空白や半角の=を含む値に設定することはできません。"
+msgstr "%s cannot include space and equals sign."
+
+#: views\KeyValueSettingDialogBase.py:337
+#, python-format
+msgid "%(v1)sと%(v2)sに同じショートカットキー%(key)sが設定されています。\n"
+msgstr "%(v1)s and %(v2)s have same shortcut key %(key)s.\n"
+
+#: views\KeyValueSettingDialogBase.py:340
+#, python-format
+msgid ""
+"%(v1)s、%(v2)sなど計%(count)d箇所に同じショートカットキー%(key)sが設定されて"
+"います。\n"
+msgstr "%(key)s is registered at %(count)i items, %(v1)s, %(v2)s and more.\n"
+
+#: views\KeyValueSettingDialogBase.py:344
+#, python-format
+msgid ""
+"設定されたショートカット%sが認識できません。お手数ですが、このエラーメッセー"
+"ジを作者へご連絡ください。\n"
+msgstr ""
+"Configured shortcut %s cannot be recognized. Please contact the developer "
+"for further assistance.\n"
+
+#: views\KeyValueSettingDialogBase.py:346
+#, python-format
+msgid ""
+"%(command)sに設定されたショートカットキー%(key)sは、別の場所で利用されていま"
+"す。\n"
+msgstr ""
+"The key combination %(key)s, configured as %(command)s, is reserved.\\n\n"
+
+#: views\main.py:69
+msgid "ファイル(&F))"
+msgstr "&File"
+
+#: views\main.py:71
+msgid "ヘルプ(&H)"
+msgstr "&Help"
+
+#: views\sample.py:16
+msgid "サンプル"
+msgstr ""
+
+#: views\sample.py:24
+msgid "OK"
+msgstr ""
+
+#: views\settingsDialog.py:25
+msgid "音声なし"
+msgstr "no speech"
+
+#: views\settingsDialog.py:26
+msgid "自動選択"
+msgstr "auto selection"
+
+#: views\settingsDialog.py:28
+msgid "クリップボード出力"
+msgstr "send to clipboard"
+
+#: views\settingsDialog.py:42
+msgid "標準"
+msgstr "normal"
+
+#: views\settingsDialog.py:43
+msgid "ダーク"
+msgstr "Dark"
+
+#: views\settingsDialog.py:46
+msgid "画面幅で折り返し"
+msgstr "Wrap by screen width"
+
+#: views\settingsDialog.py:47
+msgid "折り返さない"
+msgstr "Don't wrap"
+
+#: views\settingsDialog.py:68
+msgid "カテゴリ選択"
+msgstr "category"
+
+#: views\settingsDialog.py:71
+msgid "一般"
+msgstr "general"
+
+#: views\settingsDialog.py:72
+msgid "ログ記録レベル(&L)"
+msgstr "&Logging Level"
+
+#: views\settingsDialog.py:73
+msgid "出力先(&O)"
+msgstr "&Output"
+
+#: views\settingsDialog.py:76
+msgid "表示/言語"
+msgstr "Display/Language"
+
+#: views\settingsDialog.py:77
+msgid "言語(&L)"
+msgstr "&Language"
+
+#: views\settingsDialog.py:78
+msgid "画面表示モード(&D)"
+msgstr "&Display mode"
+
+#: views\settingsDialog.py:79
+msgid "テキストの折り返し(&W)"
+msgstr "Text &Wrap "
+
+#: views\settingsDialog.py:82
+msgid "ネットワーク"
+msgstr "network"
+
+#: views\settingsDialog.py:83
+msgid "起動時に更新を確認(&U)"
+msgstr "Automatically Check for &Updates on startup"
+
+#: views\settingsDialog.py:84
+msgid "プロキシサーバーの情報を手動で設定する(&M)"
+msgstr "&Manually configure proxy information"
+
+#: views\settingsDialog.py:85
+msgid "サーバーURL"
+msgstr "server URL"
+
+#: views\settingsDialog.py:87
+msgid "ポート番号"
+msgstr "port number"
+
+#: views\updateDialog.py:23
+#, python-format
+msgid "アップデート - %s"
+msgstr "update - %s"
+
+#: views\updateDialog.py:32
+#, python-format
+msgid "version %s にアップデートできます。"
+msgstr "Version %s is now available."
+
+#: views\updateDialog.py:33
+msgid "進行状況"
+msgstr "progress"
+
+#: views\updateDialog.py:35
+#, python-format
+msgid "version %s アップデート情報"
+msgstr "version %s update information"
+
+#: views\updateDialog.py:41
+msgid "緊急のお知らせがあります。"
+msgstr "There is an important information."
+
+#: views\updateDialog.py:44
+msgid "お知らせページへ"
+msgstr "Go to the information page"
+
+#: views\updateDialog.py:59
+msgid "アップデートをダウンロード中..."
+msgstr "Downloading update..."
+
+#: views\updateDialog.py:66
+msgid ""
+"updater.exeが見つかりませんでした。誤って削除したかなどをご確認ください。"
+msgstr "Updater.exe is not found."
+
+#: views\versionDialog.py:21
+msgid "バージョン情報"
+msgstr "version information"
+
+#: views\versionDialog.py:30
+msgid "ソフトウェアバージョン"
+msgstr "software version"
+
+#: views\versionDialog.py:31
+msgid "アップデータバージョン"
+msgstr "updater version"
+
+#: views\versionDialog.py:33
+msgid "ライセンス"
+msgstr "license"
+
+#: views\versionDialog.py:34
+msgid "開発元"
+msgstr "developers"
+
+#: views\versionDialog.py:35
+msgid "ソフトウェア詳細情報"
+msgstr "software details"
+
+#: views\versionDialog.py:37
+msgid ""
+"ライセンス/著作権情報については、同梱の license.txt を参照してください。"
+msgstr "See the included license.txt for licensing / copyright information."
+
+#: views\versionDialog.py:49
+msgid "閉じる"
+msgstr "close"
+
+#: views\web.py:28
+msgid "googleアカウント認証"
+msgstr ""
