@@ -4,6 +4,7 @@
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
 
 import wx
+import xml.etree.ElementTree as ET
 
 import constants
 import globalVars
@@ -11,6 +12,7 @@ import update
 import menuItemsStore
 
 from .base import *
+from urllib import request
 from simpleDialog import *
 
 from views import globalKeyConfig
@@ -33,6 +35,29 @@ class MainView(BaseView):
 			self.app.config.getint(self.identifier, "positionY", 50, 0)
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
+		self.exit_button()
+		self.AreaTreeCtrl()
+		self.area()
+
+	def AreaTreeCtrl(self):
+		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
+
+	def area(self):
+		root = self.tree.AddRoot(_("エリア"))
+		url = "https://radiko.jp/v3/station/region/full.xml"
+		r = request.Request(url)
+		with request.urlopen(r) as res:
+			xml_text = res.read().decode()
+			getroot = ET.fromstring(xml_text)
+			for child in getroot:
+				areaList = child.attrib["region_name"]
+				self.tree.AppendItem(root, areaList)
+		self.tree.SetFocus()
+		self.tree.Expand(root)
+		self.tree.SelectItem(root, select=True)
+
+	def exit_button(self):
+		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
 
 
 class Menu(BaseMenu):
