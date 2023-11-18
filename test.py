@@ -81,8 +81,8 @@ ret = get_partial_key(res)
 token = ret[1]
 partialkey = ret[0]
 auth2( partialkey, token )
-url = f'http://f-radiko.smartstream.ne.jp/{argv[1]}/_definst_/simul-stream.stream/playlist.m3u8'
+url = f'http://f-radiko.smartstream.ne.jp/{sys.argv[1]}/_definst_/simul-stream.stream/playlist.m3u8'
 m3u8 = gen_temp_chunk_m3u8_url( url ,token)
 
-os.system( f"ffplay -nodisp -loglevel quiet -headers 'X-Radiko-Authtoken:{token}' -i '{m3u8}'")
+subprocess.run(["ffplay", "-nodisp", "-loglevel", "quiet", "-headers", f"X-Radiko-Authtoken:{token}", "-i", m3u8], shell=True)
 #print( f"curl -v  -H 'X-Radiko-Authtoken:{data['token']}' '{data['url']}'   " )
