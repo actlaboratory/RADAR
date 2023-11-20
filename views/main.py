@@ -4,7 +4,9 @@
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
 
 import wx
+from views import play
 import xml.etree.ElementTree as ET
+import subprocess
 
 import constants
 import globalVars
@@ -35,26 +37,52 @@ class MainView(BaseView):
 			self.app.config.getint(self.identifier, "positionY", 50, 0)
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
+		self.area()
 		self.exit_button()
 		self.AreaTreeCtrl()
-		self.area()
+		self.getradio()
+		self.player()
+
 
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
 
-	def area(self):
-		root = self.tree.AddRoot(_("エリア"))
-		url = "https://radiko.jp/v3/station/region/full.xml"
-		r = request.Request(url)
-		with request.urlopen(r) as res:
-			xml_text = res.read().decode()
-			getroot = ET.fromstring(xml_text)
-			for child in getroot:
-				areaList = child.attrib["region_name"]
-				self.tree.AppendItem(root, areaList)
+	def getradio(self):
+		"""ステーションidを取得後、ツリービューに描画"""
+		#ツリーのルート項目の作成
+		root = self.tree.AddRoot(_("放送局一覧"))
+
+		url = "https://radiko.jp/v3/station/region/full.xml" #放送局リストurl
+		#xmlから情報取得
+		req = request.Request(url) 
+		with request.urlopen(req) as response:
+			xml_data = response.read().decode() #デフォルトではbytesオブジェクトなので文字列へのデコードが必要
+			#print(xml_data)
+			parsed = ET.fromstring(xml_data)
+			for child in parsed:
+				print(child)
+				for i in child:
+					print(i[16].text)
 		self.tree.SetFocus()
 		self.tree.Expand(root)
 		self.tree.SelectItem(root, select=True)
+
+	def area(self):
+		self.play = play.Play()
+		res = self.play.auth1()
+		ret = self.play.get_partial_key(res)
+		self.token = ret[1]
+		self.partialkey = ret[0]
+		self.play.auth2(self.partialkey, self.token )
+		self.result = self.play.area
+		self.log.info(self.result)
+
+	def player(self):
+		if len(sys.argv) > 1:
+			url = f'http://f-radiko.smartstream.ne.jp/{sys.argv[1]}/_definst_/simul-stream.stream/playlist.m3u8'
+			m3u8 = self.play.gen_temp_chunk_m3u8_url( url ,self.token)
+			subprocess.run(["ffplay", "-nodisp", "-loglevel", "quiet", "-headers", f"X-Radiko-Authtoken:{self.token}", "-i", m3u8], shell=True)
+		#print( f"curl -v  -H 'X-Radiko-Authtoken:{data['token']}' '{data['url']}'   " )
 
 	def exit_button(self):
 		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
