@@ -5,6 +5,7 @@ import os
 import sys
 import simpleDialog
 import traceback
+import winsound
 
 #64bitのPythonでは起動させない
 if sys.maxsize > (2 ** 32):
@@ -17,14 +18,21 @@ else: os.chdir(os.path.abspath(os.path.dirname(__file__)))
 
 def exchandler(type, exc, tb):
 	msg=traceback.format_exception(type, exc, tb)
-	print("".join(msg))
+	if not hasattr(sys, "frozen"):
+		print("".join(msg))
+		winsound.Beep(1000, 1200)
+		try:
+			globalVars.app.say(str(msg[-1]))
+		except:
+			pass
+	else:
+		simpleDialog.winDialog("error", "An error has occurred. Contact to the developer for further assistance. Detail:" + "\n".join(msg[-2:]))
 	try:
 		f=open("errorLog.txt", "a")
 		f.writelines(msg)
 		f.close()
 	except:
 		pass
-	simpleDialog.winDialog("error", "An error has occurred. Contact to the developer for further assistance. Detail:" + "\n".join(msg[-2:]))
 	sys.exit(1)
 
 sys.excepthook=exchandler
