@@ -49,6 +49,8 @@ class MainView(BaseView):
 
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
+		self.log.info("currentAreaId:"+self.result[:4])
+		#broadcast_dic = {}
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
 
@@ -60,9 +62,13 @@ class MainView(BaseView):
 			#print(xml_data)
 			parsed = ET.fromstring(xml_data)
 			for child in parsed:
-				print(child)
 				for i in child:
-					print(i[16].text)
+					#エリアidをキー、ステーションidを値に設定
+					broadcast_dic = {i[16].text:i[1].text}
+					#ユーザーが実行しているエリアで放送されている番組を辞書から探してツリーに描画
+					if self.result[:4] in broadcast_dic:
+						self.tree.AppendItem(root, broadcast_dic[self.result[:4]])
+
 		self.tree.SetFocus()
 		self.tree.Expand(root)
 		self.tree.SelectItem(root, select=True)
@@ -78,11 +84,12 @@ class MainView(BaseView):
 		self.log.info(self.result)
 
 	def player(self):
+		"""再生用関数"""
 		if len(sys.argv) > 1:
 			url = f'http://f-radiko.smartstream.ne.jp/{sys.argv[1]}/_definst_/simul-stream.stream/playlist.m3u8'
 			m3u8 = self.play.gen_temp_chunk_m3u8_url( url ,self.token)
 			subprocess.run(["ffplay", "-nodisp", "-loglevel", "quiet", "-headers", f"X-Radiko-Authtoken:{self.token}", "-i", m3u8], shell=True)
-		#print( f"curl -v  -H 'X-Radiko-Authtoken:{data['token']}' '{data['url']}'   " )
+
 
 	def exit_button(self):
 		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
