@@ -4,7 +4,7 @@
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
 
 import wx
-from views import play
+from views import token
 import xml.etree.ElementTree as ET
 import subprocess
 
@@ -21,6 +21,8 @@ from views import globalKeyConfig
 from views import sample
 from views import settingsDialog
 from views import versionDialog
+from soundPlayer import player
+from soundPlayer.constants import *
 
 
 class MainView(BaseView):
@@ -37,19 +39,22 @@ class MainView(BaseView):
 			self.app.config.getint(self.identifier, "positionY", 50, 0)
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
+		self._player = player.player()
 		self.area()
+		self.playbutton()
 		self.exit_button()
 		self.AreaTreeCtrl()
 		self.getradio()
-		self.player()
 
 
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
 
+	def playbutton(self):
+		self.playButton = self.creator.button(_("再生"), self.events.onRadioActivated)
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
-		self.log.info("currentAreaId:"+self.result[:4])
+		self.log.info("currentAreaId:"+self.result)
 		#broadcast_dic = {}
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
@@ -63,32 +68,35 @@ class MainView(BaseView):
 			parsed = ET.fromstring(xml_data)
 			for child in parsed:
 				for i in child:
-					#エリアidをキー、ステーションidを値に設定
+					#エリアidをキー、nameを値に設定
 					broadcast_dic = {i[16].text:i[1].text}
-					#ユーザーが実行しているエリアで放送されている番組を辞書から探してツリーに描画
+					#エリアidをキー、stationIdを値に設定
+					broadcast_id = {i[16].text:i[0].text}
+					if self.result[:4] in broadcast_id:
+						id = broadcast_id[self.result[:4]]
 					if self.result[:4] in broadcast_dic:
-						self.tree.AppendItem(root, broadcast_dic[self.result[:4]])
+						self.tree.AppendItem(root, broadcast_dic[self.result[:4]], data=id)
 
+		self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
 		self.tree.SetFocus()
 		self.tree.Expand(root)
 		self.tree.SelectItem(root, select=True)
 
 	def area(self):
-		self.play = play.Play()
-		res = self.play.auth1()
-		ret = self.play.get_partial_key(res)
+		self.gettoken = token.Token()
+		res = self.gettoken.auth1()
+		ret = self.gettoken.get_partial_key(res)
 		self.token = ret[1]
 		self.partialkey = ret[0]
-		self.play.auth2(self.partialkey, self.token )
-		self.result = self.play.area
-		self.log.info(self.result)
+		self.gettoken.auth2(self.partialkey, self.token )
+		self.result = self.gettoken.area
 
-	def player(self):
+	def player(self, stationid):
 		"""再生用関数"""
-		if len(sys.argv) > 1:
-			url = f'http://f-radiko.smartstream.ne.jp/{sys.argv[1]}/_definst_/simul-stream.stream/playlist.m3u8'
-			m3u8 = self.play.gen_temp_chunk_m3u8_url( url ,self.token)
-			subprocess.run(["ffplay", "-nodisp", "-loglevel", "quiet", "-headers", f"X-Radiko-Authtoken:{self.token}", "-i", m3u8], shell=True)
+		url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
+		m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
+		subprocess.run(["ffplay", "-nodisp", "-loglevel", "quiet", "-headers", f"X-Radiko-Authtoken:{self.token}", "-i", m3u8], shell=True)
+		self._player.play(m3u8)
 
 
 	def exit_button(self):
@@ -199,3 +207,10 @@ class Events(BaseEvents):
 				newMap[identifier.upper()][menuData[name]] = ""
 		newMap.write()
 		return True
+
+	def onRadioActivated(self, event):
+		id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
+		if id == None:
+			return
+		self.parent.player(id)
+		print(id)

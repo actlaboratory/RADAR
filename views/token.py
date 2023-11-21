@@ -10,7 +10,7 @@ import logging
 from sys import argv
 
 
-class Play:
+class Token:
     auth_token = ""
     auth_key = "bcd151073c03b352e1ef2fd66c32209da9ca0afa" ## 迴ｾ迥ｶ縺ｯ蝗ｺ螳・key_lenght = 0
     key_offset = 0
