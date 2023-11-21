@@ -42,6 +42,7 @@ class MainView(BaseView):
 		self._player = player.player()
 		self.area()
 		self.playbutton()
+		self.stopbutton()
 		self.exit_button()
 		self.AreaTreeCtrl()
 		self.getradio()
@@ -52,6 +53,10 @@ class MainView(BaseView):
 
 	def playbutton(self):
 		self.playButton = self.creator.button(_("再生"), self.events.onRadioActivated)
+
+	def stopbutton(self):
+		self.stopButton = self.creator.button(_("停止"), self.events.onStopButton)
+
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
 		self.log.info("currentAreaId:"+self.result)
@@ -95,8 +100,9 @@ class MainView(BaseView):
 		"""再生用関数"""
 		url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
 		m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
-		subprocess.run(["ffplay", "-nodisp", "-loglevel", "quiet", "-headers", f"X-Radiko-Authtoken:{self.token}", "-i", m3u8], shell=True)
-		self._player.play(m3u8)
+		#subprocess.run(["ffplay", "-nodisp", "-loglevel", "quiet", "-headers", f"X-Radiko-Authtoken:{self.token}", "-i", m3u8], shell=True)
+		self._player.setSource(m3u8)
+		self._player.play()
 
 
 	def exit_button(self):
@@ -214,3 +220,7 @@ class Events(BaseEvents):
 			return
 		self.parent.player(id)
 		print(id)
+
+	def onStopButton(self, event):
+		self.parent._player.stop()
+		print(self.parent._player.getStatus())
