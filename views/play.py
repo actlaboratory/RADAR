@@ -35,7 +35,7 @@ class Play:
         res = urllib.request.urlopen(req)
         auth_response["body"] = res.read()
         auth_response["headers"] = res.info()
-        print(auth_response)
+        #print(auth_response)
         return auth_response
 
     def get_partial_key(self, auth_response):
