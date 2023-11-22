@@ -43,6 +43,7 @@ class MainView(BaseView):
 		self.area()
 		self.playbutton()
 		self.stopbutton()
+		self.volume()
 		self.exit_button()
 		self.AreaTreeCtrl()
 		self.getradio()
@@ -56,6 +57,9 @@ class MainView(BaseView):
 
 	def stopbutton(self):
 		self.stopButton = self.creator.button(_("停止"), self.events.onStopButton)
+
+	def volume(self):
+		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
 
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
@@ -227,3 +231,7 @@ class Events(BaseEvents):
 	def onStopButton(self, event):
 		self.parent._player.stop()
 		print(self.parent._player.getStatus())
+
+	def onVolumeChanged(self, event):
+		value = self.parent.volume.GetValue()
+		self.parent._player.setVolume(value)
