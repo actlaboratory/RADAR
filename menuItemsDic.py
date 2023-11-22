@@ -10,12 +10,13 @@ def getValueString(ref_id):
 
 dic={
 	"FILE_EXAMPLE":_("テストダイアログを閲覧")+"...",
-	"FILE_EXIT": _("終了(&X)"),
+	"FILE_EXIT": _("終了"),
+
+	"FUNCTION_PLAY_PLAY":_("再生"),
+	"FUNCTION_PLAY_POSE":_("停止"),
 
 	"OPTION_OPTION":_("オプション(&O)")+"...",
 	"OPTION_KEY_CONFIG":_("ショートカットキーの設定(&K)")+"...",
-	"OPTION_PLAY_PLAY":_("再生"),
-	"OPTION_PLAY_STOP":_("停止"),
 
 	"HELP_UPDATE":_("最新バージョンを確認(&U)")+"...",
 	"HELP_VERSIONINFO":_("バージョン情報(&V)")+"...",

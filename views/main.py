@@ -122,6 +122,7 @@ class Menu(BaseMenu):
 
 		# メニューの大項目を作る
 		self.hFileMenu = wx.Menu()
+		self.hFunctionMenu = wx.Menu()
 		self.hOptionMenu = wx.Menu()
 		self.hHelpMenu = wx.Menu()
 
@@ -131,12 +132,16 @@ class Menu(BaseMenu):
 			"FILE_EXIT": self.parent.events.exit,
 		})
 
+		#機能メニュー
+		self.RegisterMenuCommand(self.hFunctionMenu, {
+			"FUNCTION_PLAY_PLAY":self.parent.events.onRadioActivated,
+			"FUNCTION_PLAY_POSE":self.parent.events.onStopButton,
+		})
+
 		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {
 			"OPTION_OPTION": self.parent.events.option,
 			"OPTION_KEY_CONFIG": self.parent.events.keyConfig,
-			"OPTION_PLAY_PLAY":self.parent.events.onRadioActivated,
-			"OPTION_PLAY_STOP":self.parent.events.onStopButton,
 		})
 
 		# ヘルプメニュー
@@ -147,6 +152,7 @@ class Menu(BaseMenu):
 
 		# メニューバーの生成
 		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F))"))
+		self.hMenuBar.Append(self.hFunctionMenu, _("機能(&F)"))
 		self.hMenuBar.Append(self.hOptionMenu, _("オプション(&O)"))
 		self.hMenuBar.Append(self.hHelpMenu, _("ヘルプ(&H)"))
 		target.SetMenuBar(self.hMenuBar)
