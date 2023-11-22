@@ -14,6 +14,8 @@ dic={
 
 	"OPTION_OPTION":_("オプション(&O)")+"...",
 	"OPTION_KEY_CONFIG":_("ショートカットキーの設定(&K)")+"...",
+	"OPTION_PLAY_PLAY":_("再生"),
+	"OPTION_PLAY_STOP":_("停止"),
 
 	"HELP_UPDATE":_("最新バージョンを確認(&U)")+"...",
 	"HELP_VERSIONINFO":_("バージョン情報(&V)")+"...",

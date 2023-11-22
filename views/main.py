@@ -131,6 +131,8 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hOptionMenu, {
 			"OPTION_OPTION": self.parent.events.option,
 			"OPTION_KEY_CONFIG": self.parent.events.keyConfig,
+			"OPTION_PLAY_PLAY":self.parent.events.onRadioActivated,
+			"OPTION_PLAY_STOP":self.parent.events.onStopButton,
 		})
 
 		# ヘルプメニュー
