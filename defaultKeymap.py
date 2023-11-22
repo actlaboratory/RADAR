@@ -12,6 +12,8 @@ defaultKeymap["mainView"]={
 	"OPTION_KEY_CONFIG":"",
 	"FUNCTION_PLAY_PLAY":"ctrl+p/space",
 	"FUNCTION_PLAY_POSE":"ctrl+shift+p",
+	"FUNCTION_volume_UP":"ctrl+shift+uparrow",
+	"FUNCTION_VOLUME_DOWN":"ctrl+shift+downarrow",
 
 	"HELP_UPDATE":"",
 	"HELP_VERSIONINFO":"",

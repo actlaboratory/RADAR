@@ -48,7 +48,6 @@ class MainView(BaseView):
 		self.AreaTreeCtrl()
 		self.getradio()
 
-
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
 
@@ -136,6 +135,8 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hFunctionMenu, {
 			"FUNCTION_PLAY_PLAY":self.parent.events.onRadioActivated,
 			"FUNCTION_PLAY_POSE":self.parent.events.onStopButton,
+			"FUNCTION_VOLUME_UP":self.parent.events.volume_up,
+			"FUNCTION_VOLUME_DOWN":self.parent.events.volume_down,
 		})
 
 		# オプションメニュー
@@ -239,5 +240,18 @@ class Events(BaseEvents):
 		print(self.parent._player.getStatus())
 
 	def onVolumeChanged(self, event):
-		value = self.parent.volume.GetValue()
-		self.parent._player.setVolume(value)
+		self.value = self.parent.volume.GetValue()
+		self.parent._player.setVolume(self.value)
+
+
+	def volume_up(self, event):
+		self.onVolumeChanged(event)
+		if self.value == self.parent.volume.GetMax():
+			return
+		self.parent.volume.SetValue(self.value+10)
+
+	def volume_down(self, event):
+		self.onVolumeChanged(event)
+		if self.value == self.parent.volume.GetMin():
+			return
+		self.parent.volume.SetValue(self.value-10)
