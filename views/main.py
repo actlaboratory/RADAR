@@ -153,6 +153,7 @@ class Events(BaseEvents):
 		r = d.Show()
 
 	def exit(self, event):
+		self.parent._player.exit()
 		self.parent.hFrame.Close()
 
 	def option(self, event):
