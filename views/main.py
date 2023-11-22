@@ -229,15 +229,13 @@ class Events(BaseEvents):
 		return True
 
 	def onRadioActivated(self, event):
-		id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
+		id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
 		if id == None:
 			return
 		self.parent.player(id)
-		print(id)
 
 	def onStopButton(self, event):
 		self.parent._player.stop()
-		print(self.parent._player.getStatus())
 
 	def onVolumeChanged(self, event):
 		self.value = self.parent.volume.GetValue()
