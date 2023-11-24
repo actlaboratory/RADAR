@@ -4,8 +4,10 @@
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
 
 import wx
+import re
 from views import token
 import xml.etree.ElementTree as ET
+from itertools import islice
 import subprocess
 
 import constants
@@ -62,8 +64,58 @@ class MainView(BaseView):
 
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
-		self.log.info("currentAreaId:"+self.result)
-		#broadcast_dic = {}
+		#都道府県をキー、地方を値とする辞書を作成
+		region = {
+			"hokkaido":"HOKKAIDO TOHOKU",
+			"aomori":"HOKKAIDO TOHOKU",
+			"iwate":"HOKKAIDO TOHOKU",
+			"akita":"HOKKAIDO TOHOKU",
+			"miyagi":"HOKKAIDO TOHOKU",
+			"fukusima":"HOKKAIDO TOHOKU",
+			"yamagata":"HOKKAIDO TOHOKU",
+			"ibaraki":"KANTO",
+			"gunma":"KANTO",
+			"totigi":"KANTO",
+			"saitama":"KANTO",
+			"chiba":"KANTO",
+			"toukyou":"KANTO",
+			"kanagawa":"KANTO",
+			"shizuoka":"chubu",
+			"aichi":"chubu",
+			"gifu":"chubu",
+			"nagano":"chubu",
+			"yamanashi":"chubu",
+			"ishikawa":"HOKURIKU KOUSHINETSU",
+			"niigata":"HOKURIKU KOUSHINETSU",
+			"toyama":"HOKURIKU KOUSHINETSU",
+			"fukui":"HOKURIKU KOUSHINETSU",
+			"mie":"KINKI",
+			"shiga":"KINKI",
+			"kyoto":"KINKI,",
+			"osaka":"KINKI",
+			"hyogo":"KINKI",
+			"wakayama":"KINKI",
+			"nara":"KINKI",
+			"tottori":"CHUGOKU SHIKOKU",
+			"shimane":"CHUGOKU SHIKOKU",
+			"hiroshima":"CHUGOKU SHIKOKU",
+			"okayama":"CHUGOKU SHIKOKU",
+			"yamaguchi":"CHUGOKU SHIKOKU",
+			"kagawa":"CHUGOKU SHIKOKU",
+			"kochi":"CHUGOKU SHIKOKU",
+			"ehime":"CHUGOKU SHIKOKU",
+			"tokushima":"CHUGOKU SHIKOKU",
+			"fukuoka":"KYUSHU",
+			"oita":"KYUSHU",
+			"saga":"KYUSHU",
+			"nagasaki":"KYUSHU",
+			"miyazaki":"KYUSHU",
+			"kagoshima":"KYUSHU",
+			"okinawa":"KYUSHU",
+			"all":"ZENKOKU"
+		}
+		if str(self.result) in region:
+			print(region[str(self.result)])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
 
@@ -76,16 +128,10 @@ class MainView(BaseView):
 			parsed = ET.fromstring(xml_data)
 			for child in parsed:
 				for i in child:
-					#エリアidをキー、nameを値に設定
-					broadcast_dic = {i[16].text:i[1].text}
-					#エリアidをキー、stationIdを値に設定
-					broadcast_id = {i[16].text:i[0].text}
-					if self.result[:4] in broadcast_id:
-						id = broadcast_id[self.result[:4]]
-					if self.result[:4] in broadcast_dic:
-						self.tree.AppendItem(root, broadcast_dic[self.result[:4]], data=id)
+					radioname = {i[1].text:i[0].text}
+					#print(radioname)
 
-		self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
+		#self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
 		self.tree.SetFocus()
 		self.tree.Expand(root)
 		self.tree.SelectItem(root, select=True)
@@ -97,7 +143,12 @@ class MainView(BaseView):
 		self.token = ret[1]
 		self.partialkey = ret[0]
 		self.gettoken.auth2(self.partialkey, self.token )
-		self.result = self.gettoken.area
+		area = self.gettoken.area
+		pattern = re.compile(r'kanagawa', re.IGNORECASE)
+		match = pattern.search(area)
+		if match:
+			self.result = match.group()
+			self.log.info("currentAreaId:"+str(self.result))
 
 	def player(self, stationid):
 		"""再生用関数"""
