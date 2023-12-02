@@ -4,6 +4,7 @@
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
 
 import wx
+from lxml import html
 import re
 from views import token
 import xml.etree.ElementTree as ET
@@ -115,7 +116,7 @@ class MainView(BaseView):
 			"all":"ZENKOKU"
 		}
 		if str(self.result) in region:
-			print(region[self.result])
+			self.log.info(region[self.result])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
 
@@ -124,13 +125,9 @@ class MainView(BaseView):
 		req = request.Request(url) 
 		with request.urlopen(req) as response:
 			xml_data = response.read().decode() #デフォルトではbytesオブジェクトなので文字列へのデコードが必要
-			#print(xml_data)
 			parsed = ET.fromstring(xml_data)
 			for child in parsed:
-				for i in child:
-					radioname = {i[1].text:i[0].text}
-					#print(radioname)
-
+				print(child.text)
 		#self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
 		self.tree.SetFocus()
 		self.tree.Expand(root)
@@ -144,8 +141,11 @@ class MainView(BaseView):
 		self.partialkey = ret[0]
 		self.gettoken.auth2(self.partialkey, self.token )
 		area = self.gettoken.area
-		replace_previous = area[9:]
-		self.result = replace_previous.replace(area[14:], "") #国名の文字列置換で削除
+
+		before_replace = re.findall("\w*", area[4:])
+		self.result = before_replace[2]
+
+
 		self.log.info("currentAreaId:"+self.result)
 
 	def player(self, stationid):
