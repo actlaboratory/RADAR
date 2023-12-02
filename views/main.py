@@ -115,7 +115,7 @@ class MainView(BaseView):
 			"all":"ZENKOKU"
 		}
 		if str(self.result) in region:
-			print(region[str(self.result)])
+			print(region[self.result])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
 
@@ -144,11 +144,9 @@ class MainView(BaseView):
 		self.partialkey = ret[0]
 		self.gettoken.auth2(self.partialkey, self.token )
 		area = self.gettoken.area
-		pattern = re.compile(r'kanagawa', re.IGNORECASE)
-		match = pattern.search(area)
-		if match:
-			self.result = match.group()
-			self.log.info("currentAreaId:"+str(self.result))
+		replace_previous = area[9:]
+		self.result = replace_previous.replace(area[14:], "") #国名の文字列置換で削除
+		self.log.info("currentAreaId:"+self.result)
 
 	def player(self, stationid):
 		"""再生用関数"""
