@@ -156,7 +156,7 @@ class MainView(BaseView):
 		before_replace = re.findall("\w*", area[4:])
 		self.result = before_replace[2]
 		if not self.result:
-			self.log.error("エリアを取得できません。\nインターネットの接続状況をご確認ください")
+			self.log.error("エリアを取得できません。インターネットの接続状況をご確認ください。")
 			return
 
 	def player(self, stationid):
