@@ -113,12 +113,19 @@ class MainView(BaseView):
 			"miyazaki":"KYUSHU",
 			"kagoshima":"KYUSHU",
 			"okinawa":"KYUSHU",
-			"all":"ZENKOKU"
+			"zenkoku":"ZENKOKU"
 		}
-		if str(self.result) in region:
-			self.log.info(region[self.result])
+		if self.result in region:
+			self.log.info("currentAreaId:"+region[self.result])
+			print("currentAreaId:", region[self.result])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
+		if not self.result:
+			errorDialog(_("エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください"))
+			self.tree.SetFocus()
+			self.tree.Expand(root)
+			self.tree.SelectItem(root, select=True)
+			return
 
 		url = "https://radiko.jp/v3/station/region/full.xml" #放送局リストurl
 		#xmlから情報取得
@@ -126,9 +133,13 @@ class MainView(BaseView):
 		with request.urlopen(req) as response:
 			xml_data = response.read().decode() #デフォルトではbytesオブジェクトなので文字列へのデコードが必要
 			parsed = ET.fromstring(xml_data)
-			for child in parsed:
-				print(child.text)
-		#self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
+			for r in parsed:
+				for station in r:
+					stream = {r.attrib["ascii_name"]:{}}
+					stream[r.attrib["ascii_name"]] = {"radioname":station.find("name").text,"radioid":station.find("id").text}
+					if region[self.result] in stream:
+						self.tree.AppendItem(root, stream[region[self.result]]["radioname"], data=stream[region[self.result]]["radioid"])
+		self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
 		self.tree.SetFocus()
 		self.tree.Expand(root)
 		self.tree.SelectItem(root, select=True)
@@ -144,9 +155,9 @@ class MainView(BaseView):
 
 		before_replace = re.findall("\w*", area[4:])
 		self.result = before_replace[2]
-
-
-		self.log.info("currentAreaId:"+self.result)
+		if not self.result:
+			self.log.error("エリアを取得できません。\nインターネットの接続状況をご確認ください")
+			return
 
 	def player(self, stationid):
 		"""再生用関数"""
@@ -282,6 +293,7 @@ class Events(BaseEvents):
 		if id == None:
 			return
 		self.parent.player(id)
+		self.log.info("now playing:", id)
 
 	def onStopButton(self, event):
 		self.parent._player.stop()
