@@ -6,6 +6,9 @@ import sys
 import simpleDialog
 import traceback
 import winsound
+from soundPlayer import player
+from soundPlayer.constants import *
+
 
 #64bitのPythonでは起動させない
 if sys.maxsize > (2 ** 32):
@@ -34,6 +37,8 @@ def exchandler(type, exc, tb):
 	except:
 		pass
 	sys.exit(1)
+	player.player().exit()
+
 
 sys.excepthook=exchandler
 

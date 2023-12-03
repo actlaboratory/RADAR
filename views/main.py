@@ -4,8 +4,11 @@
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
 
 import wx
+from lxml import html
+import re
 from views import token
 import xml.etree.ElementTree as ET
+from itertools import islice
 import subprocess
 
 import constants
@@ -62,29 +65,80 @@ class MainView(BaseView):
 
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
-		self.log.info("currentAreaId:"+self.result)
-		#broadcast_dic = {}
+		#都道府県をキー、地方を値とする辞書を作成
+		region = {
+			"hokkaido":"HOKKAIDO TOHOKU",
+			"aomori":"HOKKAIDO TOHOKU",
+			"iwate":"HOKKAIDO TOHOKU",
+			"akita":"HOKKAIDO TOHOKU",
+			"miyagi":"HOKKAIDO TOHOKU",
+			"fukusima":"HOKKAIDO TOHOKU",
+			"yamagata":"HOKKAIDO TOHOKU",
+			"ibaraki":"KANTO",
+			"gunma":"KANTO",
+			"totigi":"KANTO",
+			"saitama":"KANTO",
+			"chiba":"KANTO",
+			"toukyou":"KANTO",
+			"kanagawa":"KANTO",
+			"shizuoka":"chubu",
+			"aichi":"chubu",
+			"gifu":"chubu",
+			"nagano":"chubu",
+			"yamanashi":"chubu",
+			"ishikawa":"HOKURIKU KOUSHINETSU",
+			"niigata":"HOKURIKU KOUSHINETSU",
+			"toyama":"HOKURIKU KOUSHINETSU",
+			"fukui":"HOKURIKU KOUSHINETSU",
+			"mie":"KINKI",
+			"shiga":"KINKI",
+			"kyoto":"KINKI,",
+			"osaka":"KINKI",
+			"hyogo":"KINKI",
+			"wakayama":"KINKI",
+			"nara":"KINKI",
+			"tottori":"CHUGOKU SHIKOKU",
+			"shimane":"CHUGOKU SHIKOKU",
+			"hiroshima":"CHUGOKU SHIKOKU",
+			"okayama":"CHUGOKU SHIKOKU",
+			"yamaguchi":"CHUGOKU SHIKOKU",
+			"kagawa":"CHUGOKU SHIKOKU",
+			"kochi":"CHUGOKU SHIKOKU",
+			"ehime":"CHUGOKU SHIKOKU",
+			"tokushima":"CHUGOKU SHIKOKU",
+			"fukuoka":"KYUSHU",
+			"oita":"KYUSHU",
+			"saga":"KYUSHU",
+			"nagasaki":"KYUSHU",
+			"miyazaki":"KYUSHU",
+			"kagoshima":"KYUSHU",
+			"okinawa":"KYUSHU",
+			"zenkoku":"ZENKOKU"
+		}
+		if self.result in region:
+			self.log.info("currentAreaId:"+region[self.result])
+			print("currentAreaId:", region[self.result])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
+		if not self.result:
+			errorDialog(_("エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください"))
+			self.tree.SetFocus()
+			self.tree.Expand(root)
+			self.tree.SelectItem(root, select=True)
+			return
 
 		url = "https://radiko.jp/v3/station/region/full.xml" #放送局リストurl
 		#xmlから情報取得
 		req = request.Request(url) 
 		with request.urlopen(req) as response:
 			xml_data = response.read().decode() #デフォルトではbytesオブジェクトなので文字列へのデコードが必要
-			#print(xml_data)
 			parsed = ET.fromstring(xml_data)
-			for child in parsed:
-				for i in child:
-					#エリアidをキー、nameを値に設定
-					broadcast_dic = {i[16].text:i[1].text}
-					#エリアidをキー、stationIdを値に設定
-					broadcast_id = {i[16].text:i[0].text}
-					if self.result[:4] in broadcast_id:
-						id = broadcast_id[self.result[:4]]
-					if self.result[:4] in broadcast_dic:
-						self.tree.AppendItem(root, broadcast_dic[self.result[:4]], data=id)
-
+			for r in parsed:
+				for station in r:
+					stream = {r.attrib["ascii_name"]:{}}
+					stream[r.attrib["ascii_name"]] = {"radioname":station.find("name").text,"radioid":station.find("id").text}
+					if region[self.result] in stream:
+						self.tree.AppendItem(root, stream[region[self.result]]["radioname"], data=stream[region[self.result]]["radioid"])
 		self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
 		self.tree.SetFocus()
 		self.tree.Expand(root)
@@ -97,7 +151,13 @@ class MainView(BaseView):
 		self.token = ret[1]
 		self.partialkey = ret[0]
 		self.gettoken.auth2(self.partialkey, self.token )
-		self.result = self.gettoken.area
+		area = self.gettoken.area
+
+		before_replace = re.findall("\w*", area[4:])
+		self.result = before_replace[2]
+		if not self.result:
+			self.log.error("エリアを取得できません。インターネットの接続状況をご確認ください。")
+			return
 
 	def player(self, stationid):
 		"""再生用関数"""
@@ -233,6 +293,7 @@ class Events(BaseEvents):
 		if id == None:
 			return
 		self.parent.player(id)
+		self.log.info("now playing:", id)
 
 	def onStopButton(self, event):
 		self.parent._player.stop()
