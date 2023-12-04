@@ -137,6 +137,8 @@ class MainView(BaseView):
 				for station in r:
 					stream = {r.attrib["ascii_name"]:{}}
 					stream[r.attrib["ascii_name"]] = {"radioname":station.find("name").text,"radioid":station.find("id").text}
+					if "ZENKOKU" in stream:
+						self.tree.AppendItem(root, stream["ZENKOKU"]["radioname"], data=stream["ZENKOKU"]["radioid"])
 					if region[self.result] in stream:
 						self.tree.AppendItem(root, stream[region[self.result]]["radioname"], data=stream[region[self.result]]["radioid"])
 		self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
@@ -151,13 +153,13 @@ class MainView(BaseView):
 		self.token = ret[1]
 		self.partialkey = ret[0]
 		self.gettoken.auth2(self.partialkey, self.token )
-		area = self.gettoken.area
+		area = self.gettoken.area #エイラを取得
+		before = re.findall("\s", area)
+		replace = area.replace(before[0], ",") #スペースを文字列置換で,に置き換える
+		values = replace.split(",") #戻り地をリストにする
+		print("region:", values[2])
+		self.result = values[2]
 
-		before_replace = re.findall("\w*", area[4:])
-		self.result = before_replace[2]
-		if not self.result:
-			self.log.error("エリアを取得できません。インターネットの接続状況をご確認ください。")
-			return
 
 	def player(self, stationid):
 		"""再生用関数"""
