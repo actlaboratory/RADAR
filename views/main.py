@@ -116,8 +116,8 @@ class MainView(BaseView):
 			"zenkoku":"ZENKOKU"
 		}
 		if self.result in region:
-			self.log.info("currentAreaId:"+region[self.result])
-			print("currentAreaId:", region[self.result])
+			self.log.info("region:"+region[self.result])
+			print("region:", region[self.result])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
 		if not self.result:
@@ -157,7 +157,7 @@ class MainView(BaseView):
 		before = re.findall("\s", area)
 		replace = area.replace(before[0], ",") #スペースを文字列置換で,に置き換える
 		values = replace.split(",") #戻り地をリストにする
-		print("region:", values[2])
+		print("prefectures:", values[2])
 		self.result = values[2]
 
 
