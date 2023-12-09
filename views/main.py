@@ -7,6 +7,7 @@ import wx
 from lxml import html
 import re
 from views import token
+from views import programmanager
 import xml.etree.ElementTree as ET
 from itertools import islice
 import subprocess
@@ -43,6 +44,7 @@ class MainView(BaseView):
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
 		self._player = player.player()
+		self.progs = programmanager.ProgramManager()
 		self.area()
 		self.playbutton()
 		self.stopbutton()
@@ -117,7 +119,6 @@ class MainView(BaseView):
 		}
 		if self.result in region:
 			self.log.info("region:"+region[self.result])
-			print("region:", region[self.result])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
 		if not self.result:
@@ -157,15 +158,12 @@ class MainView(BaseView):
 		before = re.findall("\s", area)
 		replace = area.replace(before[0], ",") #スペースを文字列置換で,に置き換える
 		values = replace.split(",") #戻り地をリストにする
-		print("prefectures:", values[2])
 		self.result = values[2]
-
 
 	def player(self, stationid):
 		"""再生用関数"""
 		url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
 		m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
-		#subprocess.run(["ffplay", "-nodisp", "-loglevel", "quiet", "-headers", f"X-Radiko-Authtoken:{self.token}", "-i", m3u8], shell=True)
 		self._player.setSource(m3u8)
 		self._player.play()
 
@@ -295,7 +293,7 @@ class Events(BaseEvents):
 		if id == None:
 			return
 		self.parent.player(id)
-		self.log.info("now playing:", id)
+		self.log.info("now playing:"+id)
 
 	def onStopButton(self, event):
 		self.parent._player.stop()
