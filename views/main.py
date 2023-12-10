@@ -45,16 +45,26 @@ class MainView(BaseView):
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
 		self._player = player.player()
 		self.progs = programmanager.ProgramManager()
+		self.volume()
 		self.area()
 		self.playbutton()
 		self.stopbutton()
-		self.volume()
+
 		self.exit_button()
 		self.AreaTreeCtrl()
 		self.getradio()
 
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
+
+	def infoListView(self):
+		self.lst,programinfo = self.creator.virtualListCtrl(_("番組表一覧"))
+		self.lst.AppendColumn(_("タイトル"))
+		self.lst.AppendColumn(_("出演者"))
+		self.backbtn()
+
+	def backbtn(self):
+		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)
 
 	def playbutton(self):
 		self.playButton = self.creator.button(_("再生"), self.events.onRadioActivated)
@@ -64,6 +74,7 @@ class MainView(BaseView):
 
 	def volume(self):
 		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
+		return
 
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
@@ -143,6 +154,7 @@ class MainView(BaseView):
 					if region[self.result] in stream:
 						self.tree.AppendItem(root, stream[region[self.result]]["radioname"], data=stream[region[self.result]]["radioid"])
 		self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
+		self.tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.events.onRadioSelected)
 		self.tree.SetFocus()
 		self.tree.Expand(root)
 		self.tree.SelectItem(root, select=True)
@@ -182,6 +194,7 @@ class Menu(BaseMenu):
 		# メニューの大項目を作る
 		self.hFileMenu = wx.Menu()
 		self.hFunctionMenu = wx.Menu()
+		self.hProgramListMenu = wx.Menu()
 		self.hOptionMenu = wx.Menu()
 		self.hHelpMenu = wx.Menu()
 
@@ -199,6 +212,12 @@ class Menu(BaseMenu):
 			"FUNCTION_VOLUME_DOWN":self.parent.events.volume_down,
 		})
 
+		#番組メニュー
+		self.RegisterMenuCommand(self.hProgramListMenu, {
+			"SHOW_NOW_PROGRAMLIST":self.parent.events.nowProgramInfo,
+			"SHOW_TOMORROW_PROGRAMLIST":self.parent.events.tomorrowProgramInfo,
+		})
+
 		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {
 			"OPTION_OPTION": self.parent.events.option,
@@ -214,6 +233,7 @@ class Menu(BaseMenu):
 		# メニューバーの生成
 		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F))"))
 		self.hMenuBar.Append(self.hFunctionMenu, _("機能(&F)"))
+		self.hMenuBar.Append(self.hProgramListMenu, _("番組(&p)"))
 		self.hMenuBar.Append(self.hOptionMenu, _("オプション(&O)"))
 		self.hMenuBar.Append(self.hHelpMenu, _("ヘルプ(&H)"))
 		target.SetMenuBar(self.hMenuBar)
@@ -294,6 +314,15 @@ class Events(BaseEvents):
 			return
 		self.parent.player(id)
 		self.log.info("now playing:"+id)
+	def onRadioSelected(self, event):
+		selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
+		if selected == None:
+			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"),False)
+			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_TOMORROW_PROGRAMLIST"),False)
+			return
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"), True)
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_TOMORROW_PROGRAMLIST"),True)
+		self.parent.progs.getprogramlist(selected)
 
 	def onStopButton(self, event):
 		self.parent._player.stop()
@@ -314,3 +343,26 @@ class Events(BaseEvents):
 		if self.value == self.parent.volume.GetMin():
 			return
 		self.parent.volume.SetValue(self.value-10)
+
+	def nowProgramInfo(self, event):
+		title = self.parent.progs.gettitle() #番組のタイトル
+		pfm = self.parent.progs.getpfm() #出演者の名前
+		self.parent.Clear()
+		self.parent.infoListView()
+
+		for t,p in zip(title,pfm):
+			self.parent.lst.Append((t,p), )
+		self.parent.lst.SetFocus()
+
+	def tomorrowProgramInfo(self, event):
+		print("tomorrow")
+
+	def onbackbutton(self, event):
+		self.parent.Clear()
+		self.parent.volume()
+		self.parent.area()
+		self.parent.playbutton()
+		self.parent.stopbutton()
+		self.parent.exit_button()
+		self.parent.AreaTreeCtrl()
+		self.parent.getradio()

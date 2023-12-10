@@ -16,6 +16,10 @@ dic={
 	"FUNCTION_PLAY_POSE":_("停止"),
 	"FUNCTION_VOLUME_UP":_("音量を上げる"),
 	"FUNCTION_VOLUME_DOWN":_("音量を下げる"),
+
+	"SHOW_NOW_PROGRAMLIST":_("選択された放送局の今日の番組表を表示"),
+	"SHOW_TOMORROW_PROGRAMLIST":_("選択された放送局の明日の番組表を表示"),
+
 	"OPTION_OPTION":_("オプション(&O)")+"...",
 	"OPTION_KEY_CONFIG":_("ショートカットキーの設定(&K)")+"...",
 

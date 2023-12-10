@@ -1,17 +1,36 @@
-#programmanager
-from urllib import request
+
 import xml.etree.ElementTree as ET
+from logging import getLogger
+import requests
+import constants
+import datetime
 
 class ProgramManager:
     def __init__(self):
-            print("created")
-    def getdata(self, id):
-        url = f"http://radiko.jp/v3/program/station/today/{id}.xml"
-        req = request.Request(url) 
-        with request.urlopen(req) as response:
-            xml_data = response.read().decode() #デフォルトではbytesオブジェクトなので文字列へのデコードが必要
-            parsed = ET.fromstring(xml_data)
-            for station in parsed:
-                for i in station:
-                    for progs in i[1]:
-                        return progs.find("title")
+        self.log=getLogger("%s.%s" % (constants.LOG_PREFIX,"ProgramManager"))
+        self.log.info("initialized!")
+
+    def getprogramlist(self, id):
+        """番組表を取得"""
+        dt = datetime.datetime.now().date()
+        dtstring = str(dt).replace("-", "")
+        url = f"http://radiko.jp/v3/program/station/date/{dtstring}/{id}.xml"
+        self.log.info(url)
+        # XMLデータを取得
+        response = requests.get(url)
+        xml_data = response.content
+        # XMLを解析
+        self.root = ET.fromstring(xml_data)
+        #debug
+        date = self.root.find(".//date")
+        self.log.debug(date.text)
+
+    def gettitle(self):
+        title_elements = self.root.findall(".//title")
+        titles = [title.text for title in title_elements]
+        return titles
+
+    def getpfm(self):
+        pfm_elements = self.root.findall(".//pfm")
+        names = [pfm.text for pfm in pfm_elements]
+        return names
