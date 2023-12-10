@@ -45,8 +45,8 @@ class MainView(BaseView):
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
 		self._player = player.player()
 		self.progs = programmanager.ProgramManager()
-		self.volume()
 		self.area()
+		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
 		self.playbutton()
 		self.stopbutton()
 
@@ -72,8 +72,6 @@ class MainView(BaseView):
 	def stopbutton(self):
 		self.stopButton = self.creator.button(_("停止"), self.events.onStopButton)
 
-	def volume(self):
-		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
 		return
 
 	def getradio(self):
@@ -359,8 +357,8 @@ class Events(BaseEvents):
 
 	def onbackbutton(self, event):
 		self.parent.Clear()
-		self.parent.volume()
 		self.parent.area()
+		self.parent.volume, tmp = self.parent.creator.slider(_("音量(&V)"), event=self.onVolumeChanged, defaultValue=self.parent.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
 		self.parent.playbutton()
 		self.parent.stopbutton()
 		self.parent.exit_button()
