@@ -310,7 +310,11 @@ class Events(BaseEvents):
 		id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
 		if id == None:
 			return
-		self.parent.player(id)
+		try:
+			self.parent.player(id)
+		except request.HTTPError as error:
+			errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
+			return
 		self.log.info("now playing:"+id)
 	def onRadioSelected(self, event):
 		selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
