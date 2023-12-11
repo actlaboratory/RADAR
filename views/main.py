@@ -320,7 +320,7 @@ class Events(BaseEvents):
 			return
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"), True)
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_TOMORROW_PROGRAMLIST"),True)
-		self.parent.progs.getprogramlist(selected)
+		self.parent.progs.getTodayProgramList(selected)
 
 	def onStopButton(self, event):
 		self.parent._player.stop()

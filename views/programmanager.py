@@ -10,12 +10,13 @@ class ProgramManager:
         self.log=getLogger("%s.%s" % (constants.LOG_PREFIX,"ProgramManager"))
         self.log.info("initialized!")
 
-    def getprogramlist(self, id):
-        """番組表を取得"""
+    def getprogramlist(self):
+        return "http://radiko.jp/v3"
+
+    def getTodayProgramList(self, id):
         dt = datetime.datetime.now().date()
         dtstring = str(dt).replace("-", "")
-        url = f"http://radiko.jp/v3/program/station/date/{dtstring}/{id}.xml"
-        self.log.info(url)
+        url = f"{self.getprogramlist()}/program/station/date/{dtstring}/{id}.xml"
         # XMLデータを取得
         response = requests.get(url)
         xml_data = response.content
@@ -24,6 +25,7 @@ class ProgramManager:
         #debug
         date = self.root.find(".//date")
         self.log.debug(date.text)
+
 
     def gettitle(self):
         title_elements = self.root.findall(".//title")
