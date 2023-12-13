@@ -316,6 +316,10 @@ class Events(BaseEvents):
 			errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
 			return
 		self.log.info("now playing:"+id)
+
+		#現在放送中の番組を表示
+		self.parent.progs.getNowProgram(id)
+		
 	def onRadioSelected(self, event):
 		selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
 		if selected == None:

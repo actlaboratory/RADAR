@@ -9,6 +9,7 @@ class ProgramManager:
     def __init__(self):
         self.log=getLogger("%s.%s" % (constants.LOG_PREFIX,"ProgramManager"))
         self.log.info("initialized!")
+        self.jpCode()
 
     def getprogramlist(self):
         return "http://radiko.jp/v3"
@@ -36,3 +37,25 @@ class ProgramManager:
         pfm_elements = self.root.findall(".//pfm")
         names = [pfm.text for pfm in pfm_elements]
         return names
+
+    def jpCode(self):
+        """stationIdをキー、都道府県コードを値に持つ辞書を作成"""
+        self.values = {}
+        url = f"{self.getprogramlist()}/station/region/full.xml"
+        response = requests.get(url)
+        xml_data = response.content
+        root = ET.fromstring(xml_data)
+        id_elements = root.findall(".//id")
+        area_id_elements = root.findall(".//area_id")
+        station_id = [id.text for id in id_elements]
+        area_id = [areaid.text for areaid in area_id_elements]
+        for station,area in zip(station_id, area_id):
+            self.values[station] = area
+
+    def getNowProgram(self, id):
+        """現在再生中の番組を取得"""
+        self.log.info("現在放送中の番組を取得しています...")
+        #引数で渡されたidから辞書を引き該当する都道府県コードを表示
+        if id in self.values:
+            print(self.values[id])
+            return self.values[id]
