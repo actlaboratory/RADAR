@@ -54,8 +54,25 @@ class ProgramManager:
 
     def getNowProgram(self, id):
         """現在再生中の番組を取得"""
-        self.log.info("現在放送中の番組を取得しています...")
-        #引数で渡されたidから辞書を引き該当する都道府県コードを表示
+        lists = [] #stationidを格納
+        dic = {"title":{}}
         if id in self.values:
-            print(self.values[id])
-            return self.values[id]
+            jp_number = self.values[id]
+        #リクエスト
+        url = f"{self.getprogramlist()}/program/now/{jp_number}.xml"
+        response = requests.get(url)
+        xml_data = response.content
+        root = ET.fromstring(xml_data)
+        for r in root:
+            for s in r:
+                lists.append(s.attrib["id"])
+
+        title_elements = root.findall(".//title") #番組の名前
+        pfm_elements = root.findall(".//pfm") #出演者の名前
+
+        #リスト化
+        programtitle = [title.text for title in title_elements]
+        PFM = [pfm.text for pfm in pfm_elements]
+        for station,title in zip(lists,programtitle):
+            dic["title"][station] = title
+        print(dic)
