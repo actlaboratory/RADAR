@@ -1,5 +1,6 @@
 
 import xml.etree.ElementTree as ET
+import lxml.etree
 from logging import getLogger
 import requests
 import constants
@@ -54,25 +55,16 @@ class ProgramManager:
 
     def getNowProgram(self, id):
         """現在再生中の番組を取得"""
-        lists = [] #stationidを格納
-        dic = {"title":{}}
+        dic = {} #stationidをキー、番組名を値とする辞書
         if id in self.values:
             jp_number = self.values[id]
-        #リクエスト
+        #引数の都道府県コードをつけてリクエスト
         url = f"{self.getprogramlist()}/program/now/{jp_number}.xml"
         response = requests.get(url)
         xml_data = response.content
-        root = ET.fromstring(xml_data)
-        for r in root:
-            for s in r:
-                lists.append(s.attrib["id"])
-
-        title_elements = root.findall(".//title") #番組の名前
-        pfm_elements = root.findall(".//pfm") #出演者の名前
-
-        #リスト化
-        programtitle = [title.text for title in title_elements]
-        PFM = [pfm.text for pfm in pfm_elements]
-        for station,title in zip(lists,programtitle):
-            dic["title"][station] = title
+        root = lxml.etree.parse(url)
+        results = root.xpath(".//station")
+        progs = root.xpath(".//progs")
+        for result,title in zip(results,progs):
+            dic[result.get("id")] = title.xpath(".//title")[0].text
         print(dic)
