@@ -54,8 +54,8 @@ class ProgramManager:
             self.values[station] = area
 
     def getNowProgram(self, id):
-        """現在再生中の番組を取得"""
-        dic = {} #stationidをキー、番組名を値とする辞書
+        """現在再生中の番組タイトルを返す"""
+        title_dic = {} #stationidをキー、番組名を値とする辞書
         if id in self.values:
             jp_number = self.values[id]
         #引数の都道府県コードをつけてリクエスト
@@ -65,6 +65,20 @@ class ProgramManager:
         root = lxml.etree.parse(url)
         results = root.xpath(".//station")
         progs = root.xpath(".//progs")
+        self.progs = progs
+        self.results = results
         for result,title in zip(results,progs):
-            dic[result.get("id")] = title.xpath(".//title")[0].text
-        print(dic)
+            title_dic[result.get("id")] = title.xpath(".//title")[0].text
+
+        #stationidに該当する番組名を返す
+        if id in title_dic:
+            return title_dic[id]
+
+    def getnowProgramPfm(self, id):
+        """現在放送中の番組の出演者を返す"""
+        pfm_dic = {}
+        for result,pfm in zip(self.results,self.progs):
+            pfm_dic[result.get("id")] = pfm.xpath(".//pfm")[0].text
+
+        if id in pfm_dic:
+            return pfm_dic[id]
