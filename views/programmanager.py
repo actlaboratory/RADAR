@@ -82,3 +82,13 @@ class ProgramManager:
 
         if id in pfm_dic:
             return pfm_dic[id]
+
+    def getProgramDsc(self, id):
+        dsc_dic = {}
+        """番組の説明を取得して返す"""
+
+        for result,dsc in zip(self.results,self.progs):
+            dsc_dic[result.get("id")] = dsc.xpath(".//desc")[0].text
+
+        if id in dsc_dic:
+            return dsc_dic[id]
