@@ -1,5 +1,6 @@
 
 import xml.etree.ElementTree as ET
+import re
 import lxml.etree
 from logging import getLogger
 import requests
@@ -88,7 +89,9 @@ class ProgramManager:
         """番組の説明を取得して返す"""
 
         for result,dsc in zip(self.results,self.progs):
-            dsc_dic[result.get("id")] = dsc.xpath(".//desc")[0].text
+            str = dsc.xpath(".//desc")[0].text
+            if str is not None:
+                dsc_dic[result.get("id")] = re.sub(re.compile('<.*?>'), '', str) #htmlタグを除去
 
         if id in dsc_dic:
             return dsc_dic[id]

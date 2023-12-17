@@ -64,6 +64,7 @@ class MainView(BaseView):
 	def description(self):
 		"""番組の説明を表示"""
 		self.DSCBOX, label = self.creator.inputbox(_("説明"), style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_PROCESS_ENTER)
+		self.DSCBOX.Disable()
 
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
@@ -340,14 +341,15 @@ class Events(BaseEvents):
 
 		#番組の説明
 		if self.parent.progs.getProgramDsc(id):
+			self.parent.DSCBOX.Enable()
 			self.parent.DSCBOX.SetValue(self.parent.progs.getProgramDsc(id))
 		else:
 			self.parent.DSCBOX.SetValue("")
 
-
 	def onRadioSelected(self, event):
 		selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
 		if selected == None:
+			self.parent.DSCBOX.Disable()
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"),False)
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_TOMORROW_PROGRAMLIST"),False)
 			return
