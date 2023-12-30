@@ -320,17 +320,16 @@ class Events(BaseEvents):
 		return True
 
 	def onRadioActivated(self, event):
-
+		print("aaaa")
 		id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
 		if id == None:
-			self.parent.DSCBOX.Clear()
 			return
 		try:
 			self.parent.player(id)
 		except request.HTTPError as error:
 			errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
 			return
-		self.log.info("now playing:"+id)
+
 
 		#現在放送中の番組を表示
 		self.parent.nplist.Enable()
@@ -346,12 +345,11 @@ class Events(BaseEvents):
 			self.parent.DSCBOX.Enable()
 			self.parent.DSCBOX.SetValue(self.parent.progs.getProgramDsc(id))
 		else:
-			self.parent.DSCBOX.SetValue("")
+			self.parent.DSCBOX.SetValue("説明無し")
 
 	def onRadioSelected(self, event):
 		selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
 		if selected == None:
-			self.parent.DSCBOX.Disable()
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"),False)
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_TOMORROW_PROGRAMLIST"),False)
 			return
@@ -395,9 +393,11 @@ class Events(BaseEvents):
 	def onbackbutton(self, event):
 		self.parent.Clear()
 		self.parent.area()
+		self.parent.description()
 		self.parent.volume, tmp = self.parent.creator.slider(_("音量(&V)"), event=self.onVolumeChanged, defaultValue=self.parent.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
 		self.parent.playbutton()
 		self.parent.stopbutton()
 		self.parent.exit_button()
+		self.parent.SHOW_NOW_PROGRAMLIST()
 		self.parent.AreaTreeCtrl()
 		self.parent.getradio()
