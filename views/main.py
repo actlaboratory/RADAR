@@ -73,6 +73,8 @@ class MainView(BaseView):
 		self.lst,programinfo = self.creator.virtualListCtrl(_("番組表一覧"))
 		self.lst.AppendColumn(_("タイトル"))
 		self.lst.AppendColumn(_("出演者"))
+		self.lst.AppendColumn(_("開始時間"))
+		self.lst.AppendColumn(_("終了時間"))
 		self.backbtn()
 
 	def backbtn(self):
@@ -187,6 +189,7 @@ class MainView(BaseView):
 		"""再生用関数"""
 		url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
 		m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
+		print(m3u8)
 		self._player.setSource(m3u8)
 		self._player.play()
 
@@ -320,14 +323,14 @@ class Events(BaseEvents):
 		return True
 
 	def onRadioActivated(self, event):
-		print("aaaa")
 		id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
 		if id == None:
 			return
 		try:
 			self.parent.player(id)
 		except request.HTTPError as error:
-			errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
+			#errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
+			raise error
 			return
 
 
@@ -348,14 +351,13 @@ class Events(BaseEvents):
 			self.parent.DSCBOX.SetValue("説明無し")
 
 	def onRadioSelected(self, event):
-		selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
-		if selected == None:
+		self.selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
+		if self.selected == None:
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"),False)
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_TOMORROW_PROGRAMLIST"),False)
 			return
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"), True)
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_TOMORROW_PROGRAMLIST"),True)
-		self.parent.progs.getTodayProgramList(selected)
 
 	def onStopButton(self, event):
 		self.parent._player.stop()
@@ -378,6 +380,7 @@ class Events(BaseEvents):
 		self.parent.volume.SetValue(self.value-10)
 
 	def nowProgramInfo(self, event):
+		self.parent.progs.getTodayProgramList(self.selected,0)
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
 		self.parent.Clear()
@@ -388,7 +391,17 @@ class Events(BaseEvents):
 		self.parent.lst.SetFocus()
 
 	def tomorrowProgramInfo(self, event):
-		print("tomorrow")
+		self.parent.Clear()
+		self.parent.infoListView()
+		self.parent.progs.getTodayProgramList(self.selected,1)
+		title = self.parent.progs.gettitle() #番組のタイトル
+		pfm = self.parent.progs.getpfm() #出演者の名前
+		self.parent.Clear()
+		self.parent.infoListView()
+
+		for t,p in zip(title,pfm):
+			self.parent.lst.Append((t,p), )
+		self.parent.lst.SetFocus()
 
 	def onbackbutton(self, event):
 		self.parent.Clear()

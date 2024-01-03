@@ -1,3 +1,4 @@
+#programmanager
 
 import xml.etree.ElementTree as ET
 import re
@@ -16,10 +17,12 @@ class ProgramManager:
     def getprogramlist(self):
         return "http://radiko.jp/v3"
 
-    def getTodayProgramList(self, id):
+    def getTodayProgramList(self, id, date=0):
+
+
         dt = datetime.datetime.now().date()
         dtstring = str(dt).replace("-", "")
-        url = f"{self.getprogramlist()}/program/station/date/{dtstring}/{id}.xml"
+        url = f"{self.getprogramlist()}/program/station/date/{int(dtstring)+date}/{id}.xml"
         # XMLデータを取得
         response = requests.get(url)
         xml_data = response.content
