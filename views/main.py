@@ -203,7 +203,6 @@ class MainView(BaseView):
 		print(m3u8)
 		self._player.setSource(m3u8)
 		self._player.setVolume(50)
-
 		self._player.play()
 
 
@@ -406,6 +405,7 @@ class Events(BaseEvents):
 		pfm = self.parent.progs.getpfm() #出演者の名前
 		self.parent.Clear()
 		self.parent.infoListView()
+		self.parent.cmb.Destroy()
 
 		for t,p in zip(title,pfm):
 			self.parent.lst.Append((t,p), )
