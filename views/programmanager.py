@@ -19,7 +19,6 @@ class ProgramManager:
 
     def getTodayProgramList(self, id, date=0):
 
-
         dt = datetime.datetime.now().date()
         dtstring = str(dt).replace("-", "")
         url = f"{self.getprogramlist()}/program/station/date/{int(dtstring)+date}/{id}.xml"

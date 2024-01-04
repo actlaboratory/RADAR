@@ -16,6 +16,7 @@ import constants
 import globalVars
 import update
 import menuItemsStore
+import datetime
 
 from .base import *
 from urllib import request
@@ -54,6 +55,7 @@ class MainView(BaseView):
 		self.SHOW_NOW_PROGRAMLIST()
 		self.AreaTreeCtrl()
 		self.getradio()
+		self.time()
 
 	def SHOW_NOW_PROGRAMLIST(self):
 		self.nplist,nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
@@ -69,6 +71,13 @@ class MainView(BaseView):
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
 
+	def date_cmb(self):
+		list = []
+		for timelist in self.timelists:
+			list.append(str(timelist))
+		self.cmb,label = self.creator.combobox(_("日時を指定"), list)
+		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_week_programlist)
+
 	def infoListView(self):
 		self.lst,programinfo = self.creator.virtualListCtrl(_("番組表一覧"))
 		self.lst.AppendColumn(_("タイトル"))
@@ -76,6 +85,7 @@ class MainView(BaseView):
 		self.lst.AppendColumn(_("開始時間"))
 		self.lst.AppendColumn(_("終了時間"))
 		self.backbtn()
+		self.date_cmb()
 
 	def backbtn(self):
 		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)
@@ -197,6 +207,14 @@ class MainView(BaseView):
 	def exit_button(self):
 		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
 
+	def time(self):
+		self.timelists = []
+		dt = datetime.datetime.now().date()
+		dtstring = str(dt).replace("-", "")
+		self.dtstring = dtstring
+		for count in range(1,8):
+			self.timelists.append(int(dtstring)+count)
+
 
 class Menu(BaseMenu):
 	def Apply(self, target):
@@ -229,7 +247,7 @@ class Menu(BaseMenu):
 		#番組メニュー
 		self.RegisterMenuCommand(self.hProgramListMenu, {
 			"SHOW_NOW_PROGRAMLIST":self.parent.events.nowProgramInfo,
-			"SHOW_TOMORROW_PROGRAMLIST":self.parent.events.tomorrowProgramInfo,
+			"SHOW_WEEK_PROGRAMLIST":self.parent.events.weekProgramInfo,
 		})
 
 		# オプションメニュー
@@ -354,10 +372,10 @@ class Events(BaseEvents):
 		self.selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
 		if self.selected == None:
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"),False)
-			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_TOMORROW_PROGRAMLIST"),False)
+			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),False)
 			return
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"), True)
-		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_TOMORROW_PROGRAMLIST"),True)
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),True)
 
 	def onStopButton(self, event):
 		self.parent._player.stop()
@@ -390,18 +408,23 @@ class Events(BaseEvents):
 			self.parent.lst.Append((t,p), )
 		self.parent.lst.SetFocus()
 
-	def tomorrowProgramInfo(self, event):
+	def weekProgramInfo(self, event):
 		self.parent.Clear()
 		self.parent.infoListView()
-		self.parent.progs.getTodayProgramList(self.selected,1)
+		self.parent.lst.SetFocus()
+
+	def show_week_programlist(self, event):
+		self.parent.lst.clear()
+		selection = self.parent.cmb.GetSelection()
+		if selection == None:
+			return
+		date_time = self.parent.timelists[selection]
+		self.parent.progs.getTodayProgramList(self.selected,date_time-int(self.parent.dtstring))
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
-		self.parent.Clear()
-		self.parent.infoListView()
 
 		for t,p in zip(title,pfm):
 			self.parent.lst.Append((t,p), )
-		self.parent.lst.SetFocus()
 
 	def onbackbutton(self, event):
 		self.parent.Clear()
@@ -414,3 +437,4 @@ class Events(BaseEvents):
 		self.parent.SHOW_NOW_PROGRAMLIST()
 		self.parent.AreaTreeCtrl()
 		self.parent.getradio()
+
