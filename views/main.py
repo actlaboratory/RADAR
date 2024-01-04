@@ -349,8 +349,7 @@ class Events(BaseEvents):
 		try:
 			self.parent.player(id)
 		except request.HTTPError as error:
-			#errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
-			raise error
+			errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
 			return
 
 
