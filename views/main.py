@@ -49,6 +49,7 @@ class MainView(BaseView):
 		self.area()
 		self.description()
 		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
+		self.volume.SetValue(50)
 		self.playbutton()
 		self.stopbutton()
 		self.exit_button()
@@ -201,6 +202,8 @@ class MainView(BaseView):
 		m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
 		print(m3u8)
 		self._player.setSource(m3u8)
+		self._player.setVolume(50)
+
 		self._player.play()
 
 
