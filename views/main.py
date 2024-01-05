@@ -62,6 +62,8 @@ class MainView(BaseView):
 		self.nplist,nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
 		self.nplist.AppendColumn(_("現在再生中"))
 		self.nplist.AppendColumn(_(""))
+		self.nplist.AppendColumn(_(""))
+		self.nplist.AppendColumn(_(""))
 		self.nplist.Disable()
 
 	def description(self):
@@ -358,9 +360,12 @@ class Events(BaseEvents):
 		self.parent.nplist.clear()
 		program_title = self.parent.progs.getNowProgram(id)
 		program_pfm = self.parent.progs.getnowProgramPfm(id)
+		program_time = self.parent.progs.getNowProgramTime(id)
+
 		self.parent.nplist.Append(("放送局", self.parent.tree.GetItemText(self.parent.tree.GetFocusedItem())), )
 		self.parent.nplist.Append(("タイトル", program_title), )
 		self.parent.nplist.Append(("出演者", program_pfm), )
+		self.parent.nplist.Append(("放送時間", program_time), )
 
 		#番組の説明
 		if self.parent.progs.getProgramDsc(id):

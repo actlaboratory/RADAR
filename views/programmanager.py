@@ -22,6 +22,7 @@ class ProgramManager:
         dt = datetime.datetime.now().date()
         dtstring = str(dt).replace("-", "")
         url = f"{self.getprogramlist()}/program/station/date/{int(dtstring)+date}/{id}.xml"
+        print(url)
         # XMLデータを取得
         response = requests.get(url)
         xml_data = response.content
@@ -68,8 +69,10 @@ class ProgramManager:
         root = lxml.etree.parse(url)
         results = root.xpath(".//station")
         progs = root.xpath(".//progs")
+        self.url = url
         self.progs = progs
         self.results = results
+        self.response = response
         for result,title in zip(results,progs):
             title_dic[result.get("id")] = title.xpath(".//title")[0].text
 
@@ -97,3 +100,18 @@ class ProgramManager:
 
         if id in dsc_dic:
             return dsc_dic[id]
+
+    def getNowProgramTime(self, id):
+        """現在放送中の番組の開始時間・終了時間を持っている"""
+        program_start = {}
+        program_end = {}
+        xml_data = self.response.content
+        root = lxml.etree.parse(self.url)
+        prog_elements = root.xpath(".//prog")
+        for prog,result in zip(prog_elements,self.results):
+            ftl = prog.get("ftl")
+            tol = prog.get("tol")
+            program_start[result.get("id")] = ftl[:2]+":"+ftl[2:4]
+            program_end[result.get("id")] = tol[:2]+":"+tol[2:4]
+            if id in program_start and id in program_end:
+                return program_start[id]+"～"+  program_end[id]
