@@ -202,7 +202,6 @@ class MainView(BaseView):
 		"""再生用関数"""
 		url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
 		m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
-		print(m3u8)
 		self._player.setSource(m3u8)
 		self._player.setVolume(50)
 		self._player.play()
@@ -216,7 +215,7 @@ class MainView(BaseView):
 		dt = datetime.datetime.now().date()
 		dtstring = str(dt).replace("-", "")
 		self.dtstring = dtstring
-		for count in range(1,8):
+		for count in range(1,7):
 			self.timelists.append(int(dtstring)+count)
 
 
@@ -404,15 +403,16 @@ class Events(BaseEvents):
 		self.parent.volume.SetValue(self.value-10)
 
 	def nowProgramInfo(self, event):
-		self.parent.progs.getTodayProgramList(self.selected,0)
+		self.parent.progs.getTodayProgramList(self.selected)
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
+		program_ftl = self.parent.progs.get_ftl()
+		program_tol = self.parent.progs.get_tol()
 		self.parent.Clear()
 		self.parent.infoListView()
 		self.parent.cmb.Destroy()
-
-		for t,p in zip(title,pfm):
-			self.parent.lst.Append((t,p), )
+		for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
+			self.parent.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
 		self.parent.lst.SetFocus()
 
 	def weekProgramInfo(self, event):
@@ -429,15 +429,17 @@ class Events(BaseEvents):
 		self.parent.progs.getTodayProgramList(self.selected,date_time-int(self.parent.dtstring))
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
-
-		for t,p in zip(title,pfm):
-			self.parent.lst.Append((t,p), )
+		program_ftl = self.parent.progs.get_ftl()
+		program_tol = self.parent.progs.get_tol()
+		for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
+			self.parent.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
 
 	def onbackbutton(self, event):
 		self.parent.Clear()
 		self.parent.area()
 		self.parent.description()
 		self.parent.volume, tmp = self.parent.creator.slider(_("音量(&V)"), event=self.onVolumeChanged, defaultValue=self.parent.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
+		self.parent.volume.SetValue(50)
 		self.parent.playbutton()
 		self.parent.stopbutton()
 		self.parent.exit_button()

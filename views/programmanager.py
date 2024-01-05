@@ -18,20 +18,14 @@ class ProgramManager:
         return "http://radiko.jp/v3"
 
     def getTodayProgramList(self, id, date=0):
-
         dt = datetime.datetime.now().date()
         dtstring = str(dt).replace("-", "")
         url = f"{self.getprogramlist()}/program/station/date/{int(dtstring)+date}/{id}.xml"
-        print(url)
         # XMLデータを取得
         response = requests.get(url)
         xml_data = response.content
         # XMLを解析
         self.root = ET.fromstring(xml_data)
-        #debug
-        date = self.root.find(".//date")
-        self.log.debug(date.text)
-
 
     def gettitle(self):
         title_elements = self.root.findall(".//title")
@@ -64,6 +58,7 @@ class ProgramManager:
             jp_number = self.values[id]
         #引数の都道府県コードをつけてリクエスト
         url = f"{self.getprogramlist()}/program/now/{jp_number}.xml"
+        print(url)
         response = requests.get(url)
         xml_data = response.content
         root = lxml.etree.parse(url)
@@ -107,7 +102,7 @@ class ProgramManager:
         program_end = {}
         xml_data = self.response.content
         root = lxml.etree.parse(self.url)
-        prog_elements = root.xpath(".//prog")
+        prog_elements = root.findall(".//prog")
         for prog,result in zip(prog_elements,self.results):
             ftl = prog.get("ftl")
             tol = prog.get("tol")
@@ -115,3 +110,13 @@ class ProgramManager:
             program_end[result.get("id")] = tol[:2]+":"+tol[2:4]
             if id in program_start and id in program_end:
                 return program_start[id]+"～"+  program_end[id]
+
+    def get_ftl(self):
+        prog_elements = self.root.findall(".//prog")
+        prog_ftl = [ftl.get("ftl") for ftl in prog_elements]
+        return prog_ftl
+
+    def get_tol(self):
+        prog_elements = self.root.findall(".//prog")
+        prog_tol = [tol.get("tol") for tol in prog_elements]
+        return prog_tol
