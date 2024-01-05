@@ -360,6 +360,7 @@ class Events(BaseEvents):
 		program_title = self.parent.progs.getNowProgram(id)
 		program_pfm = self.parent.progs.getnowProgramPfm(id)
 		program_time = self.parent.progs.getNowProgramTime(id)
+		print(program_time)
 
 		self.parent.nplist.Append(("放送局", self.parent.tree.GetItemText(self.parent.tree.GetFocusedItem())), )
 		self.parent.nplist.Append(("タイトル", program_title), )
