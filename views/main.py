@@ -85,8 +85,6 @@ class MainView(BaseView):
 		self.lst,programinfo = self.creator.virtualListCtrl(_("番組表一覧"))
 		self.lst.AppendColumn(_("タイトル"))
 		self.lst.AppendColumn(_("出演者"))
-		self.lst.AppendColumn(_("開始時間"))
-		self.lst.AppendColumn(_("終了時間"))
 		self.backbtn()
 		self.date_cmb()
 
@@ -103,6 +101,7 @@ class MainView(BaseView):
 
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
+		self.stid = {}
 		#都道府県をキー、地方を値とする辞書を作成
 		region = {
 			"hokkaido":"HOKKAIDO TOHOKU",
@@ -174,11 +173,11 @@ class MainView(BaseView):
 				for station in r:
 					stream = {r.attrib["ascii_name"]:{}}
 					stream[r.attrib["ascii_name"]] = {"radioname":station.find("name").text,"radioid":station.find("id").text}
-
 					if "ZENKOKU" in stream:
 						self.tree.AppendItem(root, stream["ZENKOKU"]["radioname"], data=stream["ZENKOKU"]["radioid"])
 					if region[self.result] in stream:
 						self.tree.AppendItem(root, stream[region[self.result]]["radioname"], data=stream[region[self.result]]["radioid"])
+						self.stid[stream[region[self.result]]["radioid"]] = stream[region[self.result]]["radioname"]
 		self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
 		self.tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.events.onRadioSelected)
 		self.tree.SetFocus()
@@ -359,13 +358,11 @@ class Events(BaseEvents):
 		self.parent.nplist.clear()
 		program_title = self.parent.progs.getNowProgram(id)
 		program_pfm = self.parent.progs.getnowProgramPfm(id)
-		program_time = self.parent.progs.getNowProgramTime(id)
-		print(program_time)
-
-		self.parent.nplist.Append(("放送局", self.parent.tree.GetItemText(self.parent.tree.GetFocusedItem())), )
+		if id in self.parent.stid:
+			result = self.parent.stid[id]
+		self.parent.nplist.Append(("放送局", result), )
 		self.parent.nplist.Append(("タイトル", program_title), )
 		self.parent.nplist.Append(("出演者", program_pfm), )
-		self.parent.nplist.Append(("放送時間", program_time), )
 
 		#番組の説明
 		if self.parent.progs.getProgramDsc(id):
