@@ -4,6 +4,7 @@
 import os
 import sys
 import simpleDialog
+import requests.exceptions
 import traceback
 import winsound
 from soundPlayer import player
@@ -21,6 +22,14 @@ else: os.chdir(os.path.abspath(os.path.dirname(__file__)))
 
 def exchandler(type, exc, tb):
 	msg=traceback.format_exception(type, exc, tb)
+	if type == requests.exceptions.ConnectionError:
+		simpleDialog.errorDialog(_("通信に失敗しました。インターネット接続を確認してください。プログラムを終了します。"))
+		os._exit(1)
+		return
+	elif type == requests.exceptions.ProxyError:
+		simpleDialog.errorDialog(_("通信に失敗しました。プロキシサーバーの設定を確認してください。プログラムを終了します。"))
+		os._exit(1)
+		return
 	if not hasattr(sys, "frozen"):
 		print("".join(msg))
 		winsound.Beep(1000, 1200)
@@ -36,7 +45,7 @@ def exchandler(type, exc, tb):
 		f.close()
 	except:
 		pass
-	sys.exit(1)
+	os._exit(1	)
 	player.player().exit()
 
 

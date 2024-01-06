@@ -7,6 +7,7 @@ import wx
 from lxml import html
 import re
 from views import token
+from views import programmanager
 import xml.etree.ElementTree as ET
 from itertools import islice
 import subprocess
@@ -15,6 +16,7 @@ import constants
 import globalVars
 import update
 import menuItemsStore
+import datetime
 
 from .base import *
 from urllib import request
@@ -43,16 +45,51 @@ class MainView(BaseView):
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
 		self._player = player.player()
+		self.progs = programmanager.ProgramManager()
 		self.area()
+		self.description()
+		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
+		self.volume.SetValue(50)
 		self.playbutton()
 		self.stopbutton()
-		self.volume()
 		self.exit_button()
+		self.SHOW_NOW_PROGRAMLIST()
 		self.AreaTreeCtrl()
 		self.getradio()
+		self.time()
+
+	def SHOW_NOW_PROGRAMLIST(self):
+		self.nplist,nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
+		self.nplist.AppendColumn(_("現在再生中"))
+		self.nplist.AppendColumn(_(""))
+		self.nplist.AppendColumn(_(""))
+		self.nplist.AppendColumn(_(""))
+		self.nplist.Disable()
+
+	def description(self):
+		"""番組の説明を表示"""
+		self.DSCBOX, label = self.creator.inputbox(_("説明"), style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_PROCESS_ENTER)
+		self.DSCBOX.Disable()
 
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
+
+	def date_cmb(self):
+		list = []
+		for timelist in self.timelists:
+			list.append(str(timelist))
+		self.cmb,label = self.creator.combobox(_("日時を指定"), list)
+		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_week_programlist)
+
+	def infoListView(self):
+		self.lst,programinfo = self.creator.virtualListCtrl(_("番組表一覧"))
+		self.lst.AppendColumn(_("タイトル"))
+		self.lst.AppendColumn(_("出演者"))
+		self.backbtn()
+		self.date_cmb()
+
+	def backbtn(self):
+		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)
 
 	def playbutton(self):
 		self.playButton = self.creator.button(_("再生"), self.events.onRadioActivated)
@@ -60,11 +97,11 @@ class MainView(BaseView):
 	def stopbutton(self):
 		self.stopButton = self.creator.button(_("停止"), self.events.onStopButton)
 
-	def volume(self):
-		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
+		return
 
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
+		self.stid = {}
 		#都道府県をキー、地方を値とする辞書を作成
 		region = {
 			"hokkaido":"HOKKAIDO TOHOKU",
@@ -117,7 +154,6 @@ class MainView(BaseView):
 		}
 		if self.result in region:
 			self.log.info("region:"+region[self.result])
-			print("region:", region[self.result])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
 		if not self.result:
@@ -141,7 +177,9 @@ class MainView(BaseView):
 						self.tree.AppendItem(root, stream["ZENKOKU"]["radioname"], data=stream["ZENKOKU"]["radioid"])
 					if region[self.result] in stream:
 						self.tree.AppendItem(root, stream[region[self.result]]["radioname"], data=stream[region[self.result]]["radioid"])
+						self.stid[stream[region[self.result]]["radioid"]] = stream[region[self.result]]["radioname"]
 		self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
+		self.tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.events.onRadioSelected)
 		self.tree.SetFocus()
 		self.tree.Expand(root)
 		self.tree.SelectItem(root, select=True)
@@ -157,21 +195,27 @@ class MainView(BaseView):
 		before = re.findall("\s", area)
 		replace = area.replace(before[0], ",") #スペースを文字列置換で,に置き換える
 		values = replace.split(",") #戻り地をリストにする
-		print("prefectures:", values[2])
 		self.result = values[2]
-
 
 	def player(self, stationid):
 		"""再生用関数"""
 		url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
 		m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
-		#subprocess.run(["ffplay", "-nodisp", "-loglevel", "quiet", "-headers", f"X-Radiko-Authtoken:{self.token}", "-i", m3u8], shell=True)
 		self._player.setSource(m3u8)
+		self._player.setVolume(50)
 		self._player.play()
 
 
 	def exit_button(self):
 		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
+
+	def time(self):
+		self.timelists = []
+		dt = datetime.datetime.now().date()
+		dtstring = str(dt).replace("-", "")
+		self.dtstring = dtstring
+		for count in range(1,7):
+			self.timelists.append(int(dtstring)+count)
 
 
 class Menu(BaseMenu):
@@ -184,6 +228,7 @@ class Menu(BaseMenu):
 		# メニューの大項目を作る
 		self.hFileMenu = wx.Menu()
 		self.hFunctionMenu = wx.Menu()
+		self.hProgramListMenu = wx.Menu()
 		self.hOptionMenu = wx.Menu()
 		self.hHelpMenu = wx.Menu()
 
@@ -201,6 +246,12 @@ class Menu(BaseMenu):
 			"FUNCTION_VOLUME_DOWN":self.parent.events.volume_down,
 		})
 
+		#番組メニュー
+		self.RegisterMenuCommand(self.hProgramListMenu, {
+			"SHOW_NOW_PROGRAMLIST":self.parent.events.nowProgramInfo,
+			"SHOW_WEEK_PROGRAMLIST":self.parent.events.weekProgramInfo,
+		})
+
 		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {
 			"OPTION_OPTION": self.parent.events.option,
@@ -216,6 +267,7 @@ class Menu(BaseMenu):
 		# メニューバーの生成
 		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F))"))
 		self.hMenuBar.Append(self.hFunctionMenu, _("機能(&F)"))
+		self.hMenuBar.Append(self.hProgramListMenu, _("番組(&p)"))
 		self.hMenuBar.Append(self.hOptionMenu, _("オプション(&O)"))
 		self.hMenuBar.Append(self.hHelpMenu, _("ヘルプ(&H)"))
 		target.SetMenuBar(self.hMenuBar)
@@ -294,8 +346,39 @@ class Events(BaseEvents):
 		id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
 		if id == None:
 			return
-		self.parent.player(id)
-		self.log.info("now playing:", id)
+		try:
+			self.parent.player(id)
+		except request.HTTPError as error:
+			errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
+			return
+
+
+		#現在放送中の番組を表示
+		self.parent.nplist.Enable()
+		self.parent.nplist.clear()
+		program_title = self.parent.progs.getNowProgram(id)
+		program_pfm = self.parent.progs.getnowProgramPfm(id)
+		if id in self.parent.stid:
+			result = self.parent.stid[id]
+		self.parent.nplist.Append(("放送局", result), )
+		self.parent.nplist.Append(("タイトル", program_title), )
+		self.parent.nplist.Append(("出演者", program_pfm), )
+
+		#番組の説明
+		if self.parent.progs.getProgramDsc(id):
+			self.parent.DSCBOX.Enable()
+			self.parent.DSCBOX.SetValue(self.parent.progs.getProgramDsc(id))
+		else:
+			self.parent.DSCBOX.SetValue("説明無し")
+
+	def onRadioSelected(self, event):
+		self.selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
+		if self.selected == None:
+			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"),False)
+			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),False)
+			return
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"), True)
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),True)
 
 	def onStopButton(self, event):
 		self.parent._player.stop()
@@ -316,3 +399,49 @@ class Events(BaseEvents):
 		if self.value == self.parent.volume.GetMin():
 			return
 		self.parent.volume.SetValue(self.value-10)
+
+	def nowProgramInfo(self, event):
+		self.parent.progs.getTodayProgramList(self.selected)
+		title = self.parent.progs.gettitle() #番組のタイトル
+		pfm = self.parent.progs.getpfm() #出演者の名前
+		program_ftl = self.parent.progs.get_ftl()
+		program_tol = self.parent.progs.get_tol()
+		self.parent.Clear()
+		self.parent.infoListView()
+		self.parent.cmb.Destroy()
+		for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
+			self.parent.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
+		self.parent.lst.SetFocus()
+
+	def weekProgramInfo(self, event):
+		self.parent.Clear()
+		self.parent.infoListView()
+		self.parent.lst.SetFocus()
+
+	def show_week_programlist(self, event):
+		self.parent.lst.clear()
+		selection = self.parent.cmb.GetSelection()
+		if selection == None:
+			return
+		date_time = self.parent.timelists[selection]
+		self.parent.progs.getTodayProgramList(self.selected,date_time-int(self.parent.dtstring))
+		title = self.parent.progs.gettitle() #番組のタイトル
+		pfm = self.parent.progs.getpfm() #出演者の名前
+		program_ftl = self.parent.progs.get_ftl()
+		program_tol = self.parent.progs.get_tol()
+		for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
+			self.parent.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
+
+	def onbackbutton(self, event):
+		self.parent.Clear()
+		self.parent.area()
+		self.parent.description()
+		self.parent.volume, tmp = self.parent.creator.slider(_("音量(&V)"), event=self.onVolumeChanged, defaultValue=self.parent.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
+		self.parent.volume.SetValue(50)
+		self.parent.playbutton()
+		self.parent.stopbutton()
+		self.parent.exit_button()
+		self.parent.SHOW_NOW_PROGRAMLIST()
+		self.parent.AreaTreeCtrl()
+		self.parent.getradio()
+
