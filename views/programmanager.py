@@ -58,7 +58,6 @@ class ProgramManager:
             jp_number = self.values[id]
         #引数の都道府県コードをつけてリクエスト
         url = f"{self.getprogramlist()}/program/now/{jp_number}.xml"
-        print(url)
         response = requests.get(url)
         xml_data = response.content
         root = lxml.etree.parse(url)
@@ -69,7 +68,7 @@ class ProgramManager:
         self.results = results
         self.response = response
         for result,title in zip(results,progs):
-            print(result.xpath(".//name")[0].text)
+
             title_dic[result.get("id")] = title.xpath(".//title")[0].text
 
         #stationidに該当する番組名を返す

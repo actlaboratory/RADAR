@@ -62,8 +62,6 @@ class MainView(BaseView):
 		self.nplist,nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
 		self.nplist.AppendColumn(_("現在再生中"))
 		self.nplist.AppendColumn(_(""))
-		self.nplist.AppendColumn(_(""))
-		self.nplist.AppendColumn(_(""))
 		self.nplist.Disable()
 
 	def description(self):
@@ -85,6 +83,8 @@ class MainView(BaseView):
 		self.lst,programinfo = self.creator.virtualListCtrl(_("番組表一覧"))
 		self.lst.AppendColumn(_("タイトル"))
 		self.lst.AppendColumn(_("出演者"))
+		self.lst.AppendColumn(_("開始時間"))
+		self.lst.AppendColumn(_("終了時間"))
 		self.backbtn()
 		self.date_cmb()
 
