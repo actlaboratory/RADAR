@@ -49,7 +49,7 @@ class MainView(BaseView):
 		self.area()
 		self.description()
 		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
-		self.volume.SetValue(50)
+		self.volume.SetValue(self.app.config.getint("play", "volume"))
 		self.playbutton()
 		self.stopbutton()
 		self.exit_button()
@@ -202,9 +202,8 @@ class MainView(BaseView):
 		url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
 		m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
 		self._player.setSource(m3u8)
-		self._player.setVolume(50)
+		self._player.setVolume(self.volume.GetValue())
 		self._player.play()
-
 
 	def exit_button(self):
 		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
@@ -386,6 +385,7 @@ class Events(BaseEvents):
 	def onVolumeChanged(self, event):
 		self.value = self.parent.volume.GetValue()
 		self.parent._player.setVolume(self.value)
+		self.parent.app.config["play"]["volume"] = self.value
 
 
 	def volume_up(self, event):
