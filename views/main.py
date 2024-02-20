@@ -55,8 +55,10 @@ class MainView(BaseView):
 		self.AreaTreeCtrl()
 		self.getradio()
 		self.time()
+		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
 
 	def SHOW_NOW_PROGRAMLIST(self):
+
 		self.nplist,nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
 		self.nplist.AppendColumn(_("現在再生中"))
 		self.nplist.AppendColumn(_(""))
@@ -241,6 +243,7 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hProgramListMenu, {
 			"SHOW_NOW_PROGRAMLIST":self.parent.events.nowProgramInfo,
 			"SHOW_WEEK_PROGRAMLIST":self.parent.events.weekProgramInfo,
+			"HIDE_PROGRAMINFO":self.parent.events.switching_programInfo,
 		})
 
 		# オプションメニュー
@@ -267,6 +270,7 @@ class Menu(BaseMenu):
 class Events(BaseEvents):
 	playing = False
 	mute_status = False
+	displaying = True #番組情報表示中
 	def example(self, event):
 		d = sample.Dialog()
 		d.Initialize()
@@ -365,6 +369,9 @@ class Events(BaseEvents):
 		self.parent.nplist.Append(("タイトル", program_title), )
 		self.parent.nplist.Append(("出演者", program_pfm), )
 
+#メニュー項目の表示
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
+
 		#番組の説明
 		if self.parent.progs.getProgramDsc(id):
 			self.parent.DSCBOX.Enable()
@@ -460,3 +467,13 @@ class Events(BaseEvents):
 			self.parent._player.setVolume(self.parent.volume.GetValue())
 			self.parent.volume.Enable()
 			self.mute_status = False
+
+	def switching_programInfo(self, event):
+		if self.displaying:
+			self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示&P"))
+			self.parent.nplist.Disable()
+			self.displaying = False
+		else:
+			self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示&H"))
+			self.parent.nplist.Enable()
+			self.displaying = True

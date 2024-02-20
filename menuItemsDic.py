@@ -19,6 +19,7 @@ dic={
 
 	"SHOW_NOW_PROGRAMLIST":_("選択された放送局の今日の番組表を表示"),
 	"SHOW_WEEK_PROGRAMLIST":_("習慣番組表の表示"),
+	"HIDE_PROGRAMINFO":_("番組情報を非表示"),
 
 	"OPTION_OPTION":_("オプション(&O)")+"...",
 	"OPTION_KEY_CONFIG":_("ショートカットキーの設定(&K)")+"...",
