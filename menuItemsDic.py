@@ -13,7 +13,7 @@ dic={
 	"FILE_EXIT": _("終了"),
 
 	"FUNCTION_PLAY_PLAY":_("再生"),
-	"FUNCTION_PLAY_POSE":_("停止"),
+	"FUNCTION_PLAY_MUTE":_("ミュート"),
 	"FUNCTION_VOLUME_UP":_("音量を上げる"),
 	"FUNCTION_VOLUME_DOWN":_("音量を下げる"),
 

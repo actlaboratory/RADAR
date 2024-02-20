@@ -50,8 +50,6 @@ class MainView(BaseView):
 		self.description()
 		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
 		self.volume.SetValue(self.app.config.getint("play", "volume"))
-		self.playbutton()
-		self.stopbutton()
 		self.exit_button()
 		self.SHOW_NOW_PROGRAMLIST()
 		self.AreaTreeCtrl()
@@ -90,13 +88,6 @@ class MainView(BaseView):
 
 	def backbtn(self):
 		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)
-
-	def playbutton(self):
-		self.playButton = self.creator.button(_("再生"), self.events.onRadioActivated)
-
-	def stopbutton(self):
-		self.stopButton = self.creator.button(_("停止"), self.events.onStopButton)
-
 		return
 
 	def getradio(self):
@@ -203,6 +194,7 @@ class MainView(BaseView):
 		m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
 		self._player.setSource(m3u8)
 		self._player.setVolume(self.volume.GetValue())
+		self.log.info("playing...")
 		self._player.play()
 
 	def exit_button(self):
@@ -240,9 +232,9 @@ class Menu(BaseMenu):
 		#機能メニュー
 		self.RegisterMenuCommand(self.hFunctionMenu, {
 			"FUNCTION_PLAY_PLAY":self.parent.events.onRadioActivated,
-			"FUNCTION_PLAY_POSE":self.parent.events.onStopButton,
 			"FUNCTION_VOLUME_UP":self.parent.events.volume_up,
 			"FUNCTION_VOLUME_DOWN":self.parent.events.volume_down,
+			"FUNCTION_PLAY_MUTE":self.parent.events.onMute,
 		})
 
 		#番組メニュー
@@ -273,6 +265,8 @@ class Menu(BaseMenu):
 
 
 class Events(BaseEvents):
+	playing = False
+	mute_status = False
 	def example(self, event):
 		d = sample.Dialog()
 		d.Initialize()
@@ -345,10 +339,18 @@ class Events(BaseEvents):
 		id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
 		if id == None:
 			return
+		self.parent.log.info("selected" + id)
 		try:
-			self.parent.player(id)
+			if not self.playing:
+				self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
+				self.parent.player(id)
+				self.playing = True
+			else:
+				self.onStopButton()
+				self.playing = False
 		except request.HTTPError as error:
 			errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
+			self.parent.log.error("Playback failure!"+str(error))
 			return
 
 
@@ -379,33 +381,37 @@ class Events(BaseEvents):
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"), True)
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),True)
 
-	def onStopButton(self, event):
+	def onStopButton(self):
+		print("stop")
 		self.parent._player.stop()
+		self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
+		self.parent.log.info("posed")
 
 	def onVolumeChanged(self, event):
 		self.value = self.parent.volume.GetValue()
 		self.parent._player.setVolume(self.value)
 		self.parent.app.config["play"]["volume"] = self.value
 
-
 	def volume_up(self, event):
 		self.onVolumeChanged(event)
 		if self.value == self.parent.volume.GetMax():
 			return
-		self.parent.volume.SetValue(self.value+10)
+		self.parent.volume.SetValue(self.value+10) #ボリュームを10％上げる
+		self.parent.log.debug("volume increased")
 
 	def volume_down(self, event):
 		self.onVolumeChanged(event)
 		if self.value == self.parent.volume.GetMin():
 			return
-		self.parent.volume.SetValue(self.value-10)
+		self.parent.volume.SetValue(self.value-10) #ボリュームを10％下げる
+		self.parent.log.debug("volume decreased")
 
 	def nowProgramInfo(self, event):
 		self.parent.progs.getTodayProgramList(self.selected)
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
-		program_ftl = self.parent.progs.get_ftl()
-		program_tol = self.parent.progs.get_tol()
+		program_ftl = self.parent.progs.get_ftl() #番組開始時間
+		program_tol = self.parent.progs.get_tol() #番組終了時間
 		self.parent.Clear()
 		self.parent.infoListView()
 		self.parent.cmb.Destroy()
@@ -438,10 +444,19 @@ class Events(BaseEvents):
 		self.parent.description()
 		self.parent.volume, tmp = self.parent.creator.slider(_("音量(&V)"), event=self.onVolumeChanged, defaultValue=self.parent.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
 		self.parent.volume.SetValue(50)
-		self.parent.playbutton()
-		self.parent.stopbutton()
 		self.parent.exit_button()
 		self.parent.SHOW_NOW_PROGRAMLIST()
 		self.parent.AreaTreeCtrl()
 		self.parent.getradio()
 
+	def onMute(self, event):
+		if not self.mute_status:
+			self.parent.menu.SetMenuLabel("FUNCTION_PLAY_MUTE", _("ミュートを解除"))
+			self.parent._player.setVolume(0)
+			self.parent.volume.Disable()
+			self.mute_status = True
+		else:
+			self.parent.menu.SetMenuLabel("FUNCTION_PLAY_MUTE", _("ミュート"))
+			self.parent._player.setVolume(self.parent.volume.GetValue())
+			self.parent.volume.Enable()
+			self.mute_status = False
