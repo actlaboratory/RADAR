@@ -10,10 +10,10 @@ defaultKeymap["mainView"]={
 
 	"OPTION_OPTION":"",
 	"OPTION_KEY_CONFIG":"",
-	"FUNCTION_PLAY_PLAY":"ctrl+p/space",
-	"FUNCTION_PLAY_POSE":"ctrl+shift+p",
-	"FUNCTION_volume_UP":"ctrl+shift+uparrow",
-	"FUNCTION_VOLUME_DOWN":"ctrl+shift+downarrow",
+	"FUNCTION_PLAY_PLAY":"F1/space",
+	"FUNCTION_volume_UP":"F9",
+	"FUNCTION_VOLUME_DOWN":"F7",
+	"FUNCTION_PLAY_MUTE":"F8",
 
 	"HELP_UPDATE":"",
 	"HELP_VERSIONINFO":"",
