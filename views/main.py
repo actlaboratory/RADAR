@@ -400,17 +400,17 @@ class Events(BaseEvents):
 		self.parent.app.config["play"]["volume"] = self.value
 
 	def volume_up(self, event):
-		self.onVolumeChanged(event)
 		if self.value == self.parent.volume.GetMax():
 			return
 		self.parent.volume.SetValue(self.value+10) #ボリュームを10％上げる
+		self.onVolumeChanged(event)
 		self.parent.log.debug("volume increased")
 
 	def volume_down(self, event):
-		self.onVolumeChanged(event)
 		if self.value == self.parent.volume.GetMin():
 			return
 		self.parent.volume.SetValue(self.value-10) #ボリュームを10％下げる
+		self.onVolumeChanged(event)
 		self.parent.log.debug("volume decreased")
 
 	def nowProgramInfo(self, event):
