@@ -246,6 +246,11 @@ class Menu(BaseMenu):
 			"HIDE_PROGRAMINFO":self.parent.events.switching_programInfo,
 		})
 
+		#デバイスメニュー
+		self.hDeviceMenu = wx.Menu()
+		self.RegisterMenuCommand(self.hFunctionMenu, "FUNCTION_OUTPUT_CHANGEDEVICE", subMenu=self.hDeviceMenu)
+		#self.hFunctionMenu.Bind(wx.EVT_MENU_OPEN, self.event.OnMenuOpen)
+
 		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {
 			"OPTION_OPTION": self.parent.events.option,
