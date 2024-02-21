@@ -16,6 +16,7 @@ dic={
 	"FUNCTION_PLAY_MUTE":_("ミュート"),
 	"FUNCTION_VOLUME_UP":_("音量を上げる"),
 	"FUNCTION_VOLUME_DOWN":_("音量を下げる"),
+	"FUNCTION_OUTPUT_CHANGEDEVICE":_("出力先デバイスの変更"),
 
 	"SHOW_NOW_PROGRAMLIST":_("選択された放送局の今日の番組表を表示"),
 	"SHOW_WEEK_PROGRAMLIST":_("習慣番組表の表示"),
