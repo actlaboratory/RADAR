@@ -8,6 +8,7 @@ from lxml import html
 import re
 from views import token
 from views import programmanager
+from views import changeDevice
 import xml.etree.ElementTree as ET
 from itertools import islice
 import subprocess
@@ -237,6 +238,7 @@ class Menu(BaseMenu):
 			"FUNCTION_VOLUME_UP":self.parent.events.volume_up,
 			"FUNCTION_VOLUME_DOWN":self.parent.events.volume_down,
 			"FUNCTION_PLAY_MUTE":self.parent.events.onMute,
+			"FUNCTION_OUTPUT_CHANGEDEVICE":self.parent.events.changeOutputDevice,
 		})
 
 		#番組メニュー
@@ -245,11 +247,6 @@ class Menu(BaseMenu):
 			"SHOW_WEEK_PROGRAMLIST":self.parent.events.weekProgramInfo,
 			"HIDE_PROGRAMINFO":self.parent.events.switching_programInfo,
 		})
-
-		#デバイスメニュー
-		self.hDeviceMenu = wx.Menu()
-		self.RegisterMenuCommand(self.hFunctionMenu, "FUNCTION_OUTPUT_CHANGEDEVICE", subMenu=self.hDeviceMenu)
-		#self.hFunctionMenu.Bind(wx.EVT_MENU_OPEN, self.event.OnMenuOpen)
 
 		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {
@@ -484,3 +481,10 @@ class Events(BaseEvents):
 			self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示&H"))
 			self.parent.nplist.Enable()
 			self.displaying = True
+
+	def changeOutputDevice(self, event):
+		changeDeviceDialog = changeDevice.ChangeDeviceDialog()
+		changeDeviceDialog.Initialize()
+		ret = changeDeviceDialog.Show()
+		if ret==wx.ID_CANCEL: return
+		self.parent._player.setDeviceByName(changeDeviceDialog.GetData())
