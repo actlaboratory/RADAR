@@ -4,7 +4,8 @@
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
 
 import wx
-from lxml import html
+import time
+import winsound
 import re
 from views import token
 from views import programmanager
@@ -59,7 +60,6 @@ class MainView(BaseView):
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
 
 	def SHOW_NOW_PROGRAMLIST(self):
-
 		self.nplist,nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
 		self.nplist.AppendColumn(_("現在再生中"))
 		self.nplist.AppendColumn(_(""))
@@ -367,9 +367,18 @@ class Events(BaseEvents):
 		program_pfm = self.parent.progs.getnowProgramPfm(id)
 		if id in self.parent.stid:
 			result = self.parent.stid[id]
+
+		#オンエア曲情報を取得してくる
+		try:
+			onair_music = self.parent.progs.get_onair_music(id)
+		except OSError:
+			onair_music = None
+
+		#リストビューにアペンド
 		self.parent.nplist.Append(("放送局", result), )
-		self.parent.nplist.Append(("タイトル", program_title), )
+		self.parent.nplist.Append(("番組名", program_title), )
 		self.parent.nplist.Append(("出演者", program_pfm), )
+		self.parent.nplist.Append(("オンエア曲", onair_music, ), )
 
 #メニュー項目の表示
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)

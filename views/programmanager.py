@@ -105,3 +105,14 @@ class ProgramManager:
         prog_elements = self.root.findall(".//prog")
         prog_tol = [tol.get("tol") for tol in prog_elements]
         return prog_tol
+
+    def get_onair_music(self, id):
+        url = f'http://radiko.jp/v3/feed/pc/noa/{id}.xml'
+        response = requests.get(url)
+        xml_data = response.content
+        root = lxml.etree.parse(url)
+        items = root.xpath(".//item")
+        title = items[0].get("title")
+        artist = items[0].get("artist")
+        music = f"{artist}:{title}"
+        return music
