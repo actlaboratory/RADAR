@@ -369,7 +369,10 @@ class Events(BaseEvents):
 			result = self.parent.stid[id]
 
 		#オンエア曲情報を取得してくる
-		onair_music = self.parent.progs.get_onair_music(id)
+		try:
+			onair_music = self.parent.progs.get_onair_music(id)
+		except OSError:
+			onair_music = None
 
 		#リストビューにアペンド
 		self.parent.nplist.Append(("放送局", result), )
