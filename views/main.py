@@ -342,14 +342,14 @@ class Events(BaseEvents):
 		return True
 
 	def onRadioActivated(self, event):
-		id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
-		if id == None:
+		self.id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
+		if self.id == None:
 			return
-		self.parent.log.info("selected" + id)
+		self.parent.log.info("selected" + self.id)
 		try:
 			if not self.playing:
 				self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
-				self.parent.player(id)
+				self.parent.player(self.id)
 				self.playing = True
 			else:
 				self.onStopButton()
@@ -363,14 +363,14 @@ class Events(BaseEvents):
 		#現在放送中の番組を表示
 		self.parent.nplist.Enable()
 		self.parent.nplist.clear()
-		program_title = self.parent.progs.getNowProgram(id)
-		program_pfm = self.parent.progs.getnowProgramPfm(id)
-		if id in self.parent.stid:
-			result = self.parent.stid[id]
+		program_title = self.parent.progs.getNowProgram(self.id)
+		program_pfm = self.parent.progs.getnowProgramPfm(self.id)
+		if self.id in self.parent.stid:
+			result = self.parent.stid[self.id]
 
 		#オンエア曲情報を取得してくる
 		try:
-			onair_music = self.parent.progs.get_onair_music(id)
+			onair_music = self.parent.progs.get_onair_music(self.id)
 		except OSError:
 			onair_music = None
 
@@ -384,9 +384,13 @@ class Events(BaseEvents):
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
 
 		#番組の説明
-		if self.parent.progs.getProgramDsc(id):
+		self.show_description()
+
+	def show_description(self):
+		"""番組の説明を表示"""
+		if self.parent.progs.getProgramDsc(self.id):
 			self.parent.DSCBOX.Enable()
-			self.parent.DSCBOX.SetValue(self.parent.progs.getProgramDsc(id))
+			self.parent.DSCBOX.SetValue(self.parent.progs.getProgramDsc(self.id))
 		else:
 			self.parent.DSCBOX.SetValue("説明無し")
 
@@ -400,7 +404,6 @@ class Events(BaseEvents):
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),True)
 
 	def onStopButton(self):
-		print("stop")
 		self.parent._player.stop()
 		self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
 		self.parent.log.info("posed")
@@ -458,12 +461,13 @@ class Events(BaseEvents):
 		for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
 			self.parent.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
 
+
 	def onbackbutton(self, event):
 		self.parent.Clear()
 		self.parent.area()
 		self.parent.description()
 		self.parent.volume, tmp = self.parent.creator.slider(_("音量(&V)"), event=self.onVolumeChanged, defaultValue=self.parent.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
-		self.parent.volume.SetValue(50)
+		self.parent.volume.SetValue(self.parent.app.config.getint("play", "volume"))
 		self.parent.exit_button()
 		self.parent.SHOW_NOW_PROGRAMLIST()
 		self.parent.AreaTreeCtrl()
