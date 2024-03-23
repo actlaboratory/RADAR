@@ -66,14 +66,15 @@ class MainView(BaseView):
 		self.nplist.Disable()
 
 	def description(self):
-		"""番組の説明を表示"""
-		self.DSCBOX, label = self.creator.inputbox(_("説明"), style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_PROCESS_ENTER)
-		self.DSCBOX.Disable()
+		#番組の説明の表示部分をつくる
+		self.DSCBOX, label = self.creator.inputbox(_("説明"), style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_PROCESS_ENTER) #読み取り専用のテキストボックス
+		self.DSCBOX.Disable() #初期状態は無効
 
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
 
 	def date_cmb(self):
+		"""日付を指定させる"""
 		list = []
 		for timelist in self.timelists:
 			list.append(str(timelist))
@@ -147,9 +148,10 @@ class MainView(BaseView):
 			"zenkoku":"ZENKOKU"
 		}
 		if self.result in region:
-			self.log.info("region:"+region[self.result])
+			self.log.debug("region:"+region[self.result])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
+		#エリア情報の取得に失敗
 		if not self.result:
 			errorDialog(_("エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください"))
 			self.tree.SetFocus()
@@ -157,6 +159,7 @@ class MainView(BaseView):
 			self.tree.SelectItem(root, select=True)
 			return
 
+		#ラジオ番組の取得
 		url = "https://radiko.jp/v3/station/region/full.xml" #放送局リストurl
 		#xmlから情報取得
 		req = request.Request(url) 
@@ -179,6 +182,7 @@ class MainView(BaseView):
 		self.tree.SelectItem(root, select=True)
 
 	def area(self):
+		"""エリアを判定する"""
 		self.gettoken = token.Token()
 		res = self.gettoken.auth1()
 		ret = self.gettoken.get_partial_key(res)
