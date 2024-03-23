@@ -296,6 +296,7 @@ class Events(BaseEvents):
 	playing = False
 	mute_status = False
 	displaying = True #番組情報表示中
+
 	def example(self, event):
 		d = sample.Dialog()
 		d.Initialize()
@@ -493,6 +494,8 @@ class Events(BaseEvents):
 		#再生状態に応じて説明を表示
 		if self.playing:
 			self.show_description()
+			self.parent.nplist.Enable()
+			self.onReLoad(event)
 
 	def onMute(self, event):
 		if not self.mute_status:
@@ -526,3 +529,4 @@ class Events(BaseEvents):
 	def onReLoad(self, event):
 		"""リロードを処理する"""
 		self.parent.get_latest_info()
+
