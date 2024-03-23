@@ -229,8 +229,6 @@ class MainView(BaseView):
 	def get_latest_info(self):
 		"""リロード処理"""
 		#再生状態であれば停止
-		if self.events.playing:
-			self.stop()
 		self.nplist.clear()
 		self.events.show_program_info()
 		self.events.show_description()
