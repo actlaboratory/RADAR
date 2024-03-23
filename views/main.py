@@ -360,9 +360,25 @@ class Events(BaseEvents):
 			return
 
 
-		#現在放送中の番組を表示
 		self.parent.nplist.Enable()
 		self.parent.nplist.clear()
+		self.show_program_info()
+
+#メニュー項目の表示
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
+
+		#番組の説明
+		self.show_description()
+
+	def show_description(self):
+		"""番組の説明を表示"""
+		if self.parent.progs.getProgramDsc(self.id):
+			self.parent.DSCBOX.Enable()
+			self.parent.DSCBOX.SetValue(self.parent.progs.getProgramDsc(self.id))
+		else:
+			self.parent.DSCBOX.SetValue("説明無し")
+
+	def show_program_info(self):
 		program_title = self.parent.progs.getNowProgram(self.id)
 		program_pfm = self.parent.progs.getnowProgramPfm(self.id)
 		if self.id in self.parent.stid:
@@ -379,20 +395,6 @@ class Events(BaseEvents):
 		self.parent.nplist.Append(("番組名", program_title), )
 		self.parent.nplist.Append(("出演者", program_pfm), )
 		self.parent.nplist.Append(("オンエア曲", onair_music, ), )
-
-#メニュー項目の表示
-		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
-
-		#番組の説明
-		self.show_description()
-
-	def show_description(self):
-		"""番組の説明を表示"""
-		if self.parent.progs.getProgramDsc(self.id):
-			self.parent.DSCBOX.Enable()
-			self.parent.DSCBOX.SetValue(self.parent.progs.getProgramDsc(self.id))
-		else:
-			self.parent.DSCBOX.SetValue("説明無し")
 
 	def onRadioSelected(self, event):
 		self.selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
@@ -472,6 +474,9 @@ class Events(BaseEvents):
 		self.parent.SHOW_NOW_PROGRAMLIST()
 		self.parent.AreaTreeCtrl()
 		self.parent.getradio()
+		#再生状態に応じて説明を表示
+		if self.playing:
+			self.show_description()
 
 	def onMute(self, event):
 		if not self.mute_status:
