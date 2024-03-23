@@ -11,6 +11,7 @@ def getValueString(ref_id):
 dic={
 	"FILE_EXAMPLE":_("テストダイアログを閲覧")+"...",
 	"FILE_EXIT": _("終了"),
+	"FILE_RELOAD":_("画面をリロード"),
 
 	"FUNCTION_PLAY_PLAY":_("再生"),
 	"FUNCTION_PLAY_MUTE":_("ミュート"),

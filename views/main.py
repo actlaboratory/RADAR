@@ -215,6 +215,26 @@ class MainView(BaseView):
 		for count in range(1,7):
 			self.timelists.append(int(dtstring)+count)
 
+	def play(self, id):
+		self.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
+		self.player(id)
+		self.events.playing = True
+
+	def stop(self):
+		self._player.stop()
+		self.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
+		self.log.info("posed")
+		self.events.playing = False
+
+	def get_latest_info(self):
+		"""リロード処理"""
+		#再生状態であれば停止
+		if self.events.playing:
+			self.stop()
+		self.nplist.clear()
+		self.events.show_program_info()
+		self.events.show_description()
+
 
 class Menu(BaseMenu):
 	def Apply(self, target):
@@ -233,6 +253,7 @@ class Menu(BaseMenu):
 		# ファイルメニュー
 		self.RegisterMenuCommand(self.hFileMenu, {
 			"FILE_EXAMPLE": self.parent.events.example,
+			"FILE_RELOAD":self.parent.events.onReLoad,
 			"FILE_EXIT": self.parent.events.exit,
 		})
 
@@ -349,15 +370,13 @@ class Events(BaseEvents):
 		self.id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
 		if self.id == None:
 			return
-		self.parent.log.info("selected" + self.id)
+		self.parent.log.info("activated" + self.id)
 		try:
 			if not self.playing:
-				self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
-				self.parent.player(self.id)
-				self.playing = True
+				self.parent.play(self.id)
+
 			else:
-				self.onStopButton()
-				self.playing = False
+				self.parent.stop()
 		except request.HTTPError as error:
 			errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
 			self.parent.log.error("Playback failure!"+str(error))
@@ -408,11 +427,6 @@ class Events(BaseEvents):
 			return
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"), True)
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),True)
-
-	def onStopButton(self):
-		self.parent._player.stop()
-		self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
-		self.parent.log.info("posed")
 
 	def onVolumeChanged(self, event):
 		value = self.parent.volume.GetValue()
@@ -510,3 +524,7 @@ class Events(BaseEvents):
 		ret = changeDeviceDialog.Show()
 		if ret==wx.ID_CANCEL: return
 		self.parent._player.setDeviceByName(changeDeviceDialog.GetData())
+
+	def onReLoad(self, event):
+		"""リロードを処理する"""
+		self.parent.get_latest_info()
