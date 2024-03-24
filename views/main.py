@@ -228,9 +228,9 @@ class MainView(BaseView):
 
 	def get_latest_info(self):
 		"""リロード処理"""
-		#再生状態であれば停止
 		self.nplist.clear()
 		self.events.show_program_info()
+		self.events.show_onair_music()
 		self.events.show_description()
 
 
@@ -385,6 +385,7 @@ class Events(BaseEvents):
 		self.parent.nplist.Enable()
 		self.parent.nplist.clear()
 		self.show_program_info()
+		self.show_onair_music()
 
 #メニュー項目の表示
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
@@ -406,16 +407,19 @@ class Events(BaseEvents):
 		if self.id in self.parent.stid:
 			result = self.parent.stid[self.id]
 
+		#リストビューにアペンド
+		self.parent.nplist.Append(("放送局", result), )
+		self.parent.nplist.Append(("番組名", program_title), )
+		self.parent.nplist.Append(("出演者", program_pfm), )
+
+	def show_onair_music(self):
 		#オンエア曲情報を取得してくる
 		try:
 			onair_music = self.parent.progs.get_onair_music(self.id)
 		except OSError:
 			onair_music = None
 
-		#リストビューにアペンド
-		self.parent.nplist.Append(("放送局", result), )
-		self.parent.nplist.Append(("番組名", program_title), )
-		self.parent.nplist.Append(("出演者", program_pfm), )
+#リストビューにアペンド
 		self.parent.nplist.Append(("オンエア曲", onair_music, ), )
 
 	def onRadioSelected(self, event):
