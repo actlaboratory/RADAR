@@ -233,6 +233,15 @@ class MainView(BaseView):
 		self.events.show_onair_music()
 		self.events.show_description()
 
+	def get_latest_programList(self):
+		"""番組情報取得"""
+		self.tree.Destroy()
+		self.nplist.clear()
+		self.DSCBOX.Disable()
+		self.area()
+		self.AreaTreeCtrl()
+		self.getradio()
+
 
 class Menu(BaseMenu):
 	def Apply(self, target):
@@ -269,6 +278,7 @@ class Menu(BaseMenu):
 			"SHOW_NOW_PROGRAMLIST":self.parent.events.nowProgramInfo,
 			"SHOW_WEEK_PROGRAMLIST":self.parent.events.weekProgramInfo,
 			"HIDE_PROGRAMINFO":self.parent.events.switching_programInfo,
+			"UPDATE_PROGRAMLIST":self.parent.events.onUpdateProgram,
 		})
 
 		# オプションメニュー
@@ -534,3 +544,8 @@ class Events(BaseEvents):
 		"""リロードを処理する"""
 		self.parent.get_latest_info()
 
+
+	def onUpdateProgram(self, event):
+		"""最新の番組一覧に更新"""
+		self.parent.stop()
+		self.parent.get_latest_programList()
