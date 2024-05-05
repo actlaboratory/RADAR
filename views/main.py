@@ -7,6 +7,7 @@ import wx
 import time
 import winsound
 import re
+import recorder
 from views import token
 from views import programmanager
 from views import changeDevice
@@ -48,6 +49,7 @@ class MainView(BaseView):
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
 		self._player = player.player()
 		self.progs = programmanager.ProgramManager()
+		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
 		self.area()
 		self.description()
 		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
@@ -195,11 +197,13 @@ class MainView(BaseView):
 		values = replace.split(",") #戻り地をリストにする
 		self.result = values[2]
 
-	def player(self, stationid):
-		"""再生用関数"""
+	def get_streamUrl(self, stationid):
 		url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
-		m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
-		self._player.setSource(m3u8)
+		self.m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
+
+	def player(self):
+		"""再生用関数"""
+		self._player.setSource(self.m3u8)
 		self._player.setVolume(self.volume.GetValue())
 		self.log.info("playing...")
 		self._player.play()
@@ -217,7 +221,8 @@ class MainView(BaseView):
 
 	def play(self, id):
 		self.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
-		self.player(id)
+		self.get_streamUrl(id)
+		self.player()
 		self.events.playing = True
 
 	def stop(self):
@@ -284,7 +289,7 @@ class Menu(BaseMenu):
 
 		#録画メニュー
 		self.RegisterMenuCommand(self.hRecordingMenu, {
-			"RECORDING_IMMEDIATELY":None,
+			"RECORDING_IMMEDIATELY":self.parent.events.record_immediately,
 			"RECORDING_SCHEDULE":None,
 		})
 
@@ -557,3 +562,6 @@ class Events(BaseEvents):
 		"""最新の番組一覧に更新"""
 		self.parent.stop()
 		self.parent.get_latest_programList()
+
+	def record_immediately(self, event):
+		self.parent.recorder.record(self.id, "test")
