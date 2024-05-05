@@ -24,7 +24,10 @@ dic={
 	"HIDE_PROGRAMINFO":_("番組情報を非表示"),
 	"UPDATE_PROGRAMLIST":_("番組一覧を更新"),
 
-	"OPTION_OPTION":_("オプション(&O)")+"...",
+	"RECORDING_IMMEDIATELY":_("今すぐ録音(&r)"),
+	"RECORDING_SCHEDULE":_("予約録音(&s)"),
+
+	"OPTION_OPTION":_("設定(&O)")+"...",
 	"OPTION_KEY_CONFIG":_("ショートカットキーの設定(&K)")+"...",
 
 	"HELP_UPDATE":_("最新バージョンを確認(&U)")+"...",

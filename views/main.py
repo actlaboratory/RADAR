@@ -253,6 +253,7 @@ class Menu(BaseMenu):
 		# メニューの大項目を作る
 		self.hFileMenu = wx.Menu()
 		self.hFunctionMenu = wx.Menu()
+		self.hRecordingMenu = wx.Menu()
 		self.hProgramListMenu = wx.Menu()
 		self.hOptionMenu = wx.Menu()
 		self.hHelpMenu = wx.Menu()
@@ -281,6 +282,12 @@ class Menu(BaseMenu):
 			"UPDATE_PROGRAMLIST":self.parent.events.onUpdateProgram,
 		})
 
+		#録画メニュー
+		self.RegisterMenuCommand(self.hRecordingMenu, {
+			"RECORDING_IMMEDIATELY":None,
+			"RECORDING_SCHEDULE":None,
+		})
+
 		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {
 			"OPTION_OPTION": self.parent.events.option,
@@ -297,6 +304,7 @@ class Menu(BaseMenu):
 		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F))"))
 		self.hMenuBar.Append(self.hFunctionMenu, _("機能(&F)"))
 		self.hMenuBar.Append(self.hProgramListMenu, _("番組(&p)"))
+		self.hMenuBar.Append(self.hRecordingMenu, _("録画(&r)"))
 		self.hMenuBar.Append(self.hOptionMenu, _("オプション(&O)"))
 		self.hMenuBar.Append(self.hHelpMenu, _("ヘルプ(&H)"))
 		target.SetMenuBar(self.hMenuBar)
