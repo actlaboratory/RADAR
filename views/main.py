@@ -564,4 +564,5 @@ class Events(BaseEvents):
 		self.parent.get_latest_programList()
 
 	def record_immediately(self, event):
-		self.parent.recorder.record(self.id, "test")
+		self.parent.get_streamUrl(self.id)
+		self.parent.recorder.record(self.parent.m3u8, "output")
