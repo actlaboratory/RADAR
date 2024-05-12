@@ -18,7 +18,7 @@ APP_DEVELOPERS_URL="https://actlab.org/"
 APP_DETAILS_URL="https://actlab.org/software/"
 APP_COPYRIGHT_MESSAGE = "Copyright (c) %s %s All lights reserved." % (APP_COPYRIGHT_YEAR, APP_DEVELOPERS)
 SUPPORTING_LANGUAGE={"ja-JP": "日本語","en-US": "English"}
-ffmpeg_path = os.path.abspath("bin\\ffmpeg.exe")
+FFMPEG_PATH = os.path.abspath("bin\\ffmpeg.exe")
 #各種ファイル名
 LOG_PREFIX="app"
 LOG_FILE_NAME="application.log"
