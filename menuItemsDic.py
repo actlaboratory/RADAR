@@ -26,6 +26,7 @@ dic={
 
 	"RECORDING_IMMEDIATELY":_("今すぐ録音(&r)"),
 	"RECORDING_SCHEDULE":_("予約録音(&s)"),
+	"RECORDING_OPTION":_("録音品質の選択"),
 
 	"OPTION_OPTION":_("設定(&O)")+"...",
 	"OPTION_KEY_CONFIG":_("ショートカットキーの設定(&K)")+"...",

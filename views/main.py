@@ -47,6 +47,7 @@ class MainView(BaseView):
 			self.app.config.getint(self.identifier, "positionY", 50, 0)
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
+		self.events.recording_option_subMenu()
 		self._player = player.player()
 		self.progs = programmanager.ProgramManager()
 		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
@@ -319,6 +320,12 @@ class Events(BaseEvents):
 	playing = False
 	mute_status = False
 	displaying = True #番組情報表示中
+
+	def recording_option_subMenu(self):
+		rop = wx.Menu()
+		self.parent.menu.RegisterMenuCommand(self.parent.menu.hRecordingMenu, "RECORDING_OPTION", subMenu=rop)
+		rop.AppendCheckItem(0, _("mp3"))
+		rop.AppendCheckItem(1, _("wav"))
 
 	def example(self, event):
 		d = sample.Dialog()
