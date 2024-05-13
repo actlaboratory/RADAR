@@ -47,7 +47,6 @@ class MainView(BaseView):
 			self.app.config.getint(self.identifier, "positionY", 50, 0)
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
-		self.events.recording_option_subMenu()
 		self._player = player.player()
 		self.progs = programmanager.ProgramManager()
 		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
@@ -260,6 +259,8 @@ class Menu(BaseMenu):
 		self.hFileMenu = wx.Menu()
 		self.hFunctionMenu = wx.Menu()
 		self.hRecordingMenu = wx.Menu()
+		self.hRecordingFileTypeMenu = wx.Menu()
+		self.hRecordingFileTypeMenu.Bind(wx.EVT_MENU_OPEN, self.parent.events.onRecordMenuSelect)
 		self.hProgramListMenu = wx.Menu()
 		self.hOptionMenu = wx.Menu()
 		self.hHelpMenu = wx.Menu()
@@ -288,11 +289,17 @@ class Menu(BaseMenu):
 			"UPDATE_PROGRAMLIST":self.parent.events.onUpdateProgram,
 		})
 
-		#録画メニュー
+		#録音メニュー
 		self.RegisterMenuCommand(self.hRecordingMenu, {
 			"RECORDING_IMMEDIATELY":self.parent.events.record_immediately,
 			"RECORDING_SCHEDULE":None,
 		})
+
+		#録音品質選択メニュー
+		self.RegisterMenuCommand(self.hRecordingMenu, "RECORDING_OPTION", subMenu=self.hRecordingFileTypeMenu)
+		#録音品質選択メニューの中身
+		self.RegisterCheckMenuCommand(self.hRecordingFileTypeMenu, "RECORDING_MP3")
+		self.RegisterCheckMenuCommand(self.hRecordingFileTypeMenu, "RECORDING_WAV")
 
 		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {
@@ -310,7 +317,7 @@ class Menu(BaseMenu):
 		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F))"))
 		self.hMenuBar.Append(self.hFunctionMenu, _("機能(&F)"))
 		self.hMenuBar.Append(self.hProgramListMenu, _("番組(&p)"))
-		self.hMenuBar.Append(self.hRecordingMenu, _("録画(&r)"))
+		self.hMenuBar.Append(self.hRecordingMenu, _("録音(&r)"))
 		self.hMenuBar.Append(self.hOptionMenu, _("オプション(&O)"))
 		self.hMenuBar.Append(self.hHelpMenu, _("ヘルプ(&H)"))
 		target.SetMenuBar(self.hMenuBar)
@@ -320,12 +327,14 @@ class Events(BaseEvents):
 	playing = False
 	mute_status = False
 	displaying = True #番組情報表示中
+	chk_bool = {}
 
-	def recording_option_subMenu(self):
-		rop = wx.Menu()
-		self.parent.menu.RegisterMenuCommand(self.parent.menu.hRecordingMenu, "RECORDING_OPTION", subMenu=rop)
-		rop.AppendCheckItem(0, _("mp3"))
-		rop.AppendCheckItem(1, _("wav"))
+	def onRecordMenuSelect(self, event):
+		"""録音品質メニューの動作"""
+		selected = event.GetMenu()
+		print(selected)
+		#self.chk_bool[self.parent.menu.hRecordingFileTypeMenu.IsChecked(menu)] = selected
+		#print(self.chk_bool)
 
 	def example(self, event):
 		d = sample.Dialog()
@@ -573,3 +582,5 @@ class Events(BaseEvents):
 	def record_immediately(self, event):
 		self.parent.get_streamUrl(self.id)
 		self.parent.recorder.record(self.parent.m3u8, "output")
+
+
