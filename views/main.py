@@ -47,9 +47,12 @@ class MainView(BaseView):
 			self.app.config.getint(self.identifier, "positionY", 50, 0)
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
+		self.menu.hRecordingFileTypeMenu.Check(self.app.config.getint("recording", "menu_id"), self.app.config.getboolean("recording", "check_menu"))
+
 		self._player = player.player()
 		self.progs = programmanager.ProgramManager()
 		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
+		self.recorder.setFileType(self.app.config.getint("recording", "menu_id")-10000)
 		self.area()
 		self.description()
 		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
@@ -260,7 +263,7 @@ class Menu(BaseMenu):
 		self.hFunctionMenu = wx.Menu()
 		self.hRecordingMenu = wx.Menu()
 		self.hRecordingFileTypeMenu = wx.Menu()
-		self.hRecordingFileTypeMenu.Bind(wx.EVT_MENU_OPEN, self.parent.events.onRecordMenuSelect)
+		self.hRecordingFileTypeMenu.Bind(wx.EVT_MENU, self.parent.events.onRecordMenuSelect)
 		self.hProgramListMenu = wx.Menu()
 		self.hOptionMenu = wx.Menu()
 		self.hHelpMenu = wx.Menu()
@@ -298,8 +301,8 @@ class Menu(BaseMenu):
 		#録音品質選択メニュー
 		self.RegisterMenuCommand(self.hRecordingMenu, "RECORDING_OPTION", subMenu=self.hRecordingFileTypeMenu)
 		#録音品質選択メニューの中身
-		self.RegisterCheckMenuCommand(self.hRecordingFileTypeMenu, "RECORDING_MP3")
-		self.RegisterCheckMenuCommand(self.hRecordingFileTypeMenu, "RECORDING_WAV")
+		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_MP3, "mp3")
+		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_WAV, "wav")
 
 		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {
@@ -327,14 +330,17 @@ class Events(BaseEvents):
 	playing = False
 	mute_status = False
 	displaying = True #番組情報表示中
-	chk_bool = {}
 
 	def onRecordMenuSelect(self, event):
 		"""録音品質メニューの動作"""
-		selected = event.GetMenu()
-		print(selected)
-		#self.chk_bool[self.parent.menu.hRecordingFileTypeMenu.IsChecked(menu)] = selected
-		#print(self.chk_bool)
+		selected = event.GetId()
+		if selected == 10000 and self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected):
+			self.parent.menu.hRecordingFileTypeMenu.Check(selected+1, False)
+		if selected == 10001 and self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected):
+			self.parent.menu.hRecordingFileTypeMenu.Check(selected-1, False)
+		self.parent.recorder.setFileType(selected - 10000)
+		self.parent.app.config["recording"]["menu_id"] = selected
+		self.parent.app.config["recording"]["check_menu"] = self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected)
 
 	def example(self, event):
 		d = sample.Dialog()
