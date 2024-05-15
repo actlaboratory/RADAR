@@ -22,9 +22,10 @@ class Recorder:
     def setFileType(self, index):
         """選択されたメニュー項目から録音音質を決定"""
         self.ftp = self.filetypes[index]
-        print(index)
+        self.log.info(f"File type determined:{self.ftp}")
+
     def record(self, streamUrl, fName):
-        print(self.ftp)
+        self.log.info(f"Recording: File name {'fName'}")
         #ffmpegで録音
         c = f"{constants.FFMPEG_PATH} -i {streamUrl} -f {self.ftp} -ac 2 -vn {fName}.{self.ftp}"
         code = subprocess.Popen(c.split())

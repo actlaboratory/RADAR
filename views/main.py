@@ -529,13 +529,14 @@ class Events(BaseEvents):
 		for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
 			self.parent.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
 
-
 	def onbackbutton(self, event):
 		self.parent.Clear()
 		self.parent.area()
 		self.parent.description()
 		self.parent.volume, tmp = self.parent.creator.slider(_("音量(&V)"), event=self.onVolumeChanged, defaultValue=self.parent.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
 		self.parent.volume.SetValue(self.parent.app.config.getint("play", "volume"))
+		self.parent.menu.hRecordingFileTypeMenu.Check(self.parent.app.config.getint("recording", "menu_id"), self.parent.app.config.getboolean("recording", "check_menu"))
+		self.parent.recorder.setFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
 		self.parent.exit_button()
 		self.parent.SHOW_NOW_PROGRAMLIST()
 		self.parent.AreaTreeCtrl()
@@ -588,5 +589,4 @@ class Events(BaseEvents):
 	def record_immediately(self, event):
 		self.parent.get_streamUrl(self.id)
 		self.parent.recorder.record(self.parent.m3u8, "output")
-
 
