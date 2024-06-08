@@ -157,4 +157,9 @@ class Dialog(BaseDialog):
 		self.app.setProxyEnviron()
 
 	def browseDir(self, event):
-		pass
+		target = self.dir
+		dialog = wx.DirDialog(self.wnd, _("保存先フォルダを選択"))
+		result = dialog.ShowModal()
+		if result == wx.ID_CANCEL:
+			return
+		target.SetValue(dialog.GetPath())
