@@ -32,7 +32,7 @@ def exchandler(type, exc, tb):
 		return
 	if not hasattr(sys, "frozen"):
 		print("".join(msg))
-		winsound.Beep(850, 1000)
+		winsound.Beep(850, 1100)
 		try:
 			globalVars.app.say(str(msg[-1]))
 		except:

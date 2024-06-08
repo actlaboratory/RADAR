@@ -422,7 +422,7 @@ class Events(BaseEvents):
 			else:
 				self.parent.stop()
 		except request.HTTPError as error:
-			errorDialog(_("再生に失敗しました。\n聴取できる都道府県内であることをご確認ください。\n\nエラー詳細:") + _(str(error)))
+			errorDialog(_("再生に失敗しました。聴取可能な都道府県内であることをご確認ください。\nこの症状が引き続き発生する場合は、番組一覧の更新を行ってください。"))
 			self.parent.log.error("Playback failure!"+str(error))
 			return
 
