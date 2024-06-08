@@ -82,7 +82,9 @@ class Dialog(BaseDialog):
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("録音"),style=wx.ALL|wx.EXPAND,margin=20)
 		dirArea=views.ViewCreator.ViewCreator(self.viewMode,creator.GetPanel(),creator.GetSizer(),wx.HORIZONTAL,space=5,style=wx.ALL|wx.EXPAND,margin=0)
 		self.dir, static = dirArea.inputbox(_("保存先フォルダ(&F)"),proportion=1,textLayout=wx.VERTICAL)
+		self.dir.hideScrollBar(wx.HORIZONTAL)
 		self.dirBrowse = dirArea.button(_("参照"), self.browseDir,sizerFlag=wx.BOTTOM|wx.ALIGN_BOTTOM,margin=10)
+		self.filename, static = creator.inputbox(_("保存ファイル名(&N)"),sizerFlag=wx.EXPAND)
 
 		# network
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("ネットワーク"),style=wx.ALL,margin=20)
@@ -107,6 +109,9 @@ class Dialog(BaseDialog):
 		self._setValue(self.colormode,"view","colormode",configType.DIC,self.colorModeSelection)
 		self._setValue(self.textwrapping,"view","textwrapping",configType.DIC,self.textWrappingSelection)
 
+		# record
+		self._setValue(self.dir, "record", "dir", configType.STRING, "output")
+		self._setValue(self.filename, "record", "filename", configType.STRING, "output")
 		# network
 		self._setValue(self.update, "general", "update", configType.BOOL)
 		self._setValue(self.usemanualsetting, "proxy", "usemanualsetting", configType.BOOL)
