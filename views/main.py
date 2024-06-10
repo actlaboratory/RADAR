@@ -448,9 +448,11 @@ class Events(BaseEvents):
 
 	def show_program_info(self):
 		program_title = self.parent.progs.getNowProgram(self.id)
+		self.program_title = program_title
 		program_pfm = self.parent.progs.getnowProgramPfm(self.id)
 		if self.id in self.parent.stid:
 			result = self.parent.stid[self.id]
+			self.result = result
 
 		#リストビューにアペンド
 		self.parent.nplist.Append(("放送局", result), )
@@ -587,6 +589,9 @@ class Events(BaseEvents):
 		self.parent.get_latest_programList()
 
 	def record_immediately(self, event):
+		if not self.id:
+			return
 		self.parent.get_streamUrl(self.id)
-		self.parent.recorder.record(self.parent.m3u8, "output")
-
+		dirname = self.parent.app.config.getstring("record", "dir")
+		filename = self.program_title.replace(" ", "")
+		self.parent.recorder.record(self.parent.m3u8, f"{dirname}\\{str(datetime.date.today()) + filename}")

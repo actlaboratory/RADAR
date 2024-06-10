@@ -7,6 +7,7 @@ import constants
 from views import token
 from logging import getLogger
 import ConfigManager
+import simpleDialog
 
 class Recorder:
     def __init__(self):
@@ -24,8 +25,11 @@ class Recorder:
         self.ftp = self.filetypes[index]
         self.log.info(f"File type determined:{self.ftp}")
 
-    def record(self, streamUrl, fName):
-        self.log.info(f"Recording: File name {'fName'}")
+    def record(self, streamUrl, path):
+        if not path:
+            simpleDialog.errorDialog(_("正しいディレクトリ名が指定されていないため、録音を開始できません。"))
+            return
+        self.log.info(f"Recording: {path}")
         #ffmpegで録音
-        c = f"{constants.FFMPEG_PATH} -i {streamUrl} -f {self.ftp} -ac 2 -vn {fName}.{self.ftp}"
+        c = f"{constants.FFMPEG_PATH} -i {streamUrl} -f {self.ftp} -ac 2 -vn {path}.{self.ftp}"
         code = subprocess.Popen(c.split())

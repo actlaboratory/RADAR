@@ -4,7 +4,6 @@
 
 
 import wx
-
 import constants
 import simpleDialog
 import views.ViewCreator
@@ -84,7 +83,9 @@ class Dialog(BaseDialog):
 		self.dir, static = dirArea.inputbox(_("保存先フォルダ(&F)"),proportion=1,textLayout=wx.VERTICAL)
 		self.dir.hideScrollBar(wx.HORIZONTAL)
 		self.dirBrowse = dirArea.button(_("参照"), self.browseDir,sizerFlag=wx.BOTTOM|wx.ALIGN_BOTTOM,margin=10)
-		self.filename, static = creator.inputbox(_("保存ファイル名(&N)"),sizerFlag=wx.EXPAND)
+		self.createsubdir = creator.checkbox(_("番組ごとにサブフォルダを作成(&S)"))
+		self.createstationsubdir = creator.checkbox(_("放送局ごとにサブフォルダを作成(&U)"))
+
 
 		# network
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("ネットワーク"),style=wx.ALL,margin=20)
@@ -111,7 +112,9 @@ class Dialog(BaseDialog):
 
 		# record
 		self._setValue(self.dir, "record", "dir", configType.STRING, "output")
-		self._setValue(self.filename, "record", "filename", configType.STRING, "output")
+		self._setValue(self.createsubdir, "record", "createSubDir", configType.BOOL, True)
+		self._setValue(self.createstationsubdir, "record", "createStationSubDir", configType.BOOL, True)
+		
 		# network
 		self._setValue(self.update, "general", "update", configType.BOOL)
 		self._setValue(self.usemanualsetting, "proxy", "usemanualsetting", configType.BOOL)
@@ -168,3 +171,5 @@ class Dialog(BaseDialog):
 		if result == wx.ID_CANCEL:
 			return
 		target.SetValue(dialog.GetPath())
+
+		
