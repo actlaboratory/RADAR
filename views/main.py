@@ -63,6 +63,7 @@ class MainView(BaseView):
 		self.getradio()
 		self.time()
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
+		self.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"),False)
 
 	def SHOW_NOW_PROGRAMLIST(self):
 		self.nplist,nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
@@ -330,6 +331,7 @@ class Events(BaseEvents):
 	playing = False
 	mute_status = False
 	displaying = True #番組情報表示中
+	id = None
 
 	def onRecordMenuSelect(self, event):
 		"""録音品質メニューの動作"""
@@ -412,6 +414,7 @@ class Events(BaseEvents):
 
 	def onRadioActivated(self, event):
 		self.id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"), True)
 		if self.id == None:
 			return
 		self.parent.log.info("activated" + self.id)
@@ -425,7 +428,6 @@ class Events(BaseEvents):
 			errorDialog(_("再生に失敗しました。聴取可能な都道府県内であることをご確認ください。\nこの症状が引き続き発生する場合は、番組一覧の更新を行ってください。"))
 			self.parent.log.error("Playback failure!"+str(error))
 			return
-
 
 		self.parent.nplist.Enable()
 		self.parent.nplist.clear()
@@ -589,9 +591,10 @@ class Events(BaseEvents):
 		self.parent.get_latest_programList()
 
 	def record_immediately(self, event):
-		if not self.id:
+		if self.id == None:
 			return
+
 		self.parent.get_streamUrl(self.id)
 		dirname = self.parent.app.config.getstring("record", "dir")
-		filename = self.program_title.replace(" ", "")
-		self.parent.recorder.record(self.parent.m3u8, f"{dirname}\\{str(datetime.date.today()) + filename}")
+		replace_title = self.program_title.replace(" ", "") #番組タイトルから空白文字を除去したものを格納
+		self.parent.recorder.record(self.parent.m3u8, f"{dirname}\{str(datetime.date.today()) + replace_title}") #datetime+番組タイトルでファイル名を決定
