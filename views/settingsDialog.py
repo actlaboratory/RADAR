@@ -10,6 +10,7 @@ import views.ViewCreator
 
 from enum import Enum,auto
 from views.baseDialog import *
+import os
 
 
 class configType(Enum):
@@ -123,6 +124,13 @@ class Dialog(BaseDialog):
 
 	def onOkButton(self, event):
 		result = self._save()
+		#パスが指定されていなかったら
+		if self.dir.GetLineLength(0) <= 0:
+			simpleDialog.errorDialog(_("保存先フォルダを指定してください。"))
+			return
+		elif os.path.exists(self.dir.GetLineText(0)) == False:
+			simpleDialog.errorDialog(_("入力されたパスは存在しません。"))
+			return
 		event.Skip()
 
 	def checkBoxStatusChanged(self, event=None):
@@ -172,4 +180,3 @@ class Dialog(BaseDialog):
 			return
 		target.SetValue(dialog.GetPath())
 
-		
