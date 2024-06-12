@@ -8,6 +8,7 @@ from views import token
 from logging import getLogger
 import ConfigManager
 import simpleDialog
+import re
 
 class Recorder:
     def __init__(self):
@@ -21,15 +22,22 @@ class Recorder:
         ]
 
     def setFileType(self, index):
-        """選択されたメニュー項目から録音音質を決定"""
+        """録音音質を決定"""
         self.ftp = self.filetypes[index]
         self.log.info(f"File type determined:{self.ftp}")
 
     def record(self, streamUrl, path):
-        if not path:
-            simpleDialog.errorDialog(_("正しいディレクトリ名が指定されていないため、録音を開始できません。"))
-            return
-        self.log.info(f"Recording: {path}")
-        #ffmpegで録音
-        c = f"{constants.FFMPEG_PATH} -i {streamUrl} -f {self.ftp} -ac 2 -vn {path}.{self.ftp}"
-        code = subprocess.Popen(c.split())
+        """ffmpegを用いて録音"""
+        print(f"recordingPath is {path}")
+        self.log.debug("recording...")
+        ffmpeg_setting = f"{constants.FFMPEG_PATH} -i {streamUrl} -f {self.ftp} -ac 2 -vn {path}.{self.ftp}"
+        self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        return self.code
+
+    def stop_record(self):
+        """録音を終了"""
+        self.log.debug("recording stoped!")
+
+        self.code.stdin.close()
+        self.code.terminate()
+        #self.code.wait()

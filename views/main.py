@@ -332,6 +332,7 @@ class Events(BaseEvents):
 	mute_status = False
 	displaying = True #番組情報表示中
 	id = None
+	recording = False
 
 	def onRecordMenuSelect(self, event):
 		"""録音品質メニューの動作"""
@@ -593,8 +594,17 @@ class Events(BaseEvents):
 	def record_immediately(self, event):
 		if self.id == None:
 			return
+		elif not self.recording:
+			self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
+			self.recording = True
+			self.parent.get_streamUrl(self.id)
+			dirname = self.parent.app.config.getstring("record", "dir")
+			replace_title = self.program_title.replace(" ", "") #番組タイトルから空白文字を除去したものを格納
+			self.parent.recorder.record(self.parent.m3u8, f"{dirname}\{str(datetime.date.today()) + replace_title}") #datetime+番組タイトルでファイル名を決定
+		else:
+			self.onRecordingStop()
 
-		self.parent.get_streamUrl(self.id)
-		dirname = self.parent.app.config.getstring("record", "dir")
-		replace_title = self.program_title.replace(" ", "") #番組タイトルから空白文字を除去したものを格納
-		self.parent.recorder.record(self.parent.m3u8, f"{dirname}\{str(datetime.date.today()) + replace_title}") #datetime+番組タイトルでファイル名を決定
+	def onRecordingStop(self):
+		self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
+		self.parent.recorder.stop_record()
+		self.recording = False
