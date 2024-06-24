@@ -4,6 +4,7 @@
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
 
 import wx
+import timemanager
 import time
 import winsound
 import re
@@ -51,6 +52,7 @@ class MainView(BaseView):
 
 		self._player = player.player()
 		self.timer = wx.Timer()
+		self.tmg = timemanager.TimeManager()
 		self.progs = programmanager.ProgramManager()
 		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
 		self.recorder.setFileType(self.app.config.getint("recording", "menu_id")-10000)
@@ -67,7 +69,9 @@ class MainView(BaseView):
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"),False)
 
 	def startTimer(self):
-		self.timer.Start(300000)
+		value = self.app.config.getint("general", "frequency")
+		print(self.tmg.minutes_to_milliseconds(value))
+		self.timer.Start(self.tmg.minutes_to_milliseconds(value))
 		self.timer.Bind(wx.EVT_TIMER, self.events.onTimer)
 
 	def SHOW_NOW_PROGRAMLIST(self):
