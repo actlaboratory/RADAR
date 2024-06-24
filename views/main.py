@@ -50,6 +50,7 @@ class MainView(BaseView):
 		self.menu.hRecordingFileTypeMenu.Check(self.app.config.getint("recording", "menu_id"), self.app.config.getboolean("recording", "check_menu"))
 
 		self._player = player.player()
+		self.timer = wx.Timer()
 		self.progs = programmanager.ProgramManager()
 		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
 		self.recorder.setFileType(self.app.config.getint("recording", "menu_id")-10000)
@@ -64,6 +65,10 @@ class MainView(BaseView):
 		self.time()
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"),False)
+
+	def startTimer(self):
+		self.timer.Start(300000)
+		self.timer.Bind(wx.EVT_TIMER, self.events.onTimer)
 
 	def SHOW_NOW_PROGRAMLIST(self):
 		self.nplist,nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
@@ -227,6 +232,7 @@ class MainView(BaseView):
 		self.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
 		self.get_streamUrl(id)
 		self.player()
+		self.startTimer()
 		self.events.playing = True
 
 	def stop(self):
@@ -344,6 +350,8 @@ class Events(BaseEvents):
 		self.parent.recorder.setFileType(selected - 10000)
 		self.parent.app.config["recording"]["menu_id"] = selected
 		self.parent.app.config["recording"]["check_menu"] = self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected)
+	def onTimer(self, event):
+		self.parent.get_latest_info()
 
 	def example(self, event):
 		d = sample.Dialog()
@@ -608,3 +616,4 @@ class Events(BaseEvents):
 		self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
 		self.parent.recorder.stop_record()
 		self.recording = False
+		
