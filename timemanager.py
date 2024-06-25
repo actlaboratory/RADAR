@@ -5,7 +5,7 @@ class TimeManager:
         """コンストラクタ"""
         self.config = ConfigManager.ConfigManager()
 
-    def minutes_to_milliseconds(self, minutes):
+    def replace_milliseconds(self, minutes):
         """
         引数の分数をミリ秒に変換して返す関数
 
