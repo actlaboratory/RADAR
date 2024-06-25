@@ -70,8 +70,7 @@ class MainView(BaseView):
 
 	def startTimer(self):
 		value = self.app.config.getint("general", "frequency")
-		print(self.tmg.minutes_to_milliseconds(value))
-		self.timer.Start(self.tmg.minutes_to_milliseconds(value))
+		self.timer.Start(self.tmg.replace_milliseconds(value)) #設定した頻度で番組情報を更新
 		self.timer.Bind(wx.EVT_TIMER, self.events.onTimer)
 
 	def SHOW_NOW_PROGRAMLIST(self):
@@ -243,6 +242,8 @@ class MainView(BaseView):
 		self._player.stop()
 		self.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
 		self.log.info("posed")
+		self.timer.Stop()
+		self.log.debug("timer is stoped!")
 		self.events.playing = False
 
 	def get_latest_info(self):
