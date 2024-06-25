@@ -4,6 +4,7 @@ import sys
 import os
 import subprocess
 import constants
+from plyer import notification
 from views import token
 from logging import getLogger
 import ConfigManager
@@ -28,6 +29,7 @@ class Recorder:
 
     def record(self, streamUrl, path):
         """ffmpegを用いて録音"""
+        self.path = path
         print(f"recordingPath is {path}")
         self.log.debug("recording...")
         ffmpeg_setting = f"{constants.FFMPEG_PATH} -i {streamUrl} -f {self.ftp} -ac 2 -vn {path}.{self.ftp}"
@@ -37,7 +39,6 @@ class Recorder:
     def stop_record(self):
         """録音を終了"""
         self.log.debug("recording stoped!")
-
         self.code.stdin.close()
         self.code.terminate()
-        #self.code.wait()
+        notification.notify(title='録音完了', message=f'ファイルは正しく{self.path}として保存されました。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
