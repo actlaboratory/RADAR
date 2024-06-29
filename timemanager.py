@@ -17,3 +17,15 @@ class TimeManager:
         """
         milliseconds = minutes * 60 * 1000
         return int(milliseconds)
+
+    def calculate_time_difference(current_time, program_start_time):
+        """
+        現在時刻と番組開始時間の差をミリ秒で返す関数
+        Args:
+            current_time (datetime.datetime): 現在の日時
+            program_start_time (datetime.datetime): 番組の開始時間
+        Returns:
+            int: 現在時刻と番組開始時間の差をミリ秒で表した値
+        """
+        time_difference = program_start_time - current_time
+        return int(time_difference.total_seconds() * 1000)

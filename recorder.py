@@ -10,12 +10,19 @@ from logging import getLogger
 import ConfigManager
 import simpleDialog
 import re
+import os
 
 class Recorder:
     def __init__(self):
         """コンストラクタ"""
         self.log = getLogger("%s.%s" % (constants.LOG_PREFIX, "recorder"))
         self.config = ConfigManager.ConfigManager()
+        #outputフォルダの存在をチェックして、なかったら作る
+        BASE_RECORDING_DIR = "OUTPUT"
+        self.BASE_RECORDING_DIR = BASE_RECORDING_DIR
+        if not os.path.exists(BASE_RECORDING_DIR):
+            os.makedirs(BASE_RECORDING_DIR)
+            self.log.info("created baseRecordingDirectory")
 
         self.filetypes = [
             "mp3",
@@ -42,3 +49,13 @@ class Recorder:
         self.code.stdin.close()
         self.code.terminate()
         notification.notify(title='録音完了', message=f'ファイルは正しく{self.path}として保存されました。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
+
+    #ディレクトリ関連
+    def create_recordingDir(self, stationid):
+        """
+        放送局名のディレクトリを作成
+        これは録音ファイルがディレクトリ内で散らばらないようにするための対策
+        """
+        dir = f"{self.BASE_RECORDING_DIR}\{stationid}"
+        os.makedirs(dir)
+        return dir

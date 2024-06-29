@@ -7,6 +7,7 @@ import wx
 import timemanager
 import time
 import winsound
+import region_dic
 import re
 import recorder
 from views import token
@@ -111,56 +112,7 @@ class MainView(BaseView):
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
 		self.stid = {}
-		#都道府県をキー、地方を値とする辞書を作成
-		region = {
-			"hokkaido":"HOKKAIDO TOHOKU",
-			"aomori":"HOKKAIDO TOHOKU",
-			"iwate":"HOKKAIDO TOHOKU",
-			"akita":"HOKKAIDO TOHOKU",
-			"miyagi":"HOKKAIDO TOHOKU",
-			"fukusima":"HOKKAIDO TOHOKU",
-			"yamagata":"HOKKAIDO TOHOKU",
-			"ibaraki":"KANTO",
-			"gunma":"KANTO",
-			"totigi":"KANTO",
-			"saitama":"KANTO",
-			"chiba":"KANTO",
-			"toukyou":"KANTO",
-			"kanagawa":"KANTO",
-			"shizuoka":"chubu",
-			"aichi":"chubu",
-			"gifu":"chubu",
-			"nagano":"chubu",
-			"yamanashi":"chubu",
-			"ishikawa":"HOKURIKU KOUSHINETSU",
-			"niigata":"HOKURIKU KOUSHINETSU",
-			"toyama":"HOKURIKU KOUSHINETSU",
-			"fukui":"HOKURIKU KOUSHINETSU",
-			"mie":"KINKI",
-			"shiga":"KINKI",
-			"kyoto":"KINKI,",
-			"osaka":"KINKI",
-			"hyogo":"KINKI",
-			"wakayama":"KINKI",
-			"nara":"KINKI",
-			"tottori":"CHUGOKU SHIKOKU",
-			"shimane":"CHUGOKU SHIKOKU",
-			"hiroshima":"CHUGOKU SHIKOKU",
-			"okayama":"CHUGOKU SHIKOKU",
-			"yamaguchi":"CHUGOKU SHIKOKU",
-			"kagawa":"CHUGOKU SHIKOKU",
-			"kochi":"CHUGOKU SHIKOKU",
-			"ehime":"CHUGOKU SHIKOKU",
-			"tokushima":"CHUGOKU SHIKOKU",
-			"fukuoka":"KYUSHU",
-			"oita":"KYUSHU",
-			"saga":"KYUSHU",
-			"nagasaki":"KYUSHU",
-			"miyazaki":"KYUSHU",
-			"kagoshima":"KYUSHU",
-			"okinawa":"KYUSHU",
-			"zenkoku":"ZENKOKU"
-		}
+		region = region_dic.REGION
 		if self.result in region:
 			self.log.debug("region:"+region[self.result])
 		#ツリーのルート項目の作成
@@ -247,14 +199,14 @@ class MainView(BaseView):
 		self.events.playing = False
 
 	def get_latest_info(self):
-		"""リロード処理"""
+		"""ctrl+f5によるリロード処理のときに呼ばれる"""
 		self.nplist.clear()
 		self.events.show_program_info()
 		self.events.show_onair_music()
 		self.events.show_description()
 
 	def get_latest_programList(self):
-		"""番組情報取得"""
+		"""f5押したら呼ばれる"""
 		self.tree.Destroy()
 		self.nplist.clear()
 		self.DSCBOX.Disable()
@@ -355,6 +307,7 @@ class Events(BaseEvents):
 		self.parent.recorder.setFileType(selected - 10000)
 		self.parent.app.config["recording"]["menu_id"] = selected
 		self.parent.app.config["recording"]["check_menu"] = self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected)
+
 	def onTimer(self, event):
 		self.parent.get_latest_info()
 
@@ -611,9 +564,9 @@ class Events(BaseEvents):
 			self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
 			self.recording = True
 			self.parent.get_streamUrl(self.id)
-			dirname = self.parent.app.config.getstring("record", "dir")
-			replace_title = self.program_title.replace(" ", "") #番組タイトルから空白文字を除去したものを格納
-			self.parent.recorder.record(self.parent.m3u8, f"{dirname}\{str(datetime.date.today()) + replace_title}") #datetime+番組タイトルでファイル名を決定
+			replace = self.program_title.replace(" ","-")
+			dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.id])
+			self.parent.recorder.record(self.parent.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
 		else:
 			self.onRecordingStop()
 

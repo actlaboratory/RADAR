@@ -81,13 +81,7 @@ class Dialog(BaseDialog):
 
 		#record
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("録音"),style=wx.ALL|wx.EXPAND,margin=20)
-		dirArea=views.ViewCreator.ViewCreator(self.viewMode,creator.GetPanel(),creator.GetSizer(),wx.HORIZONTAL,space=5,style=wx.ALL|wx.EXPAND,margin=0)
-		self.dir, static = dirArea.inputbox(_("保存先フォルダ(&F)"),proportion=1,textLayout=wx.VERTICAL)
-		self.dir.hideScrollBar(wx.HORIZONTAL)
-		self.dirBrowse = dirArea.button(_("参照"), self.browseDir,sizerFlag=wx.BOTTOM|wx.ALIGN_BOTTOM,margin=10)
-		self.createsubdir = creator.checkbox(_("番組ごとにサブフォルダを作成(&S)"))
 		self.createstationsubdir = creator.checkbox(_("放送局ごとにサブフォルダを作成(&U)"))
-
 
 		# network
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("ネットワーク"),style=wx.ALL,margin=20)
@@ -114,8 +108,6 @@ class Dialog(BaseDialog):
 		self._setValue(self.textwrapping,"view","textwrapping",configType.DIC,self.textWrappingSelection)
 
 		# record
-		self._setValue(self.dir, "record", "dir", configType.STRING, "output")
-		self._setValue(self.createsubdir, "record", "createSubDir", configType.BOOL, True)
 		self._setValue(self.createstationsubdir, "record", "createStationSubDir", configType.BOOL, True)
 		
 		# network

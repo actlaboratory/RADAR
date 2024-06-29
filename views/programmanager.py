@@ -11,7 +11,7 @@ import datetime
 class ProgramManager:
     def __init__(self):
         self.log=getLogger("%s.%s" % (constants.LOG_PREFIX,"ProgramManager"))
-        self.log.info("initialized!")
+        self.log.debug("created!")
         self.jpCode()
 
     def getprogramlist(self):
