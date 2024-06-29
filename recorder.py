@@ -57,5 +57,6 @@ class Recorder:
         これは録音ファイルがディレクトリ内で散らばらないようにするための対策
         """
         dir = f"{self.BASE_RECORDING_DIR}\{stationid}"
-        os.makedirs(dir)
+        if not os.path.exists(dir):
+            os.makedirs(dir)
         return dir
