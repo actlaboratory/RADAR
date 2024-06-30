@@ -31,6 +31,7 @@ class Recorder:
 
     def setFileType(self, index):
         """録音音質を決定"""
+        print(index)
         self.ftp = self.filetypes[index]
         self.log.info(f"File type determined:{self.ftp}")
 

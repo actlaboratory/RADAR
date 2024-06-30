@@ -49,14 +49,18 @@ class MainView(BaseView):
 			self.app.config.getint(self.identifier, "positionY", 50, 0)
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
-		self.menu.hRecordingFileTypeMenu.Check(self.app.config.getint("recording", "menu_id"), self.app.config.getboolean("recording", "check_menu"))
 
 		self._player = player.player()
 		self.timer = wx.Timer()
 		self.tmg = timemanager.TimeManager()
 		self.progs = programmanager.ProgramManager()
 		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
-		self.recorder.setFileType(self.app.config.getint("recording", "menu_id")-10000)
+		if self.app.config.getint("recording", "menu_id") == 0:
+			self.menu.hRecordingFileTypeMenu.Check(constants.RECORDING_MP3, True)
+			self.recorder.setFileType(self.app.config.getint("recording", "menu_id"))
+		else:
+			self.menu.hRecordingFileTypeMenu.Check(self.app.config.getint("recording", "menu_id"), self.app.config.getboolean("recording", "check_menu"))
+			self.recorder.setFileType(self.app.config.getint("recording", "menu_id")-10000)
 		self.area()
 		self.description()
 		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
