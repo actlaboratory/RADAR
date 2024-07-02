@@ -1,4 +1,6 @@
+#rpb time&calenderUtil
 import ConfigManager
+import calendar
 
 class TimeManager:
     def __init__(self):
@@ -29,3 +31,22 @@ class TimeManager:
         """
         time_difference = program_start_time - current_time
         return int(time_difference.total_seconds() * 1000)
+
+
+class CalenderUtil:
+    def __init__(self):
+        """カレンダークラス"""
+
+    def getAnnual(self):
+        """年間カレンダー取得"""
+        self.year = int(datetime.datetime.now().year)
+        return calendar.prcal(year)
+
+    def getMonth(self):
+        """月間カレンダー取得"""
+        month = int(datetime.datetime.now().month)
+        return calendar.month(self.year, month)
+
+    def judge_leapYear(self):
+        """閏年かどうかを判定"""
+        return calendar.isleap(self.year)
