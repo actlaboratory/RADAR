@@ -1,6 +1,7 @@
 #rpb time&calenderUtil
 import ConfigManager
 import calendar
+import datetime
 
 class TimeManager:
     def __init__(self):
@@ -36,10 +37,10 @@ class TimeManager:
 class CalenderUtil:
     def __init__(self):
         """カレンダークラス"""
+        self.year = int(datetime.datetime.now().year)
 
     def getAnnual(self):
         """年間カレンダー取得"""
-        self.year = int(datetime.datetime.now().year)
         return calendar.prcal(year)
 
     def getMonth(self):
