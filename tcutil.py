@@ -1,4 +1,5 @@
-#rpb time&calenderUtil
+#rpb time&calenderUtil(tcutil)
+
 import ConfigManager
 import calendar
 import datetime
@@ -34,20 +35,31 @@ class TimeManager:
         return int(time_difference.total_seconds() * 1000)
 
 
-class CalenderUtil:
+class CalendarUtil:
     def __init__(self):
         """カレンダークラス"""
-        self.year = int(datetime.datetime.now().year)
+        self.year = datetime.datetime.now().year
+        if len(str(datetime.datetime.now().month)) < 2:
+            self.month = f"0{datetime.datetime.now().month}"
+        else:
+            self.month = f"{datetime.datetime.now().month}"
+        print(type(self.month))
 
     def getAnnual(self):
         """年間カレンダー取得"""
-        return calendar.prcal(year)
+        return calendar.prcal(self.year)
 
     def getMonth(self):
         """月間カレンダー取得"""
-        month = int(datetime.datetime.now().month)
-        return calendar.month(self.year, month)
+        month = datetime.datetime.now().month
+        return calendar.monthcalendar(self.year, month)
 
-    def judge_leapYear(self):
-        """閏年かどうかを判定"""
-        return calendar.isleap(self.year)
+    def dateToInteger(self, date):
+        """日付データから/を除去し、int型に変換して返す"""
+
+        if "/" in date:
+            result = date.replace("/", "")
+            return result
+        if "-" in date:
+            result = date.replace("-", "")
+            return result

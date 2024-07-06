@@ -7,20 +7,24 @@ from logging import getLogger
 import requests
 import constants
 import datetime
+import tcutil
 
 class ProgramManager:
     def __init__(self):
         self.log=getLogger("%s.%s" % (constants.LOG_PREFIX,"ProgramManager"))
         self.log.debug("created!")
         self.jpCode()
+        self.tcutil = tcutil.CalendarUtil()
 
     def getprogramlist(self):
         return "http://radiko.jp/v3"
 
-    def getTodayProgramList(self, id, date=0):
-        dt = datetime.datetime.now().date()
-        dtstring = str(dt).replace("-", "")
-        url = f"{self.getprogramlist()}/program/station/date/{int(dtstring)+date}/{id}.xml"
+    def retrieveRadioListings(self, id, date=0):
+        now_dt = datetime.datetime.now().date()
+        if date == 0:
+            url = f"{self.getprogramlist()}/program/station/date/{self.tcutil.dateToInteger(str(now_dt))}/{id}.xml"
+        else:
+            url = f"{self.getprogramlist()}/program/station/date/{date}/{id}.xml"
         # XMLデータを取得
         response = requests.get(url)
         xml_data = response.content

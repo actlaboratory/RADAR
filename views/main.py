@@ -4,7 +4,7 @@
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
 
 import wx
-import timemanager
+import tcutil
 import time
 import winsound
 import region_dic
@@ -14,7 +14,8 @@ from views import token
 from views import programmanager
 from views import changeDevice
 import xml.etree.ElementTree as ET
-from itertools import islice
+#from itertools import islice
+import itertools
 import subprocess
 
 import constants
@@ -52,7 +53,8 @@ class MainView(BaseView):
 
 		self._player = player.player()
 		self.timer = wx.Timer()
-		self.tmg = timemanager.TimeManager()
+		self.tmg = tcutil.TimeManager()
+		self.clutl = tcutil.CalendarUtil()
 		self.progs = programmanager.ProgramManager()
 		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
 		try:
@@ -69,7 +71,7 @@ class MainView(BaseView):
 		self.SHOW_NOW_PROGRAMLIST()
 		self.AreaTreeCtrl()
 		self.getradio()
-		self.time()
+		self.calendar()
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"),False)
 
@@ -92,13 +94,6 @@ class MainView(BaseView):
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
 
-	def date_cmb(self):
-		"""日付を指定させる"""
-		list = []
-		for timelist in self.timelists:
-			list.append(str(timelist))
-		self.cmb,label = self.creator.combobox(_("日時を指定"), list)
-		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_week_programlist)
 
 	def infoListView(self):
 		self.lst,programinfo = self.creator.virtualListCtrl(_("番組表一覧"))
@@ -107,7 +102,21 @@ class MainView(BaseView):
 		self.lst.AppendColumn(_("開始時間"))
 		self.lst.AppendColumn(_("終了時間"))
 		self.backbtn()
-		self.date_cmb()
+		self.calendarSelector()
+
+	def calendarSelector(self):
+		"""日時指定用コンボボックスを作成し、内容を設定"""
+		self.result = []
+		year = self.clutl.year
+		month = self.clutl.month
+		day = datetime.datetime.now().day
+		for cal in self.calendar_lists[day:day+7]:
+			if len(str(cal)) < 2:
+				self.result.append(f"{year}/{month}/0{cal}")
+			else:
+				self.result.append(f"{year}/{month}/{cal}")
+		self.cmb,label = self.creator.combobox(_("日時を指定"), self.result)
+		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_week_programlist)
 
 	def backbtn(self):
 		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)
@@ -179,13 +188,8 @@ class MainView(BaseView):
 	def exit_button(self):
 		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
 
-	def time(self):
-		self.timelists = []
-		dt = datetime.datetime.now().date()
-		dtstring = str(dt).replace("-", "")
-		self.dtstring = dtstring
-		for count in range(1,7):
-			self.timelists.append(int(dtstring)+count)
+	def calendar(self):
+		self.calendar_lists = list(itertools.chain.from_iterable(self.clutl.getMonth())) #２次元リストを一次元に変換
 
 	def play(self, id):
 		self.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
@@ -473,7 +477,7 @@ class Events(BaseEvents):
 		self.parent.log.debug("volume decreased")
 
 	def nowProgramInfo(self, event):
-		self.parent.progs.getTodayProgramList(self.selected)
+		self.parent.progs.retrieveRadioListings(self.selected)
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
 		program_ftl = self.parent.progs.get_ftl() #番組開始時間
@@ -495,8 +499,8 @@ class Events(BaseEvents):
 		selection = self.parent.cmb.GetSelection()
 		if selection == None:
 			return
-		date_time = self.parent.timelists[selection]
-		self.parent.progs.getTodayProgramList(self.selected,date_time-int(self.parent.dtstring))
+		date = self.parent.clutl.dateToInteger(self.parent.result[selection])
+		self.parent.progs.retrieveRadioListings(self.selected,date)
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
 		program_ftl = self.parent.progs.get_ftl()
@@ -578,4 +582,3 @@ class Events(BaseEvents):
 		self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
 		self.parent.recorder.stop_record()
 		self.recording = False
-		
