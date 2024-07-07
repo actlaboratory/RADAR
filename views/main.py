@@ -149,6 +149,7 @@ class MainView(BaseView):
 					stream[r.attrib["ascii_name"]] = {"radioname":station.find("name").text,"radioid":station.find("id").text}
 					if "ZENKOKU" in stream:
 						self.tree.AppendItem(root, stream["ZENKOKU"]["radioname"], data=stream["ZENKOKU"]["radioid"])
+						self.stid[stream["ZENKOKU"]["radioid"]] = stream["ZENKOKU"]["radioname"]
 					if region[self.area] in stream:
 						self.tree.AppendItem(root, stream[region[self.area]]["radioname"], data=stream[region[self.area]]["radioid"])
 						self.stid[stream[region[self.area]]["radioid"]] = stream[region[self.area]]["radioname"]
@@ -416,11 +417,12 @@ class Events(BaseEvents):
 		self.program_title = program_title
 		program_pfm = self.parent.progs.getnowProgramPfm(self.id)
 		if self.id in self.parent.stid:
+			print("True")
 			result = self.parent.stid[self.id]
 			self.result = result
 
 		#リストビューにアペンド
-		self.parent.nplist.Append(("放送局", result), )
+		self.parent.nplist.Append(("放送局", self.result), )
 		self.parent.nplist.Append(("番組名", program_title), )
 		self.parent.nplist.Append(("出演者", program_pfm), )
 
