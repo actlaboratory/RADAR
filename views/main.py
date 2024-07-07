@@ -74,10 +74,10 @@ class MainView(BaseView):
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"),False)
 
-	def startTimer(self):
+	def update_program_info(self):
 		value = self.app.config.getint("general", "frequency")
 		self.timer.Start(self.tmg.replace_milliseconds(value)) #設定した頻度で番組情報を更新
-		self.timer.Bind(wx.EVT_TIMER, self.events.onTimer)
+		self.timer.Bind(wx.EVT_TIMER, self.events.onUpdateProcess)
 
 	def SHOW_NOW_PROGRAMLIST(self):
 		self.nplist,nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
@@ -164,7 +164,7 @@ class MainView(BaseView):
 
 	def get_streamUrl(self, stationid):
 		url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
-		self.m3u8 = self.gettoken.gen_temp_chunk_m3u8_url( url ,self.token)
+		self.m3u8 = self.progs.gettoken.gen_temp_chunk_m3u8_url( url ,self.progs.token)
 
 	def player(self):
 		"""再生用関数"""
@@ -183,7 +183,7 @@ class MainView(BaseView):
 		self.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
 		self.get_streamUrl(id)
 		self.player()
-		self.startTimer()
+		self.update_program_info()
 		self.events.playing = True
 
 	def stop(self):
@@ -304,7 +304,7 @@ class Events(BaseEvents):
 		self.parent.app.config["recording"]["menu_id"] = selected
 		self.parent.app.config["recording"]["check_menu"] = self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected)
 
-	def onTimer(self, event):
+	def onUpdateProcess(self, event):
 		self.parent.get_latest_info()
 
 	def example(self, event):

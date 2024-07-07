@@ -6,7 +6,7 @@ import datetime
 
 class TimeManager:
     def __init__(self):
-        """コンストラクタ"""
+        """時間を管理する"""
         self.config = ConfigManager.ConfigManager()
 
     def replace_milliseconds(self, minutes):
@@ -37,7 +37,7 @@ class TimeManager:
 
 class CalendarUtil:
     def __init__(self):
-        """カレンダークラス"""
+        """カレンダーを扱う"""
         self.year = datetime.datetime.now().year
         if len(str(datetime.datetime.now().month)) < 2:
             self.month = f"0{datetime.datetime.now().month}"
@@ -56,7 +56,6 @@ class CalendarUtil:
 
     def dateToInteger(self, date):
         """日付データから/を除去し、int型に変換して返す"""
-
         if "/" in date:
             result = date.replace("/", "")
             return result

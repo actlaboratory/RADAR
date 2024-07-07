@@ -32,7 +32,6 @@ class ProgramManager:
         result = values[2]
         return result
 
-
     def getprogramlist(self):
         return "http://radiko.jp/v3"
 
