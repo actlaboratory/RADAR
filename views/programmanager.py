@@ -8,6 +8,7 @@ import requests
 import constants
 import datetime
 import tcutil
+from views import token
 
 class ProgramManager:
     def __init__(self):
@@ -15,6 +16,22 @@ class ProgramManager:
         self.log.debug("created!")
         self.jpCode()
         self.tcutil = tcutil.CalendarUtil()
+
+    def getArea(self):
+        """エリアを判定する"""
+        self.gettoken = token.Token()
+        res = self.gettoken.auth1()
+        ret = self.gettoken.get_partial_key(res)
+        self.token = ret[1]
+        self.partialkey = ret[0]
+        self.gettoken.auth2(self.partialkey, self.token )
+        area = self.gettoken.area #エイラを取得
+        before = re.findall("\s", area)
+        replace = area.replace(before[0], ",") #スペースを文字列置換で,に置き換える
+        values = replace.split(",") #戻り地をリストにする
+        result = values[2]
+        return result
+
 
     def getprogramlist(self):
         return "http://radiko.jp/v3"

@@ -14,7 +14,6 @@ from views import token
 from views import programmanager
 from views import changeDevice
 import xml.etree.ElementTree as ET
-#from itertools import islice
 import itertools
 import subprocess
 
@@ -63,7 +62,7 @@ class MainView(BaseView):
 		except:
 			pass
 
-		self.area()
+		self.areaDetermination()
 		self.description()
 		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
 		self.volume.SetValue(self.app.config.getint("play", "volume"))
@@ -93,7 +92,6 @@ class MainView(BaseView):
 
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
-
 
 	def infoListView(self):
 		self.lst,programinfo = self.creator.virtualListCtrl(_("番組表一覧"))
@@ -126,12 +124,12 @@ class MainView(BaseView):
 		"""ステーションidを取得後、ツリービューに描画"""
 		self.stid = {}
 		region = region_dic.REGION
-		if self.result in region:
-			self.log.debug("region:"+region[self.result])
+		if self.area in region:
+			self.log.debug("region:"+region[self.area])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
 		#エリア情報の取得に失敗
-		if not self.result:
+		if not self.area:
 			errorDialog(_("エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください"))
 			self.tree.SetFocus()
 			self.tree.Expand(root)
@@ -151,28 +149,18 @@ class MainView(BaseView):
 					stream[r.attrib["ascii_name"]] = {"radioname":station.find("name").text,"radioid":station.find("id").text}
 					if "ZENKOKU" in stream:
 						self.tree.AppendItem(root, stream["ZENKOKU"]["radioname"], data=stream["ZENKOKU"]["radioid"])
-					if region[self.result] in stream:
-						self.tree.AppendItem(root, stream[region[self.result]]["radioname"], data=stream[region[self.result]]["radioid"])
-						self.stid[stream[region[self.result]]["radioid"]] = stream[region[self.result]]["radioname"]
+					if region[self.area] in stream:
+						self.tree.AppendItem(root, stream[region[self.area]]["radioname"], data=stream[region[self.area]]["radioid"])
+						self.stid[stream[region[self.area]]["radioid"]] = stream[region[self.area]]["radioname"]
 		self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
 		self.tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.events.onRadioSelected)
 		self.tree.SetFocus()
 		self.tree.Expand(root)
 		self.tree.SelectItem(root, select=True)
 
-	def area(self):
+	def areaDetermination(self):
 		"""エリアを判定する"""
-		self.gettoken = token.Token()
-		res = self.gettoken.auth1()
-		ret = self.gettoken.get_partial_key(res)
-		self.token = ret[1]
-		self.partialkey = ret[0]
-		self.gettoken.auth2(self.partialkey, self.token )
-		area = self.gettoken.area #エイラを取得
-		before = re.findall("\s", area)
-		replace = area.replace(before[0], ",") #スペースを文字列置換で,に置き換える
-		values = replace.split(",") #戻り地をリストにする
-		self.result = values[2]
+		self.area = self.progs.getArea()
 
 	def get_streamUrl(self, stationid):
 		url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
@@ -218,7 +206,7 @@ class MainView(BaseView):
 		self.tree.Destroy()
 		self.nplist.clear()
 		self.DSCBOX.Disable()
-		self.area()
+		self.areaDetermination()
 		self.AreaTreeCtrl()
 		self.getradio()
 
