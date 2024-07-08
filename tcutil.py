@@ -43,7 +43,6 @@ class CalendarUtil:
             self.month = f"0{datetime.datetime.now().month}"
         else:
             self.month = f"{datetime.datetime.now().month}"
-        print(type(self.month))
 
     def getAnnual(self):
         """年間カレンダー取得"""

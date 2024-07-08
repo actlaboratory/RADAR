@@ -417,7 +417,6 @@ class Events(BaseEvents):
 		self.program_title = program_title
 		program_pfm = self.parent.progs.getnowProgramPfm(self.id)
 		if self.id in self.parent.stid:
-			print("True")
 			result = self.parent.stid[self.id]
 			self.result = result
 
