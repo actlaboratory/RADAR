@@ -14,7 +14,6 @@ import os
 
 class Recorder:
     def __init__(self):
-        """コンストラクタ"""
         self.log = getLogger("%s.%s" % (constants.LOG_PREFIX, "recorder"))
         self.config = ConfigManager.ConfigManager()
         #outputフォルダの存在をチェックして、なかったら作る

@@ -72,7 +72,7 @@ class MainView(BaseView):
 		self.getradio()
 		self.calendar()
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
-		self.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"),False)
+
 
 	def update_program_info(self):
 		value = self.app.config.getint("general", "frequency")
@@ -256,7 +256,7 @@ class Menu(BaseMenu):
 		#録音メニュー
 		self.RegisterMenuCommand(self.hRecordingMenu, {
 			"RECORDING_IMMEDIATELY":self.parent.events.record_immediately,
-			"RECORDING_SCHEDULE":None,
+			"RECORDING_SCHEDULE":self.parent.events.recording_schedule,
 		})
 
 		#録音品質選択メニュー
@@ -378,7 +378,6 @@ class Events(BaseEvents):
 
 	def onRadioActivated(self, event):
 		self.id = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem()) #stationIDが出る
-		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"), True)
 		if self.id == None:
 			return
 		self.parent.log.info("activated" + self.id)
@@ -440,9 +439,11 @@ class Events(BaseEvents):
 		if self.selected == None:
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"),False)
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),False)
+			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"),False)
 			return
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"), True)
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),True)
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"), True)
 
 	def onVolumeChanged(self, event):
 		value = self.parent.volume.GetValue()
@@ -555,14 +556,16 @@ class Events(BaseEvents):
 		self.parent.get_latest_programList()
 
 	def record_immediately(self, event):
-		if self.id == None:
+		print(self.selected)
+		title = self.parent.progs.getNowProgram(self.selected)
+		if self.selected == None:
 			return
 		elif not self.recording:
 			self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
 			self.recording = True
-			self.parent.get_streamUrl(self.id)
-			replace = self.program_title.replace(" ","-")
-			dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.id])
+			self.parent.get_streamUrl(self.selected)
+			replace = title.replace(" ","-")
+			dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.selected])
 			self.parent.recorder.record(self.parent.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
 		else:
 			self.onRecordingStop()
@@ -571,3 +574,6 @@ class Events(BaseEvents):
 		self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
 		self.parent.recorder.stop_record()
 		self.recording = False
+
+	def recording_schedule(self, event):
+		print("recordingMethod")
