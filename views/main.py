@@ -104,17 +104,19 @@ class MainView(BaseView):
 
 	def calendarSelector(self):
 		"""日時指定用コンボボックスを作成し、内容を設定"""
-		self.result = []
+		self.calst = []
 		year = self.clutl.year
 		month = self.clutl.month
 		day = datetime.datetime.now().day
-		for cal in self.calendar_lists[day:day+7]:
+		del self.calendar_lists[0:self.calendar_lists.index(int(day))]
+		for cal in self.calendar_lists:
 			if len(str(cal)) < 2:
-				self.result.append(f"{year}/{month}/0{cal}")
+				self.calst.append(f"{year}/{month}/0{cal}")
 			else:
-				self.result.append(f"{year}/{month}/{cal}")
-		self.cmb,label = self.creator.combobox(_("日時を指定"), self.result)
-		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_week_programlist)
+				self.calst.append(f"{year}/{month}/{cal}")
+		self.cmb,label = self.creator.combobox(_("日時を指定"), self.calst)
+		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_monthly_programlist)
+		self.cmb.SetSelection(0)
 
 	def backbtn(self):
 		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)
@@ -179,6 +181,8 @@ class MainView(BaseView):
 
 	def calendar(self):
 		self.calendar_lists = list(itertools.chain.from_iterable(self.clutl.getMonth())) #２次元リストを一次元に変換
+		del self.calendar_lists[0:3]
+		del self.calendar_lists[-1]
 
 	def play(self, id):
 		self.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
@@ -247,8 +251,7 @@ class Menu(BaseMenu):
 
 		#番組メニュー
 		self.RegisterMenuCommand(self.hProgramListMenu, {
-			"SHOW_NOW_PROGRAMLIST":self.parent.events.nowProgramInfo,
-			"SHOW_WEEK_PROGRAMLIST":self.parent.events.weekProgramInfo,
+			"SHOW_MONTHLY_PROGRAMLIST":self.parent.events.monthlyProgramInfo,
 			"HIDE_PROGRAMINFO":self.parent.events.switching_programInfo,
 			"UPDATE_PROGRAMLIST":self.parent.events.onUpdateProgram,
 		})
@@ -437,12 +440,11 @@ class Events(BaseEvents):
 	def onRadioSelected(self, event):
 		self.selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
 		if self.selected == None:
-			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"),False)
-			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),False)
+
+			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_MONTHLY_PROGRAMLIST"),False)
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"),False)
 			return
-		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_NOW_PROGRAMLIST"), True)
-		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_WEEK_PROGRAMLIST"),True)
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_MONTHLY_PROGRAMLIST"),True)
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"), True)
 
 	def onVolumeChanged(self, event):
@@ -466,30 +468,17 @@ class Events(BaseEvents):
 		self.onVolumeChanged(event)
 		self.parent.log.debug("volume decreased")
 
-	def nowProgramInfo(self, event):
-		self.parent.progs.retrieveRadioListings(self.selected)
-		title = self.parent.progs.gettitle() #番組のタイトル
-		pfm = self.parent.progs.getpfm() #出演者の名前
-		program_ftl = self.parent.progs.get_ftl() #番組開始時間
-		program_tol = self.parent.progs.get_tol() #番組終了時間
-		self.parent.Clear()
-		self.parent.infoListView()
-		self.parent.cmb.Destroy()
-		for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
-			self.parent.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
-		self.parent.lst.SetFocus()
-
-	def weekProgramInfo(self, event):
+	def monthlyProgramInfo(self, event):
 		self.parent.Clear()
 		self.parent.infoListView()
 		self.parent.lst.SetFocus()
 
-	def show_week_programlist(self, event):
+	def show_monthly_programlist(self, event):
 		self.parent.lst.clear()
 		selection = self.parent.cmb.GetSelection()
 		if selection == None:
 			return
-		date = self.parent.clutl.dateToInteger(self.parent.result[selection])
+		date = self.parent.clutl.dateToInteger(self.parent.calst[selection])
 		self.parent.progs.retrieveRadioListings(self.selected,date)
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
@@ -500,7 +489,7 @@ class Events(BaseEvents):
 
 	def onbackbutton(self, event):
 		self.parent.Clear()
-		self.parent.area()
+		self.parent.areaDetermination()
 		self.parent.description()
 		self.parent.volume, tmp = self.parent.creator.slider(_("音量(&V)"), event=self.onVolumeChanged, defaultValue=self.parent.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
 		self.parent.volume.SetValue(self.parent.app.config.getint("play", "volume"))
