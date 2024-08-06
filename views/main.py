@@ -51,7 +51,7 @@ class MainView(BaseView):
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
 
 		self._player = player.player()
-		self.timer = wx.Timer()
+		self.updateInfoTimer = wx.Timer()
 		self.tmg = tcutil.TimeManager()
 		self.clutl = tcutil.CalendarUtil()
 		self.progs = programmanager.ProgramManager()
@@ -76,8 +76,8 @@ class MainView(BaseView):
 
 	def update_program_info(self):
 		value = self.app.config.getint("general", "frequency")
-		self.timer.Start(self.tmg.replace_milliseconds(value)) #設定した頻度で番組情報を更新
-		self.timer.Bind(wx.EVT_TIMER, self.events.onUpdateProcess)
+		self.updateInfoTimer.Start(self.tmg.replace_milliseconds(value)) #設定した頻度で番組情報を更新
+		self.updateInfoTimer.Bind(wx.EVT_TIMER, self.events.onUpdateProcess)
 
 	def SHOW_NOW_PROGRAMLIST(self):
 		self.nplist,nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
@@ -101,6 +101,7 @@ class MainView(BaseView):
 		self.lst.AppendColumn(_("終了時間"))
 		self.backbtn()
 		self.calendarSelector()
+
 
 	def calendarSelector(self):
 		"""日時指定用コンボボックスを作成し、内容を設定"""
@@ -195,7 +196,7 @@ class MainView(BaseView):
 		self._player.stop()
 		self.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
 		self.log.info("posed")
-		self.timer.Stop()
+		self.updateInfoTimer.Stop()
 		self.log.debug("timer is stoped!")
 		self.events.playing = False
 
@@ -565,4 +566,4 @@ class Events(BaseEvents):
 		self.recording = False
 
 	def recording_schedule(self, event):
-		print("recordingMethod")
+		self.monthlyProgramInfo(event)

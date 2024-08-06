@@ -1,4 +1,4 @@
-#rpb radio recording module
+#radio recording module
 
 import sys
 import os
@@ -36,8 +36,7 @@ class Recorder:
     def record(self, streamUrl, path):
         """ffmpegを用いて録音"""
         self.path = path
-        print(f"recordingPath is {path}")
-        self.log.debug("recording...")
+        self.log.debug(f"recording...{self.path}")
         ffmpeg_setting = f"{constants.FFMPEG_PATH} -i {streamUrl} -f {self.ftp} -ac 2 -vn {path}.{self.ftp}"
         self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         return self.code
@@ -59,3 +58,7 @@ class Recorder:
         if not os.path.exists(dir):
             os.makedirs(dir)
         return dir
+
+    def schedule_audio_capture(self, start_time, stop_time):
+        print(f"録音開始時間:{start_time}")
+        print(f"録音終了時間:{stop_time}")
