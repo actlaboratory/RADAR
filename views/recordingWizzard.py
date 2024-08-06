@@ -50,8 +50,8 @@ class RecordingWizzard(BaseDialog):
         self.lst.AppendColumn(_("出演者"))
         self.lst.AppendColumn(_("開始時間"))
         self.lst.AppendColumn(_("終了時間"))
-        self.nxt = self.creator.button(_("次へ&(N)"))
-        self.cancel = self.creator.cancelbutton(_("キャンセル"))
+        self.nxt = self.creator.button(_("次へ(&N)"))
+        self.cancel = self.creator.cancelbutton(_("キャンセル(&C)"))
         self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
 
     def show_programlist(self, event):
