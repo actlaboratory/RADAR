@@ -10,6 +10,7 @@ import winsound
 import region_dic
 import re
 import recorder
+from views import recordingWizzard
 from views import token
 from views import programmanager
 from views import changeDevice
@@ -53,6 +54,7 @@ class MainView(BaseView):
 		self._player = player.player()
 		self.updateInfoTimer = wx.Timer()
 		self.tmg = tcutil.TimeManager()
+
 		self.clutl = tcutil.CalendarUtil()
 		self.progs = programmanager.ProgramManager()
 		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
@@ -122,6 +124,8 @@ class MainView(BaseView):
 	def backbtn(self):
 		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)
 		return
+	def nextbtn(self):
+		self.nxtBtn = self.creator.button(_("次へ&(N)", None))
 
 	def getradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
@@ -566,4 +570,6 @@ class Events(BaseEvents):
 		self.recording = False
 
 	def recording_schedule(self, event):
-		self.monthlyProgramInfo(event)
+		rw = recordingWizzard.RecordingWizzard(self.selected)
+		rw.Initialize()
+		rw.Show()
