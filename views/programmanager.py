@@ -117,13 +117,23 @@ class ProgramManager:
             return dsc_dic[id]
 
     def get_ftl(self):
+        results = []
         prog_elements = self.root.findall(".//prog")
         prog_ftl = [ftl.get("ftl") for ftl in prog_elements]
+        index = prog_ftl.index("2400") #２４時以降の時間を取り出す
+        for ix in prog_ftl[index:]:
+            results.append(f"0{int(ix[0:2])-24}{ix[2:]}") #０からの形式に変換
+        prog_ftl[index:] = results
         return prog_ftl
 
     def get_tol(self):
+        results = []
         prog_elements = self.root.findall(".//prog")
         prog_tol = [tol.get("tol") for tol in prog_elements]
+        index = prog_tol.index("2400")
+        for ix in prog_tol[index:]:
+            results.append(f"0{int(ix[0:2])-24}{ix[2:]}") #０からの形式に変換
+        prog_tol[index:] = results
         return prog_tol
 
     def get_onair_music(self, id):
