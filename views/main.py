@@ -77,8 +77,7 @@ class MainView(BaseView):
 
 
 	def update_program_info(self):
-		value = self.app.config.getint("general", "frequency")
-		self.updateInfoTimer.Start(self.tmg.replace_milliseconds(value)) #設定した頻度で番組情報を更新
+		self.updateInfoTimer.Start(self.tmg.replace_milliseconds(3)) #設定した頻度で番組情報を更新
 		self.updateInfoTimer.Bind(wx.EVT_TIMER, self.events.onUpdateProcess)
 
 	def SHOW_NOW_PROGRAMLIST(self):
