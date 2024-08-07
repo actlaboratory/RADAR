@@ -59,6 +59,3 @@ class Recorder:
             os.makedirs(dir)
         return dir
 
-    def schedule_audio_capture(self, start_time, stop_time):
-        print(f"録音開始時間:{start_time}")
-        print(f"録音終了時間:{stop_time}")

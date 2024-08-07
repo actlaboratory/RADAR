@@ -1,5 +1,8 @@
 import wx
+import locale
 import recorder
+import simpleDialog
+
 import views.ViewCreator
 from views import programmanager
 from logging import getLogger
@@ -50,7 +53,7 @@ class RecordingWizzard(BaseDialog):
         self.lst.AppendColumn(_("出演者"))
         self.lst.AppendColumn(_("開始時間"))
         self.lst.AppendColumn(_("終了時間"))
-        self.nxt = self.creator.button(_("次へ(&N)"))
+        self.fnh = self.creator.okbutton(_("完了(&F)"), self.onFinishButton)
         self.cancel = self.creator.cancelbutton(_("キャンセル(&C)"))
         self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
 
@@ -67,3 +70,34 @@ class RecordingWizzard(BaseDialog):
         program_tol = self.progs.get_tol()
         for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
             self.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
+
+    def onFinishButton(self, event):
+        try:
+            locale.setlocale(locale.LC_TIME, 'ja_JP')
+        except locale.Error:
+            locale.setlocale(locale.LC_TIME, 'C')
+        now = datetime.datetime.now()
+        self.timer = wx.Timer()
+        #開始時間と終了時間を取得
+        start_time = self.lst.GetItemText(self.lst.GetFocusedItem(), 2)
+        end_time = self.lst.GetItemText(self.lst.GetFocusedItem(), 3)
+        #datetimeオブジェクトに変換
+        start_time_dt = datetime.datetime.strptime(start_time, "%H:%M")
+        end_time_dt = datetime.datetime.strptime(end_time, "%H:%M")
+        #y/m/d h:mの形にしてインスタンス変数に格納
+        self.stdt = start_time_dt.replace(year=now.year, month=now.month, day=now.day)
+        self.endt = end_time_dt.replace(year=now.year, month=now.month, day=now.day)
+        if self.stdt < now:
+            simpleDialog.errorDialog(_("過去の番組を予約することはできません。\n番組を選び直してください。"))
+            return
+        self.timer.start(1000)
+        self.timer.Bind(wx.EVT_TIMER, self.onTimer)
+        event.Skip()
+        return
+
+    def onTimer(self, event):
+        now = datetime.datetime.now().time()
+
+    def __del__(self):
+        """デストラクタ"""
+        #self.timer.stop()
