@@ -549,7 +549,6 @@ class Events(BaseEvents):
 		self.parent.get_latest_programList()
 
 	def record_immediately(self, event):
-		print(self.selected)
 		title = self.parent.progs.getNowProgram(self.selected)
 		if self.selected == None:
 			return
@@ -569,6 +568,6 @@ class Events(BaseEvents):
 		self.recording = False
 
 	def recording_schedule(self, event):
-		rw = recordingWizzard.RecordingWizzard(self.selected)
+		rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
 		rw.Initialize()
 		rw.Show()

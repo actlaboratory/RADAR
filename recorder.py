@@ -13,6 +13,8 @@ import re
 import os
 
 class Recorder:
+    rec_status = False
+
     def __init__(self):
         self.log = getLogger("%s.%s" % (constants.LOG_PREFIX, "recorder"))
         self.config = ConfigManager.ConfigManager()
@@ -30,13 +32,15 @@ class Recorder:
 
     def setFileType(self, index):
         """録音音質を決定"""
+        self.log.debug(index)
         self.ftp = self.filetypes[index]
         self.log.info(f"File type determined:{self.ftp}")
 
     def record(self, streamUrl, path):
         """ffmpegを用いて録音"""
         self.path = path
-        self.log.debug(f"recording...{self.path}")
+        self.log.debug(f"recording...{self.path} filetype:{self.ftp}")
+        self.rec_status = True
         ffmpeg_setting = f"{constants.FFMPEG_PATH} -i {streamUrl} -f {self.ftp} -ac 2 -vn {path}.{self.ftp}"
         self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         return self.code
@@ -47,6 +51,7 @@ class Recorder:
         self.code.stdin.close()
         self.code.terminate()
         notification.notify(title='録音完了', message=f'ファイルは正しく{self.path}として保存されました。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
+        self.rec_status = False
 
     #ディレクトリ関連
     def create_recordingDir(self, stationid):

@@ -1,23 +1,42 @@
 import wx
+import ConfigManager
 import locale
 import recorder
 import simpleDialog
-
+from views import SimpleInputDialog
+from views import token
 import views.ViewCreator
 from views import programmanager
 from logging import getLogger
+from plyer import notification
 from views.baseDialog import *
 import itertools
 import tcutil
 import datetime
+import winsound
 
 class RecordingWizzard(BaseDialog):
-    def __init__(self, stid):
+
+    def __init__(self, stid, radioname):
         super().__init__("recordingWizzardDialog")
+        self.config = ConfigManager.ConfigManager()
         self.stid = stid
+        self.radioname = radioname
+        print(self.radioname)
         self.clutl = tcutil.CalendarUtil()
         self.progs = programmanager.ProgramManager()
+        self.recorder = recorder.Recorder()
         self.calendar()
+
+    def generate_path_name(self):
+        """放送局名でフォルダを作成する"""
+        title = self.progs.getNowProgram(self.stid)
+        self.replace = title.replace(" ","-")
+        self.dirs = self.recorder.create_recordingDir(self.radioname)
+
+    def get_streamUrl(self, stationid):
+        url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
+        self.m3u8 = self.progs.gettoken.gen_temp_chunk_m3u8_url( url ,self.progs.token)
 
     def Initialize(self):
         self.log.debug("created")
@@ -47,23 +66,21 @@ class RecordingWizzard(BaseDialog):
         """いろんなウィジェットを設置する"""
         self.calendarSelector()
         self.creator=views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.sizer,wx.VERTICAL,20,style=wx.EXPAND|wx.ALL,margin=20)
-        self.cmb,label = self.creator.combobox(_("日時指定"), self.calst)
         self.lst,programlist = self.creator.virtualListCtrl(_("録音する番組を選択してください"))
         self.lst.AppendColumn(_("タイトル"))
         self.lst.AppendColumn(_("出演者"))
         self.lst.AppendColumn(_("開始時間"))
         self.lst.AppendColumn(_("終了時間"))
+        self.show_programlist()
         self.fnh = self.creator.okbutton(_("完了(&F)"), self.onFinishButton)
         self.cancel = self.creator.cancelbutton(_("キャンセル(&C)"))
-        self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
 
-    def show_programlist(self, event):
+    def show_programlist(self):
         self.lst.clear()
-        selection = self.cmb.GetSelection()
-        if selection == None:
-            return
-        date = self.clutl.dateToInteger(self.calst[selection])
-        self.progs.retrieveRadioListings(self.stid,date)
+        dt = datetime.datetime.now()
+        date = dt.strftime("%Y%m%d")
+
+        self.progs.retrieveRadioListings(self.stid, date)
         title = self.progs.gettitle() #番組のタイトル
         pfm = self.progs.getpfm() #出演者の名前
         program_ftl = self.progs.get_ftl()
@@ -77,27 +94,56 @@ class RecordingWizzard(BaseDialog):
         except locale.Error:
             locale.setlocale(locale.LC_TIME, 'C')
         now = datetime.datetime.now()
-        self.timer = wx.Timer()
+        self.starttimer = wx.Timer()
+        self.endtimer = wx.Timer()
         #開始時間と終了時間を取得
         start_time = self.lst.GetItemText(self.lst.GetFocusedItem(), 2)
+        #24次以降の番組の時間処理
+        if int(start_time[:2]) >= 24:
+            start_time =  f"0{int(start_time[:2])-24}:{start_time[3:]}"
+
         end_time = self.lst.GetItemText(self.lst.GetFocusedItem(), 3)
+        if int(end_time[:2]) >= 24:
+            end_time =  f"0{int(end_time[:2])-24}:{end_time[3:]}"
+
         #datetimeオブジェクトに変換
         start_time_dt = datetime.datetime.strptime(start_time, "%H:%M")
         end_time_dt = datetime.datetime.strptime(end_time, "%H:%M")
-        #y/m/d h:mの形にしてインスタンス変数に格納
+        # 日付を今日の日付に設定
         self.stdt = start_time_dt.replace(year=now.year, month=now.month, day=now.day)
         self.endt = end_time_dt.replace(year=now.year, month=now.month, day=now.day)
-        if self.stdt < now:
-            simpleDialog.errorDialog(_("過去の番組を予約することはできません。\n番組を選び直してください。"))
+        # 開始時間または終了時間が00:00から05:00の間の場合、日付を明日に変更
+        if self.stdt.time() < datetime.time(4, 59, 59):
+            self.stdt += datetime.timedelta(days=1)
+        if self.endt.time() <= datetime.time(5, 0):
+            self.endt += datetime.timedelta(days=1)
+
+        time_until_start = (self.stdt - now).total_seconds() * 1000
+        time_until_end = (self.endt - now).total_seconds() * 1000
+        #過去の番組をスケジュールしようとした
+        if time_until_start < 0:
+            simpleDialog.errorDialog(_("過去の番組の録音をスケジュールすることはできません。番組を選び直してください。"))
+            self.log.error("Recording schedule failed!")
             return
-        self.timer.start(1000)
-        self.timer.Bind(wx.EVT_TIMER, self.onTimer)
+        self.starttimer.StartOnce(int(time_until_start))
+        self.endtimer.StartOnce(int(time_until_end))
+        notification.notify(title='録音準備', message=f'録音がスケジュールされました。録音は、{self.stdt}に開始されます。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
+        self.log.debug("The recording was scheduled successfully!")
+        self.starttimer.Bind(wx.EVT_TIMER, self.onStartTimer)
+        self.endtimer.Bind(wx.EVT_TIMER, self.onEndTimer)
+
         event.Skip()
         return
 
-    def onTimer(self, event):
-        now = datetime.datetime.now().time()
+    def onStartTimer(self, event):
+        self.progs.getArea() #トークン取得
+        self.get_streamUrl(self.stid)
+        self.generate_path_name()
+        self.recorder.setFileType(self.config.getint("recording", "menu_id"))
+        self.recorder.record(self.m3u8, f"{self.dirs}\{str(datetime.date.today()) + self.replace}") #datetime+番組タイトルでファイル名を決定
 
-    def __del__(self):
-        """デストラクタ"""
-        #self.timer.stop()
+    def onEndTimer(self, event):
+        self.recorder.stop_record()
+        self.starttimer.Stop()
+
+
