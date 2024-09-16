@@ -22,17 +22,10 @@ class RecordingWizzard(BaseDialog):
         self.config = ConfigManager.ConfigManager()
         self.stid = stid
         self.radioname = radioname
-        print(self.radioname)
         self.clutl = tcutil.CalendarUtil()
         self.progs = programmanager.ProgramManager()
         self.recorder = recorder.Recorder()
         self.calendar()
-
-    def generate_path_name(self):
-        """放送局名でフォルダを作成する"""
-        title = self.progs.getNowProgram(self.stid)
-        self.replace = title.replace(" ","-")
-        self.dirs = self.recorder.create_recordingDir(self.radioname)
 
     def get_streamUrl(self, stationid):
         url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
@@ -138,9 +131,13 @@ class RecordingWizzard(BaseDialog):
     def onStartTimer(self, event):
         self.progs.getArea() #トークン取得
         self.get_streamUrl(self.stid)
-        self.generate_path_name()
+
+        title = self.progs.getNowProgram(self.stid)
+        replace = title.replace(" ","-")
+        #放送局の名前でディレクトリを作成、スペースを除去しないと正しく保存されないので_に置き換える
+        dirs = self.recorder.create_recordingDir(self.radioname.replace(" ", "_"))
         self.recorder.setFileType(self.config.getint("recording", "menu_id"))
-        self.recorder.record(self.m3u8, f"{self.dirs}\{str(datetime.date.today()) + self.replace}") #datetime+番組タイトルでファイル名を決定
+        self.recorder.record(self.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
 
     def onEndTimer(self, event):
         self.recorder.stop_record()
