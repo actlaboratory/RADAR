@@ -21,7 +21,7 @@ dic={
 
 	"SHOW_MONTHLY_PROGRAMLIST":_("番組表の表示"),
 	"HIDE_PROGRAMINFO":_("番組情報を非表示"),
-	"UPDATE_PROGRAMLIST":_("番組一覧を更新"),
+	"UPDATE_PROGRAMLIST":_("放送局の一覧を再描画"),
 
 	"RECORDING_IMMEDIATELY":_("今すぐ録音(&r)"),
 	"RECORDING_SCHEDULE":_("予約録音(&s)"),
