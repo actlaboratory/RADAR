@@ -27,8 +27,7 @@ class RecordingWizzard(BaseDialog):
         self.calendar()
     def getFileType(self, id):
         """メニューidを受取.mp3か.wavを判断して返す"""
-        print(id)
-        self.recorder.getFileType(id)
+        self.recorder.setFileType(id)
 
     def get_streamUrl(self, stationid):
         url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
@@ -74,7 +73,10 @@ class RecordingWizzard(BaseDialog):
     def show_programlist(self):
         self.lst.clear()
         dt = datetime.datetime.now()
+        if dt.hour < 5:
+            dt = dt - datetime.timedelta(days=1)
         date = dt.strftime("%Y%m%d")
+        print(date)
 
         self.progs.retrieveRadioListings(self.stid, date)
         title = self.progs.gettitle() #番組のタイトル

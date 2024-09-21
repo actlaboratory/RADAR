@@ -35,17 +35,10 @@ class Recorder:
         self.ftp = self.filetypes[index]
         self.log.info(f"File type determined:{self.ftp}")
 
-    def getFileType(self, index):
-        """インデックスからファイルタイプを取得"""
-        ftp = self.filetypes[index]
-        print(ftp)
-        return ftp
-
     def record(self, streamUrl, path):
         """ffmpegを用いて録音"""
         self.path = path
         self.log.debug(f"streamUrl:{streamUrl} output:{self.path}")
-        print(f"{path}.{self.ftp}")
         self.rec_status = True
         ffmpeg_setting = f"{constants.FFMPEG_PATH} -i {streamUrl} -f {self.ftp} -ac 2 -vn {path}.{self.ftp}"
         self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
