@@ -16,7 +16,6 @@ import datetime
 import winsound
 
 class RecordingWizzard(BaseDialog):
-
     def __init__(self, stid, radioname):
         super().__init__("recordingWizzardDialog")
         self.config = ConfigManager.ConfigManager()
@@ -26,6 +25,10 @@ class RecordingWizzard(BaseDialog):
         self.progs = programmanager.ProgramManager()
         self.recorder = recorder.Recorder()
         self.calendar()
+    def getFileType(self, id):
+        """メニューidを受取.mp3か.wavを判断して返す"""
+        print(id)
+        self.recorder.getFileType(id)
 
     def get_streamUrl(self, stationid):
         url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
@@ -136,8 +139,8 @@ class RecordingWizzard(BaseDialog):
         replace = title.replace(" ","-")
         #放送局の名前でディレクトリを作成、スペースを除去しないと正しく保存されないので_に置き換える
         dirs = self.recorder.create_recordingDir(self.radioname.replace(" ", "_"))
-        self.recorder.setFileType(self.config.getint("recording", "menu_id"))
         self.recorder.record(self.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
+        notification.notify(title='番組録音開始!', message='スケジュールされた番組の録音を開始しました。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
 
     def onEndTimer(self, event):
         self.recorder.stop_record()
