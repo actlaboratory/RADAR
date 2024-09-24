@@ -14,10 +14,13 @@ import itertools
 import tcutil
 import datetime
 import winsound
+import recordingStatus
 
 class RecordingWizzard(BaseDialog):
     def __init__(self, stid, radioname):
         super().__init__("recordingWizzardDialog")
+        self.starttimer = wx.Timer()
+        self.endtimer = wx.Timer()
         self.config = ConfigManager.ConfigManager()
         self.stid = stid
         self.radioname = radioname
@@ -25,6 +28,7 @@ class RecordingWizzard(BaseDialog):
         self.progs = programmanager.ProgramManager()
         self.recorder = recorder.Recorder()
         self.calendar()
+
     def getFileType(self, id):
         """メニューidを受取.mp3か.wavを判断して返す"""
         self.recorder.setFileType(id)
@@ -92,14 +96,11 @@ class RecordingWizzard(BaseDialog):
         except locale.Error:
             locale.setlocale(locale.LC_TIME, 'C')
         now = datetime.datetime.now()
-        self.starttimer = wx.Timer()
-        self.endtimer = wx.Timer()
         #開始時間と終了時間を取得
         start_time = self.lst.GetItemText(self.lst.GetFocusedItem(), 2)
         #24次以降の番組の時間処理
         if int(start_time[:2]) >= 24:
             start_time =  f"0{int(start_time[:2])-24}:{start_time[3:]}"
-
         end_time = self.lst.GetItemText(self.lst.GetFocusedItem(), 3)
         if int(end_time[:2]) >= 24:
             end_time =  f"0{int(end_time[:2])-24}:{end_time[3:]}"
@@ -125,11 +126,11 @@ class RecordingWizzard(BaseDialog):
             return
         self.starttimer.StartOnce(int(time_until_start))
         self.endtimer.StartOnce(int(time_until_end))
+        recordingStatus.schedule_record_status = 1 #録音準備状態への切り替え
         notification.notify(title='録音準備', message=f'録音がスケジュールされました。録音は、{self.stdt}に開始されます。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
         self.log.debug("The recording was scheduled successfully!")
         self.starttimer.Bind(wx.EVT_TIMER, self.onStartTimer)
         self.endtimer.Bind(wx.EVT_TIMER, self.onEndTimer)
-
         event.Skip()
         return
 
@@ -139,13 +140,23 @@ class RecordingWizzard(BaseDialog):
 
         title = self.progs.getNowProgram(self.stid)
         replace = title.replace(" ","-")
-        #放送局の名前でディレクトリを作成、スペースを除去しないと正しく保存されないので_に置き換える
+        #放送局名で作成されたディレクトリ名に使用不能な文字が含まれていたら置き換える
         dirs = self.recorder.create_recordingDir(self.radioname.replace(" ", "_"))
         self.recorder.record(self.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
+        recordingStatus.schedule_record_status = 2 #予約録音実行中
         notification.notify(title='番組録音開始!', message='スケジュールされた番組の録音を開始しました。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
 
     def onEndTimer(self, event):
+        self.stop()
+
+    def stop(self):
         self.recorder.stop_record()
         self.starttimer.Stop()
+        self.endtimer.Stop()
+        recordingStatus.schedule_record_status = 0 #デフォルトに戻す
 
+    def get_start_timer_status(self):
+        return self.starttimer.IsRunning()
 
+    def get_end_timer_status(self):
+        return self.endtimer.IsRunning()

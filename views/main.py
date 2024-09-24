@@ -10,6 +10,7 @@ import winsound
 import region_dic
 import re
 import recorder
+import recordingStatus
 from views import recordingWizzard
 from views import token
 from views import programmanager
@@ -395,7 +396,7 @@ class Events(BaseEvents):
 			else:
 				self.parent.stop()
 		except request.HTTPError as error:
-			errorDialog(_("再生に失敗しました。聴取可能な都道府県内であることをご確認ください。\nこの症状が引き続き発生する場合は、番組一覧の更新を行ってください。"))
+			errorDialog(_("再生に失敗しました。聴取可能な都道府県内であることをご確認ください。\nこの症状が引き続き発生する場合は、放送局一覧を再描画してからお試しください。"))
 			self.parent.log.error("Playback failure!"+str(error))
 			return
 
@@ -570,6 +571,15 @@ class Events(BaseEvents):
 
 	def recording_schedule(self, event):
 		rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
+		if recordingStatus.schedule_record_status == 1:
+			self.cancelRecording()
+			return
 		rw.Initialize()
 		rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
 		rw.Show()
+		if rw.get_start_timer_status() and rw.get_end_timer_status:
+			self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音の取り消し(&T)"))
+
+	def cancelRecording(self):
+		message = yesNoDialog(_("確認"), _("予約録音を中止しますか？"))
+		if message == wx.ID_NO:  return

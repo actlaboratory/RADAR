@@ -39,10 +39,8 @@ class Recorder:
         """ffmpegを用いて録音"""
         self.path = path
         self.log.debug(f"streamUrl:{streamUrl} output:{self.path}")
-        self.rec_status = True
         ffmpeg_setting = f"{constants.FFMPEG_PATH} -i {streamUrl} -f {self.ftp} -ac 2 -vn {path}.{self.ftp}"
         self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        return self.code
 
     def stop_record(self):
         """録音を終了"""
