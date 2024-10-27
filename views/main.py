@@ -560,7 +560,6 @@ class Events(BaseEvents):
 			replace = title.replace(" ","-")
 			#放送局の名前でディレクトリを作成、スペースを除去しないと正しく保存されないので_に置き換える
 			dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.selected].replace(" ", "_"))
-			print(dirs)
 			self.parent.recorder.record(self.parent.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
 		else:
 			self.onRecordingStop()
@@ -576,13 +575,12 @@ class Events(BaseEvents):
 			self.rw.Initialize()
 			self.rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
 			self.rw.Show()
-			self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音の取り消し(&T)"))
-			return
+			if recordingStatus.schedule_record_status == 1:
+				self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音の取り消し(&T)"))
+				return
 		if recordingStatus.schedule_record_status > 0:
 			message = yesNoDialog(_("確認"), _("予約録音を中止しますか？"))
 			if message == wx.ID_NO:  return
-			self.rw.starttimer.Stop()
-			self.rw.endtimer.Stop()
-			self.parent.recorder.stop_record()
+			self.rw.stop()
 			self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音(&R)"))
 			return

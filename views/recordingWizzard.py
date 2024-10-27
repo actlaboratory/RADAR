@@ -73,6 +73,8 @@ class RecordingWizzard(BaseDialog):
         self.show_programlist()
         self.fnh = self.creator.okbutton(_("完了(&F)"), self.onFinishButton)
         self.cancel = self.creator.cancelbutton(_("キャンセル(&C)"))
+        self.cancel.SetDefault()
+
 
     def show_programlist(self):
         self.lst.clear()
@@ -80,7 +82,6 @@ class RecordingWizzard(BaseDialog):
         if dt.hour < 5:
             dt = dt - datetime.timedelta(days=1)
         date = dt.strftime("%Y%m%d")
-        print(date)
 
         self.progs.retrieveRadioListings(self.stid, date)
         title = self.progs.gettitle() #番組のタイトル
