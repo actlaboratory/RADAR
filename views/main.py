@@ -560,6 +560,7 @@ class Events(BaseEvents):
 			replace = title.replace(" ","-")
 			#放送局の名前でディレクトリを作成、スペースを除去しないと正しく保存されないので_に置き換える
 			dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.selected].replace(" ", "_"))
+			print(dirs)
 			self.parent.recorder.record(self.parent.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
 		else:
 			self.onRecordingStop()

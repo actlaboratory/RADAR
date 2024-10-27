@@ -90,12 +90,12 @@ class Recorder:
 
     def create_recordingDir(self, stationid):
         """放送局名のディレクトリを作成"""
-        print(self.BASE_RECORDING_DIR)
+
         try:
             dir_path = os.path.join(self.BASE_RECORDING_DIR, stationid)
             if not os.path.exists(dir_path):
                 os.makedirs(dir_path)
-                self.log.debug("Directory created: " + dir_path)
-                return dir_path
         except Exception as e:
             self.log.error(f"Failed to create directory: {e}")
+        self.log.debug("Directory created: " + dir_path)
+        return dir_path
