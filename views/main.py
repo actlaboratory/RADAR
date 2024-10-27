@@ -570,16 +570,18 @@ class Events(BaseEvents):
 		self.recording = False
 
 	def recording_schedule(self, event):
-		rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
-		if recordingStatus.schedule_record_status == 1:
-			self.cancelRecording()
-			return
-		rw.Initialize()
-		rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
-		rw.Show()
-		if rw.get_start_timer_status() and rw.get_end_timer_status:
+		self.rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
+		if recordingStatus.schedule_record_status == 0:
+			self.rw.Initialize()
+			self.rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
+			self.rw.Show()
 			self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音の取り消し(&T)"))
-
-	def cancelRecording(self):
-		message = yesNoDialog(_("確認"), _("予約録音を中止しますか？"))
-		if message == wx.ID_NO:  return
+			return
+		if recordingStatus.schedule_record_status > 0:
+			message = yesNoDialog(_("確認"), _("予約録音を中止しますか？"))
+			if message == wx.ID_NO:  return
+			self.rw.starttimer.Stop()
+			self.rw.endtimer.Stop()
+			self.parent.recorder.stop_record()
+			self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音(&R)"))
+			return

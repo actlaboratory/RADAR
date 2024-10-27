@@ -150,7 +150,8 @@ class RecordingWizzard(BaseDialog):
         self.stop()
 
     def stop(self):
-        self.recorder.stop_record()
+        if recordingStatus.schedule_record_status == 2:
+            self.recorder.stop_record()
         self.starttimer.Stop()
         self.endtimer.Stop()
         recordingStatus.schedule_record_status = 0 #デフォルトに戻す
