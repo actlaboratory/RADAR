@@ -27,7 +27,6 @@ class RecordingWizzard(BaseDialog):
         self.clutl = tcutil.CalendarUtil()
         self.progs = programmanager.ProgramManager()
         self.recorder = recorder.Recorder()
-        self.calendar()
 
     def getFileType(self, id):
         """メニューidを受取.mp3か.wavを判断して返す"""
@@ -43,27 +42,8 @@ class RecordingWizzard(BaseDialog):
         self.InstallControls()
         return True
 
-    def calendar(self):
-        self.calendar_lists = list(itertools.chain.from_iterable(self.clutl.getMonth())) #２次元リストを一次元に変換
-        del self.calendar_lists[0:3]
-        del self.calendar_lists[-1]
-
-    def calendarSelector(self):
-        """日時指定用コンボボックスを作成し、内容を設定"""
-        self.calst = []
-        year = self.clutl.year
-        month = self.clutl.month
-        day = datetime.datetime.now().day
-        del self.calendar_lists[0:self.calendar_lists.index(int(day))]
-        for cal in self.calendar_lists:
-            if len(str(cal)) < 2:
-                self.calst.append(f"{year}/{month}/0{cal}")
-            else:
-                self.calst.append(f"{year}/{month}/{cal}")
-
     def InstallControls(self):
         """いろんなウィジェットを設置する"""
-        self.calendarSelector()
         self.creator=views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.sizer,wx.VERTICAL,20,style=wx.EXPAND|wx.ALL,margin=20)
         self.lst,programlist = self.creator.virtualListCtrl(_("録音する番組を選択してください"))
         self.lst.AppendColumn(_("タイトル"))
