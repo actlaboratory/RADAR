@@ -14,3 +14,6 @@ dist/
 pl_auto_save
 runCMD.bat
 *.po~
+output/
+*.wav
+.vscode

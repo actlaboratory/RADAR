@@ -3,6 +3,7 @@
 #Copyright (C) 20XX anonimous <anonimous@sample.com>
 
 import wx
+import os.path
 
 #アプリケーション基本情報
 APP_FULL_NAME = "RadikoPlayBack"#アプリケーションの完全な名前
@@ -16,9 +17,8 @@ APP_DEVELOPERS="actlaboratory"
 APP_DEVELOPERS_URL="https://actlab.org/"
 APP_DETAILS_URL="https://actlab.org/software/"
 APP_COPYRIGHT_MESSAGE = "Copyright (c) %s %s All lights reserved." % (APP_COPYRIGHT_YEAR, APP_DEVELOPERS)
-
 SUPPORTING_LANGUAGE={"ja-JP": "日本語","en-US": "English"}
-
+FFMPEG_PATH = os.path.abspath("bin\\ffmpeg.exe")
 #各種ファイル名
 LOG_PREFIX="app"
 LOG_FILE_NAME="application.log"
@@ -47,3 +47,8 @@ UPDATER_URL = "https://github.com/actlaboratory/updater/releases/download/1.0.0/
 UPDATE_URL = "https://actlab.org/api/checkUpdate"
 UPDATER_VERSION = "1.0.0"
 UPDATER_WAKE_WORD = "hello"
+
+
+#メニュー項目の定数
+RECORDING_MP3 = 10000
+RECORDING_WAV = 10001

@@ -7,20 +7,40 @@ from logging import getLogger
 import requests
 import constants
 import datetime
+import tcutil
+from views import token
 
 class ProgramManager:
     def __init__(self):
         self.log=getLogger("%s.%s" % (constants.LOG_PREFIX,"ProgramManager"))
-        self.log.info("initialized!")
+        self.log.debug("created!")
         self.jpCode()
+        self.tcutil = tcutil.CalendarUtil()
+
+    def getArea(self):
+        """エリアを判定する"""
+        self.gettoken = token.Token()
+        res = self.gettoken.auth1()
+        ret = self.gettoken.get_partial_key(res)
+        self.token = ret[1]
+        self.partialkey = ret[0]
+        self.gettoken.auth2(self.partialkey, self.token )
+        area = self.gettoken.area #エイラを取得
+        before = re.findall("\s", area)
+        replace = area.replace(before[0], ",") #スペースを文字列置換で,に置き換える
+        values = replace.split(",") #戻り地をリストにする
+        result = values[2]
+        return result
 
     def getprogramlist(self):
         return "http://radiko.jp/v3"
 
-    def getTodayProgramList(self, id, date=0):
-        dt = datetime.datetime.now().date()
-        dtstring = str(dt).replace("-", "")
-        url = f"{self.getprogramlist()}/program/station/date/{int(dtstring)+date}/{id}.xml"
+    def retrieveRadioListings(self, id, date=0):
+        now_dt = datetime.datetime.now().date()
+        if date == 0:
+            url = f"{self.getprogramlist()}/program/station/date/{self.tcutil.dateToInteger(str(now_dt))}/{id}.xml"
+        else:
+            url = f"{self.getprogramlist()}/program/station/date/{date}/{id}.xml"
         # XMLデータを取得
         response = requests.get(url)
         xml_data = response.content
@@ -97,11 +117,13 @@ class ProgramManager:
             return dsc_dic[id]
 
     def get_ftl(self):
+        results = []
         prog_elements = self.root.findall(".//prog")
         prog_ftl = [ftl.get("ftl") for ftl in prog_elements]
         return prog_ftl
 
     def get_tol(self):
+        results = []
         prog_elements = self.root.findall(".//prog")
         prog_tol = [tol.get("tol") for tol in prog_elements]
         return prog_tol

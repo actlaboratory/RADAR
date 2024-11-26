@@ -19,12 +19,17 @@ dic={
 	"FUNCTION_VOLUME_DOWN":_("音量を下げる"),
 	"FUNCTION_OUTPUT_CHANGEDEVICE":_("出力先デバイスの変更"),
 
-	"SHOW_NOW_PROGRAMLIST":_("選択された放送局の今日の番組表を表示"),
-	"SHOW_WEEK_PROGRAMLIST":_("習慣番組表の表示"),
+	"SHOW_MONTHLY_PROGRAMLIST":_("番組表の表示"),
 	"HIDE_PROGRAMINFO":_("番組情報を非表示"),
-	"UPDATE_PROGRAMLIST":_("番組一覧を更新"),
+	"UPDATE_PROGRAMLIST":_("放送局の一覧を再描画"),
 
-	"OPTION_OPTION":_("オプション(&O)")+"...",
+	"RECORDING_IMMEDIATELY":_("今すぐ録音(&r)"),
+	"RECORDING_SCHEDULE":_("予約録音(&s)"),
+	"RECORDING_OPTION":_("録音品質の選択"),
+	"RECORDING_MP3":_("MP3(&M)"),
+	"RECORDING_WAV":_("WAV(&W)"),
+
+	"OPTION_OPTION":_("設定(&O)")+"...",
 	"OPTION_KEY_CONFIG":_("ショートカットキーの設定(&K)")+"...",
 
 	"HELP_UPDATE":_("最新バージョンを確認(&U)")+"...",

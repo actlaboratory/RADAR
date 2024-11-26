@@ -4,13 +4,13 @@
 
 
 import wx
-
 import constants
 import simpleDialog
 import views.ViewCreator
 
 from enum import Enum,auto
 from views.baseDialog import *
+import os
 
 
 class configType(Enum):
@@ -78,6 +78,10 @@ class Dialog(BaseDialog):
 		self.colormode, static = creator.combobox(_("画面表示モード(&D)"), list(self.colorModeSelection.values()))
 		self.textwrapping, static = creator.combobox(_("テキストの折り返し(&W)"), list(self.textWrappingSelection.values()))
 
+		#record
+		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("録音"),style=wx.ALL|wx.EXPAND,margin=20)
+		self.createstationsubdir = creator.checkbox(_("放送局ごとにサブフォルダを作成(&U)"))
+
 		# network
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("ネットワーク"),style=wx.ALL,margin=20)
 		self.update = creator.checkbox(_("起動時に更新を確認(&U)"))
@@ -101,6 +105,9 @@ class Dialog(BaseDialog):
 		self._setValue(self.colormode,"view","colormode",configType.DIC,self.colorModeSelection)
 		self._setValue(self.textwrapping,"view","textwrapping",configType.DIC,self.textWrappingSelection)
 
+		# record
+		self._setValue(self.createstationsubdir, "record", "createStationSubDir", configType.BOOL, True)
+		
 		# network
 		self._setValue(self.update, "general", "update", configType.BOOL)
 		self._setValue(self.usemanualsetting, "proxy", "usemanualsetting", configType.BOOL)
@@ -149,3 +156,12 @@ class Dialog(BaseDialog):
 				conf[v[1]][v[2]] = obj.GetValue()
 		self.app.InitSpeech()
 		self.app.setProxyEnviron()
+
+	def browseDir(self, event):
+		target = self.dir
+		dialog = wx.DirDialog(self.wnd, _("保存先フォルダを選択"))
+		result = dialog.ShowModal()
+		if result == wx.ID_CANCEL:
+			return
+		target.SetValue(dialog.GetPath())
+
