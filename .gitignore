@@ -17,3 +17,4 @@ runCMD.bat
 output/
 *.wav
 .vscode
+tests/
