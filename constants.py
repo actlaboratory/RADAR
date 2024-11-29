@@ -24,6 +24,7 @@ LOG_PREFIX="app"
 LOG_FILE_NAME="application.log"
 SETTING_FILE_NAME="settings.ini"
 KEYMAP_FILE_NAME="keymap.ini"
+FFMPEG_LOG_FILE = "ffmpeg_log.txt"
 
 
 

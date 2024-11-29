@@ -58,7 +58,7 @@ class Recorder:
             
             if DEBUG_LEVEL == 1:
                 # ログファイルの設定
-                log_file = open(os.path.join(os.getcwd(), "ffmpeg_log.txt"), "w")
+                log_file = open(os.path.join(os.getcwd(), constants.FFMPEG_LOG_FILE), "w")
                 self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=log_file, stderr=log_file)
             else:
                 self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
