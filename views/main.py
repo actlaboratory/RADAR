@@ -75,8 +75,7 @@ class MainView(BaseView):
 		self.getradio()
 		self.calendar()
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
-
-
+		
 	def update_program_info(self):
 		self.updateInfoTimer.Start(self.tmg.replace_milliseconds(3)) #設定した頻度で番組情報を更新
 		self.updateInfoTimer.Bind(wx.EVT_TIMER, self.events.onUpdateProcess)

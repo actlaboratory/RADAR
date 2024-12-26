@@ -1,7 +1,8 @@
 #recording module
-
+import ConfigManager
 import sys
 import os
+import globalVars
 import subprocess
 import constants
 import atexit
@@ -9,11 +10,18 @@ import signal
 from plyer import notification
 from logging import getLogger
 from views import token
-import ConfigManager
+
 import simpleDialog
 
-# デバッグレベルの定数を定義
-DEBUG_LEVEL = 1
+logLevelSelection = {
+    "50":"fatal",
+    "40":"error",
+    "30":"warning",
+    "20":"info",
+    "10":"debug",
+    "0":"quiet"
+}
+
 
 class Recorder:
     def __init__(self):
@@ -45,18 +53,21 @@ class Recorder:
     def record(self, streamUrl, path):
         """ffmpegを用いて録音"""
         self.path = path
+        logLevel =  globalVars.app.config.getint("general", "log_level")
+        selected_log_mode = logLevelSelection[str(logLevel)]
+        self.log.debug(f"ffmpegLogMode:{selected_log_mode}")
         self.log.debug(f"streamUrl: {streamUrl} output: {self.path}")
         try:
             ffmpeg_setting = [
                 "ffmpeg",
-                "-loglevel", "error" if DEBUG_LEVEL == 0 else "info",
+                "-loglevel", selected_log_mode,
                 "-i", streamUrl,
                 "-f", self.ftp,
                 "-ac", "2",
                 "-vn", f"{path}.{self.ftp}"
             ]
             
-            if DEBUG_LEVEL == 1:
+            if selected_log_mode != "quiet":
                 # ログファイルの設定
                 log_file = open(os.path.join(os.getcwd(), constants.FFMPEG_LOG_FILE), "w")
                 self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=log_file, stderr=log_file)
