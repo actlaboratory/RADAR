@@ -1,4 +1,5 @@
 import wx
+import globalVars
 import ConfigManager
 import locale
 import recorder
@@ -21,7 +22,8 @@ class RecordingWizzard(BaseDialog):
         super().__init__("recordingWizzardDialog")
         self.starttimer = wx.Timer()
         self.endtimer = wx.Timer()
-        self.config = ConfigManager.ConfigManager()
+        self.config = globalVars.app.config
+        self.config["recording"]["recording_schedule"] = "INACTIVE" #動作していない
         self.stid = stid
         self.radioname = radioname
         self.clutl = tcutil.CalendarUtil()
@@ -52,7 +54,7 @@ class RecordingWizzard(BaseDialog):
         self.lst.AppendColumn(_("終了時間"))
         self.show_programlist()
         self.fnh = self.creator.okbutton(_("完了(&F)"), self.onFinishButton)
-        self.cancel = self.creator.cancelbutton(_("キャンセル(&C)"))
+        self.cancel = self.creator.cancelbutton(_("キャンセル(&C)"), None)
         self.cancel.SetDefault()
 
 
@@ -107,7 +109,7 @@ class RecordingWizzard(BaseDialog):
             return
         self.starttimer.StartOnce(int(time_until_start))
         self.endtimer.StartOnce(int(time_until_end))
-        recordingStatus.schedule_record_status = 1 #録音準備状態への切り替え
+        self.config["record"]["recording_schedule"] = "READY" #録音準備状態
         notification.notify(title='録音準備', message=f'録音がスケジュールされました。録音は、{self.stdt}に開始されます。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
         self.log.debug("The recording was scheduled successfully!")
         self.starttimer.Bind(wx.EVT_TIMER, self.onStartTimer)
@@ -124,21 +126,21 @@ class RecordingWizzard(BaseDialog):
         #放送局名で作成されたディレクトリ名に使用不能な文字が含まれていたら置き換える
         dirs = self.recorder.create_recordingDir(self.radioname.replace(" ", "_"))
         self.recorder.record(self.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
-        recordingStatus.schedule_record_status = 2 #予約録音実行中
+        self.config["record"]["recording_schedule"] = "RUNNING" #予約録音実行中
         notification.notify(title='番組録音開始!', message='スケジュールされた番組の録音を開始しました。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
 
     def onEndTimer(self, event):
         self.stop()
 
     def stop(self):
-        if recordingStatus.schedule_record_status == 2:
-            self.recorder.stop_record()
+        self.recorder.stop_record()
         self.starttimer.Stop()
         self.endtimer.Stop()
-        recordingStatus.schedule_record_status = 0 #デフォルトに戻す
+        self.config["record"]["recording_schedule"] = "INACTIVE" #デフォル状態に戻す
 
     def get_start_timer_status(self):
         return self.starttimer.IsRunning()
 
     def get_end_timer_status(self):
         return self.endtimer.IsRunning()
+

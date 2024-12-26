@@ -570,14 +570,14 @@ class Events(BaseEvents):
 
 	def recording_schedule(self, event):
 		self.rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
-		if recordingStatus.schedule_record_status == 0:
+		if self.parent.app.config.getstring("record", "recording_schedule") == "INACTIVE":
 			self.rw.Initialize()
 			self.rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
 			self.rw.Show()
-			if recordingStatus.schedule_record_status == 1:
+			if self.parent.app.config.getstring("record", "recording_schedule") == "READY":
 				self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音の取り消し(&T)"))
-				return
-		if recordingStatus.schedule_record_status > 0:
+			return
+		if self.parent.app.config.getstring("record", "recording_schedule") != "INACTIVE":
 			message = yesNoDialog(_("確認"), _("予約録音を中止しますか？"))
 			if message == wx.ID_NO:  return
 			self.rw.stop()
