@@ -64,7 +64,8 @@ class Recorder:
                 "-i", streamUrl,
                 "-f", self.ftp,
                 "-ac", "2",
-                "-vn", f"{path}.{self.ftp}"
+                "-vn", f"{path}.{self.ftp}",
+                "-y"
             ]
             
             if selected_log_mode != "quiet":
