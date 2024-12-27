@@ -10,7 +10,6 @@ import winsound
 import region_dic
 import re
 import recorder
-import recordingStatus
 from views import recordingWizzard
 from views import token
 from views import programmanager

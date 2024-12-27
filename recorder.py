@@ -67,7 +67,6 @@ class Recorder:
                 "-vn", f"{path}.{self.ftp}",
                 "-y"
             ]
-            
             if selected_log_mode != "quiet":
                 # ログファイルの設定
                 log_file = open(os.path.join(os.getcwd(), constants.FFMPEG_LOG_FILE), "w")

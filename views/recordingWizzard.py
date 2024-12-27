@@ -15,7 +15,7 @@ import itertools
 import tcutil
 import datetime
 import winsound
-import recordingStatus
+
 
 class RecordingWizzard(BaseDialog):
     def __init__(self, stid, radioname):
