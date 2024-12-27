@@ -1,7 +1,6 @@
-#rpb time&calenderUtil(tcutil)
-
+#rpb time&calenderUtil
 import ConfigManager
-import calendar
+import getCalendar
 import datetime
 
 class TimeManager:
@@ -38,20 +37,25 @@ class TimeManager:
 class CalendarUtil:
     def __init__(self):
         """カレンダーを扱う"""
-        self.year = datetime.datetime.now().year
-        if len(str(datetime.datetime.now().month)) < 2:
-            self.month = f"0{datetime.datetime.now().month}"
-        else:
-            self.month = f"{datetime.datetime.now().month}"
+        self.dateData = getCalendar.Calendar()
 
-    def getAnnual(self):
-        """年間カレンダー取得"""
-        return calendar.prcal(self.year)
-
-    def getMonth(self):
-        """月間カレンダー取得"""
-        month = datetime.datetime.now().month
-        return calendar.monthcalendar(self.year, month)
+    def getDateValue(self):
+        """日付データを取得"""
+        current = datetime.datetime.now()
+        year = current.year
+        calendar = self.dateData.generate_calendar(year)
+        start_date = datetime.date(year, current.month, current.day)
+        week_data = self.dateData.get_week_dates(start_date)
+        results = []
+        for date in week_data:
+            year, month, day = date
+            # 月末・年末処理
+            if day > 31:
+                month += 1
+                year, month = self.dateData.adjust_date(year, month)
+            formatted_data = f"{year}/{month}/{day}"
+            results.append(formatted_data)
+        return results
 
     def dateToInteger(self, date):
         """日付データから/を除去し、int型に変換して返す"""

@@ -72,9 +72,8 @@ class MainView(BaseView):
 		self.SHOW_NOW_PROGRAMLIST()
 		self.AreaTreeCtrl()
 		self.getradio()
-		self.calendar()
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
-		
+
 	def update_program_info(self):
 		self.updateInfoTimer.Start(self.tmg.replace_milliseconds(3)) #設定した頻度で番組情報を更新
 		self.updateInfoTimer.Bind(wx.EVT_TIMER, self.events.onUpdateProcess)
@@ -105,17 +104,7 @@ class MainView(BaseView):
 
 	def calendarSelector(self):
 		"""日時指定用コンボボックスを作成し、内容を設定"""
-		self.calst = []
-		year = self.clutl.year
-		month = self.clutl.month
-		day = datetime.datetime.now().day
-		del self.calendar_lists[0:self.calendar_lists.index(int(day))]
-		for cal in self.calendar_lists:
-			if len(str(cal)) < 2:
-				self.calst.append(f"{year}/{month}/0{cal}")
-			else:
-				self.calst.append(f"{year}/{month}/{cal}")
-		self.cmb,label = self.creator.combobox(_("日時を指定"), self.calst)
+		self.cmb,label = self.creator.combobox(_("日時を指定"), self.clutl.getDateValue())
 		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_monthly_programlist)
 		self.cmb.SetSelection(0)
 
@@ -181,11 +170,6 @@ class MainView(BaseView):
 
 	def exit_button(self):
 		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
-
-	def calendar(self):
-		self.calendar_lists = list(itertools.chain.from_iterable(self.clutl.getMonth())) #２次元リストを一次元に変換
-		del self.calendar_lists[0:3]
-		del self.calendar_lists[-1]
 
 	def play(self, id):
 		self.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
@@ -477,11 +461,13 @@ class Events(BaseEvents):
 		self.parent.lst.SetFocus()
 
 	def show_monthly_programlist(self, event):
+
 		self.parent.lst.clear()
 		selection = self.parent.cmb.GetSelection()
 		if selection == None:
 			return
-		date = self.parent.clutl.dateToInteger(self.parent.calst[selection])
+		date = self.parent.clutl.dateToInteger(self.parent.clutl.getDateValue()[selection])
+		print(date)
 		self.parent.progs.retrieveRadioListings(self.selected,date)
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
