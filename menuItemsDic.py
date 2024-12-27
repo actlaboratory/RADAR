@@ -19,7 +19,7 @@ dic={
 	"FUNCTION_VOLUME_DOWN":_("音量を下げる"),
 	"FUNCTION_OUTPUT_CHANGEDEVICE":_("出力先デバイスの変更"),
 
-	"SHOW_MONTHLY_PROGRAMLIST":_("番組表の表示"),
+	"SHOW_PROGRAMLIST":_("番組表の表示"),
 	"HIDE_PROGRAMINFO":_("番組情報を非表示"),
 	"UPDATE_PROGRAMLIST":_("放送局の一覧を再描画"),
 
