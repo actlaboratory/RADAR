@@ -133,7 +133,9 @@ class RecordingWizzard(BaseDialog):
         self.stop()
 
     def stop(self):
-        self.recorder.stop_record()
+        if self.config.getstring("recording", "recording_schedule") == "RUNNING":
+            self.recorder.stop_record()
+            self.log.info("Scheduled recording was cancelled by the user!")
         self.starttimer.Stop()
         self.endtimer.Stop()
         self.config["record"]["recording_schedule"] = "INACTIVE" #デフォル状態に戻す

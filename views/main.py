@@ -54,7 +54,6 @@ class MainView(BaseView):
 		self._player = player.player()
 		self.updateInfoTimer = wx.Timer()
 		self.tmg = tcutil.TimeManager()
-
 		self.clutl = tcutil.CalendarUtil()
 		self.progs = programmanager.ProgramManager()
 		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
@@ -101,16 +100,16 @@ class MainView(BaseView):
 		self.backbtn()
 		self.calendarSelector()
 
-
 	def calendarSelector(self):
 		"""日時指定用コンボボックスを作成し、内容を設定"""
 		self.cmb,label = self.creator.combobox(_("日時を指定"), self.clutl.getDateValue())
-		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_monthly_programlist)
+		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_programlist)
 		self.cmb.SetSelection(0)
 
 	def backbtn(self):
 		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)
 		return
+
 	def nextbtn(self):
 		self.nxtBtn = self.creator.button(_("次へ&(N)", None))
 
@@ -238,7 +237,7 @@ class Menu(BaseMenu):
 
 		#番組メニュー
 		self.RegisterMenuCommand(self.hProgramListMenu, {
-			"SHOW_MONTHLY_PROGRAMLIST":self.parent.events.monthlyProgramInfo,
+			"SHOW_PROGRAMLIST":self.parent.events.initializeInfoView,
 			"HIDE_PROGRAMINFO":self.parent.events.switching_programInfo,
 			"UPDATE_PROGRAMLIST":self.parent.events.onUpdateProgram,
 		})
@@ -428,10 +427,10 @@ class Events(BaseEvents):
 		self.selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
 		if self.selected == None:
 
-			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_MONTHLY_PROGRAMLIST"),False)
+			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_PROGRAMLIST"),False)
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"),False)
 			return
-		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_MONTHLY_PROGRAMLIST"),True)
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_PROGRAMLIST"),True)
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"), True)
 
 	def onVolumeChanged(self, event):
@@ -455,19 +454,17 @@ class Events(BaseEvents):
 		self.onVolumeChanged(event)
 		self.parent.log.debug("volume decreased")
 
-	def monthlyProgramInfo(self, event):
+	def initializeInfoView(self, event):
 		self.parent.Clear()
 		self.parent.infoListView()
 		self.parent.lst.SetFocus()
 
-	def show_monthly_programlist(self, event):
-
+	def show_programlist(self, event):
 		self.parent.lst.clear()
 		selection = self.parent.cmb.GetSelection()
 		if selection == None:
 			return
 		date = self.parent.clutl.dateToInteger(self.parent.clutl.getDateValue()[selection])
-		print(date)
 		self.parent.progs.retrieveRadioListings(self.selected,date)
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
