@@ -65,7 +65,8 @@ class RecordingWizzard(BaseDialog):
             locale.setlocale(locale.LC_TIME, 'ja_JP')
         except locale.Error:
             locale.setlocale(locale.LC_TIME, 'C')
-        now = datetime.datetime.strptime(self.clutl.getDateValue()[self.selection].replace("/", "-"), "%Y-%m-%d")
+        selected_date = datetime.datetime.strptime(self.clutl.getDateValue()[self.selection].replace("/", "-"), "%Y-%m-%d") #ユーザーが選択した
+        current = datetime.datetime.now() #現在の日付
         #開始時間と終了時間を取得
         start_time = self.lst.GetItemText(self.lst.GetFocusedItem(), 2)
         #24次以降の番組の時間処理
@@ -79,15 +80,15 @@ class RecordingWizzard(BaseDialog):
         start_time_dt = datetime.datetime.strptime(start_time, "%H:%M")
         end_time_dt = datetime.datetime.strptime(end_time, "%H:%M")
 
-        self.stdt = start_time_dt.replace(year=now.year, month=now.month, day=now.day)
-        self.endt = end_time_dt.replace(year=now.year, month=now.month, day=now.day)
+        self.stdt = start_time_dt.replace(year=selected_date.year, month=selected_date.month, day=selected_date.day)
+        self.endt = end_time_dt.replace(year=selected_date.year, month=selected_date.month, day=selected_date.day)
         # 開始時間または終了時間が00:00から05:00の間の場合、日付を明日に変更
         if self.stdt.time() < datetime.time(4, 59, 59):
             self.stdt += datetime.timedelta(days=1)
         if self.endt.time() <= datetime.time(5, 0):
             self.endt += datetime.timedelta(days=1)
-        time_until_start = (self.stdt - now).total_seconds() * 1000
-        time_until_end = (self.endt - now).total_seconds() * 1000
+        time_until_start = (self.stdt - selected_date).total_seconds() * 1000
+        time_until_end = (self.endt - selected_date).total_seconds() * 1000
 
         # 日付部分の処理
         date_str = str(self.stdt.date()).replace("-", "")
@@ -95,11 +96,10 @@ class RecordingWizzard(BaseDialog):
         time_str = start_time.replace(":", "")
         # 結合
         replaced_time = f"{date_str}{time_str}"
-        print(replaced_time)
         #過去の番組をスケジュールしようとした
         if int(replaced_time) < self.clutl.format_now():
             simpleDialog.errorDialog(_("過去の番組の録音をスケジュールすることはできません。番組を選び直してください。"))
-            self.log.error("Recording schedule failed!")
+            self.log.error(f"Failed to schedule program: Specified time ({self.stdt}) is in the past. Please select a future time.")
             return
         self.starttimer.StartOnce(int(time_until_start))
         self.endtimer.StartOnce(int(time_until_end))

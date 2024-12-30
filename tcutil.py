@@ -78,3 +78,11 @@ class CalendarUtil:
 
         # 結果を出力
         return int(f"{year}{month}{day}{hour}{minute}")
+
+    def convertToDatetime(self, date_object):
+        try:
+            # 入力された文字列をパースしてdatetimeオブジェクトに変換
+            return datetime.strptime(date_object, "%Y-%m-%d %H:%M")
+        except ValueError as e:
+            # 無効な形式の場合はエラーを表示
+            raise ValueError(f"Invalid date format: {date_object}. Expected format: 'YYYY/MM/DD HH:MM'") 
