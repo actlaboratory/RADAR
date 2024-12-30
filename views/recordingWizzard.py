@@ -4,7 +4,6 @@ import ConfigManager
 import locale
 import recorder
 import simpleDialog
-from views import SimpleInputDialog
 from views import token
 import views.ViewCreator
 from views import programmanager
@@ -14,8 +13,6 @@ from views.baseDialog import *
 import itertools
 import tcutil
 import datetime
-import winsound
-
 
 class RecordingWizzard(BaseDialog):
     def __init__(self, stid, radioname):
@@ -52,33 +49,23 @@ class RecordingWizzard(BaseDialog):
         self.lst.AppendColumn(_("出演者"))
         self.lst.AppendColumn(_("開始時間"))
         self.lst.AppendColumn(_("終了時間"))
-        self.show_programlist()
+        self.calendarSelector()
         self.fnh = self.creator.okbutton(_("完了(&F)"), self.onFinishButton)
         self.cancel = self.creator.cancelbutton(_("キャンセル(&C)"), None)
         self.cancel.SetDefault()
 
-
-    def show_programlist(self):
-        self.lst.clear()
-        dt = datetime.datetime.now()
-        if dt.hour < 5:
-            dt = dt - datetime.timedelta(days=1)
-        date = dt.strftime("%Y%m%d")
-
-        self.progs.retrieveRadioListings(self.stid, date)
-        title = self.progs.gettitle() #番組のタイトル
-        pfm = self.progs.getpfm() #出演者の名前
-        program_ftl = self.progs.get_ftl()
-        program_tol = self.progs.get_tol()
-        for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
-            self.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
+    def calendarSelector(self):
+        """日時指定用コンボボックスを作成し、内容を設定"""
+        self.cmb,label = self.creator.combobox(_("日時を指定"), self.clutl.getDateValue())
+        self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
+        self.cmb.SetSelection(0)
 
     def onFinishButton(self, event):
         try:
             locale.setlocale(locale.LC_TIME, 'ja_JP')
         except locale.Error:
             locale.setlocale(locale.LC_TIME, 'C')
-        now = datetime.datetime.now()
+        now = datetime.datetime.strptime(self.clutl.getDateValue()[self.selection].replace("/", "-"), "%Y-%m-%d")
         #開始時間と終了時間を取得
         start_time = self.lst.GetItemText(self.lst.GetFocusedItem(), 2)
         #24次以降の番組の時間処理
@@ -91,7 +78,7 @@ class RecordingWizzard(BaseDialog):
         #datetimeオブジェクトに変換
         start_time_dt = datetime.datetime.strptime(start_time, "%H:%M")
         end_time_dt = datetime.datetime.strptime(end_time, "%H:%M")
-        # 日付を今日の日付に設定
+
         self.stdt = start_time_dt.replace(year=now.year, month=now.month, day=now.day)
         self.endt = end_time_dt.replace(year=now.year, month=now.month, day=now.day)
         # 開始時間または終了時間が00:00から05:00の間の場合、日付を明日に変更
@@ -99,7 +86,6 @@ class RecordingWizzard(BaseDialog):
             self.stdt += datetime.timedelta(days=1)
         if self.endt.time() <= datetime.time(5, 0):
             self.endt += datetime.timedelta(days=1)
-
         time_until_start = (self.stdt - now).total_seconds() * 1000
         time_until_end = (self.endt - now).total_seconds() * 1000
         #過去の番組をスケジュールしようとした
@@ -127,10 +113,12 @@ class RecordingWizzard(BaseDialog):
         dirs = self.recorder.create_recordingDir(self.radioname.replace(" ", "_"))
         self.recorder.record(self.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
         self.config["record"]["recording_schedule"] = "RUNNING" #予約録音実行中
+        self.log.debug("timer is started")
         notification.notify(title='番組録音開始!', message='スケジュールされた番組の録音を開始しました。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
 
     def onEndTimer(self, event):
         self.stop()
+        self.log.debug("timer is stoped")
 
     def stop(self):
         if self.config.getstring("recording", "recording_schedule") == "RUNNING":
@@ -139,6 +127,21 @@ class RecordingWizzard(BaseDialog):
         self.starttimer.Stop()
         self.endtimer.Stop()
         self.config["record"]["recording_schedule"] = "INACTIVE" #デフォル状態に戻す
+
+    def show_programlist(self, event):
+        self.lst.clear()
+        selection = self.cmb.GetSelection()
+        self.selection = selection
+        if selection == None:
+            return
+        date = self.clutl.dateToInteger(self.clutl.getDateValue()[selection])
+        self.progs.retrieveRadioListings(self.stid,date)
+        title = self.progs.gettitle() #番組のタイトル
+        pfm = self.progs.getpfm() #出演者の名前
+        program_ftl = self.progs.get_ftl()
+        program_tol = self.progs.get_tol()
+        for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
+            self.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
 
     def get_start_timer_status(self):
         return self.starttimer.IsRunning()
