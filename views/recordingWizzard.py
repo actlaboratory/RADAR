@@ -88,8 +88,16 @@ class RecordingWizzard(BaseDialog):
             self.endt += datetime.timedelta(days=1)
         time_until_start = (self.stdt - now).total_seconds() * 1000
         time_until_end = (self.endt - now).total_seconds() * 1000
+
+        # 日付部分の処理
+        date_str = str(self.stdt.date()).replace("-", "")
+        # 時間部分の処理
+        time_str = start_time.replace(":", "")
+        # 結合
+        replaced_time = f"{date_str}{time_str}"
+        print(replaced_time)
         #過去の番組をスケジュールしようとした
-        if time_until_start < 0:
+        if int(replaced_time) < self.clutl.format_now():
             simpleDialog.errorDialog(_("過去の番組の録音をスケジュールすることはできません。番組を選び直してください。"))
             self.log.error("Recording schedule failed!")
             return

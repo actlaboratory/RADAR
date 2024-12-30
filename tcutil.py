@@ -65,3 +65,16 @@ class CalendarUtil:
         if "-" in date:
             result = date.replace("-", "")
             return result
+
+    def format_now(self):
+        now = datetime.datetime.now()
+
+        # 年・月・日・時・分・秒を取得
+        year = now.year
+        month = now.month
+        day = now.day
+        hour = now.hour
+        minute = now.minute
+
+        # 結果を出力
+        return int(f"{year}{month}{day}{hour}{minute}")
