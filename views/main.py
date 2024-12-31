@@ -99,12 +99,20 @@ class MainView(BaseView):
 		self.lst.AppendColumn(_("終了時間"))
 		self.backbtn()
 		self.calendarSelector()
+		self.lst.Focus(0)
+		self.lst.Select(0)
+
 
 	def calendarSelector(self):
 		"""日時指定用コンボボックスを作成し、内容を設定"""
 		self.cmb,label = self.creator.combobox(_("日時を指定"), self.clutl.getDateValue())
-		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_programlist)
 		self.cmb.SetSelection(0)
+		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_programlist)
+
+# 初期状態を反映するために明示的にイベントを発生させる
+		event = wx.CommandEvent(wx.EVT_COMBOBOX.typeId, self.cmb.GetId())
+		event.SetInt(0)  # 選択されたインデックスを明示
+		self.cmb.ProcessEvent(event)  # イベントを手動発火
 
 	def backbtn(self):
 		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)

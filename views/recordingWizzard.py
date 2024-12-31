@@ -50,6 +50,8 @@ class RecordingWizzard(BaseDialog):
         self.lst.AppendColumn(_("開始時間"))
         self.lst.AppendColumn(_("終了時間"))
         self.calendarSelector()
+        self.lst.Focus(0)
+        self.lst.Select(0)
         self.fnh = self.creator.okbutton(_("完了(&F)"), self.onFinishButton)
         self.cancel = self.creator.cancelbutton(_("キャンセル(&C)"), None)
         self.cancel.SetDefault()
@@ -57,10 +59,16 @@ class RecordingWizzard(BaseDialog):
     def calendarSelector(self):
         """日時指定用コンボボックスを作成し、内容を設定"""
         self.cmb,label = self.creator.combobox(_("日時を指定"), self.clutl.getDateValue())
-        self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
         self.cmb.SetSelection(0)
+        self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
+        # 初期状態を反映するために明示的にイベントを発生させる
+        event = wx.CommandEvent(wx.EVT_COMBOBOX.typeId, self.cmb.GetId())
+        event.SetInt(0)
+        self.cmb.ProcessEvent(event)
 
     def onFinishButton(self, event):
+        selected = self.lst.GetFirstSelected()
+        print(selected)
         try:
             locale.setlocale(locale.LC_TIME, 'ja_JP')
         except locale.Error:
