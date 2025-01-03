@@ -67,8 +67,6 @@ class RecordingWizzard(BaseDialog):
         self.cmb.ProcessEvent(event)
 
     def onFinishButton(self, event):
-        selected = self.lst.GetFirstSelected()
-        print(selected)
         try:
             locale.setlocale(locale.LC_TIME, 'ja_JP')
         except locale.Error:

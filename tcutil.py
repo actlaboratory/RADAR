@@ -46,13 +46,14 @@ class CalendarUtil:
         calendar = self.dateData.generate_calendar(year)
         start_date = datetime.date(year, current.month, current.day)
         week_data = self.dateData.get_week_dates(start_date)
+
         results = []
         for date in week_data:
             year, month, day = date
             # 月末・年末処理
             if day > 31:
                 month += 1
-                year, month = self.dateData.adjust_date(year, month)
+                year, month = self.dateData.adjust_date(year, month)                
             formatted_data = f"{year}/{month}/{day}"
             results.append(formatted_data)
         return results
@@ -60,7 +61,7 @@ class CalendarUtil:
     def dateToInteger(self, date):
         """日付データから/を除去し、int型に変換して返す"""
         if "/" in date:
-            result = date.replace("/", "")
+            result = date.replace("/", ",")
             return result
         if "-" in date:
             result = date.replace("-", "")
@@ -79,10 +80,3 @@ class CalendarUtil:
         # 結果を出力
         return int(f"{year}{month}{day}{hour}{minute}")
 
-    def convertToDatetime(self, date_object):
-        try:
-            # 入力された文字列をパースしてdatetimeオブジェクトに変換
-            return datetime.strptime(date_object, "%Y-%m-%d %H:%M")
-        except ValueError as e:
-            # 無効な形式の場合はエラーを表示
-            raise ValueError(f"Invalid date format: {date_object}. Expected format: 'YYYY/MM/DD HH:MM'") 

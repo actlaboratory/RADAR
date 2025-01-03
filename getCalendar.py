@@ -13,7 +13,7 @@ class Calendar:
             current_date += delta
         return calendar
 
-    def get_week_dates(self, start_date, days=7):
+    def get_week_dates(self, start_date, days=8):
         week_dates = []
         current_date = start_date
         delta = datetime.timedelta(days=1)
