@@ -472,7 +472,7 @@ class Events(BaseEvents):
 		selection = self.parent.cmb.GetSelection()
 		if selection == None:
 			return
-		date = self.parent.clutl.dateToInteger(self.parent.clutl.getDateValue()[selection])
+		date = self.parent.clutl.transform_date(self.parent.clutl.getDateValue()[selection])
 		self.parent.progs.retrieveRadioListings(self.selected,date)
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前

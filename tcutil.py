@@ -58,7 +58,7 @@ class CalendarUtil:
             results.append(formatted_data)
         return results
 
-    def dateToInteger(self, date):
+    def transform_date(self, date):
         """日付データから/を除去し、int型に変換して返す"""
         if "/" in date:
             result = date.replace("/", ",")

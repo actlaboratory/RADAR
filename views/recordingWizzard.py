@@ -148,7 +148,7 @@ class RecordingWizzard(BaseDialog):
         self.selection = selection
         if selection == None:
             return
-        date = self.clutl.dateToInteger(self.clutl.getDateValue()[selection])
+        date = self.clutl.transform_date(self.clutl.getDateValue()[selection])
         self.progs.retrieveRadioListings(self.stid,date)
         title = self.progs.gettitle() #番組のタイトル
         pfm = self.progs.getpfm() #出演者の名前
