@@ -52,6 +52,11 @@ class Recorder:
 
     def record(self, streamUrl, path):
         """ffmpegを用いて録音"""
+        #ffmpegの存在確認
+        if not os.path.exists(constants.FFMPEG_PATH):
+            simpleDialog.errorDialog(_("録音を開始できませんでした。ffmpeg.exeが見つかりません。\nこの問題が引き続き発生する場合は、お手数ですがソフトウェアをダウンロードし直してからサイド実行してください。それでも改善しない場合は、開発者までご連絡ください。"))
+            self.log.error("'ffmpeg.exe' not found.")
+            return False
         self.path = path
         logLevel =  globalVars.app.config.getint("general", "log_level")
         selected_log_mode = logLevelSelection[str(logLevel)]
@@ -59,7 +64,7 @@ class Recorder:
         self.log.debug(f"streamUrl: {streamUrl} output: {self.path}")
         try:
             ffmpeg_setting = [
-                "ffmpeg",
+                constants.FFMPEG_PATH,
                 "-loglevel", selected_log_mode,
                 "-i", streamUrl,
                 "-f", self.ftp,
@@ -75,6 +80,7 @@ class Recorder:
                 self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except Exception as e:
             self.log.error(f"Recording failed: {e}")
+        return True
 
     def stop_record(self):
         """録音を終了"""

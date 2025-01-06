@@ -531,19 +531,21 @@ class Events(BaseEvents):
 		self.parent.get_latest_programList()
 
 	def record_immediately(self, event):
-		title = self.parent.progs.getNowProgram(self.selected)
 		if self.selected == None:
 			return
-		elif not self.recording:
-			self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
-			self.recording = True
-			self.parent.get_streamUrl(self.selected)
-			replace = title.replace(" ","-")
-			#放送局の名前でディレクトリを作成、スペースを除去しないと正しく保存されないので_に置き換える
-			dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.selected].replace(" ", "_"))
-			self.parent.recorder.record(self.parent.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
+		title = self.parent.progs.getNowProgram(self.selected)
+		self.parent.get_streamUrl(self.selected)
+		replace = title.replace(" ","-")
+		#放送局の名前でディレクトリを作成、スペースを除去しないと正しく保存されないので_に置き換える
+		dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.selected].replace(" ", "_"))
+		if self.parent.recorder.record(self.parent.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}"):
+			if not self.recording:
+				self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
+				self.recording = True
+			else:
+				self.onRecordingStop()
 		else:
-			self.onRecordingStop()
+			return
 
 	def onRecordingStop(self):
 		self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
