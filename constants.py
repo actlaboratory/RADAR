@@ -21,7 +21,7 @@ SUPPORTING_LANGUAGE={"ja-JP": "日本語","en-US": "English"}
 FFMPEG_PATH = os.path.abspath("bin\\ffmpeg.exe")
 #各種ファイル名
 LOG_PREFIX="app"
-LOG_FILE_NAME="application.log"
+LOG_FILE_NAME="RPB.log"
 SETTING_FILE_NAME="settings.ini"
 KEYMAP_FILE_NAME="keymap.ini"
 FFMPEG_LOG_FILE = "ffmpeg_log.txt"
