@@ -35,12 +35,17 @@ class ProgramManager:
     def getprogramlist(self):
         return "http://radiko.jp/v3"
 
-    def retrieveRadioListings(self, id, date=0):
-        now_dt = datetime.datetime.now().date()
-        if date == 0:
-            url = f"{self.getprogramlist()}/program/station/date/{self.tcutil.dateToInteger(str(now_dt))}/{id}.xml"
-        else:
-            url = f"{self.getprogramlist()}/program/station/date/{date}/{id}.xml"
+    def retrieveRadioListings(self, id, date):
+        year = date[:4]
+        lists = date.split(",")
+        if len(lists[1]) == 1:
+            lists[1] = f"0{lists[1]}"
+        if len(lists[2]) == 1:
+            lists[2] = f"0{lists[2]}"
+        formatted_date = f"{lists[0]}{lists[1]}{lists[2]}"
+        url = f"{self.getprogramlist()}/program/station/date/{formatted_date}/{id}.xml"
+        print(url)
+
         # XMLデータを取得
         response = requests.get(url)
         xml_data = response.content

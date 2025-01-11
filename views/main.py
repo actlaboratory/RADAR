@@ -99,12 +99,20 @@ class MainView(BaseView):
 		self.lst.AppendColumn(_("終了時間"))
 		self.backbtn()
 		self.calendarSelector()
+		self.lst.Focus(0)
+		self.lst.Select(0)
+
 
 	def calendarSelector(self):
 		"""日時指定用コンボボックスを作成し、内容を設定"""
 		self.cmb,label = self.creator.combobox(_("日時を指定"), self.clutl.getDateValue())
-		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_programlist)
 		self.cmb.SetSelection(0)
+		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_programlist)
+
+# 初期状態を反映するために明示的にイベントを発生させる
+		event = wx.CommandEvent(wx.EVT_COMBOBOX.typeId, self.cmb.GetId())
+		event.SetInt(0)  # 選択されたインデックスを明示
+		self.cmb.ProcessEvent(event)  # イベントを手動発火
 
 	def backbtn(self):
 		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)
@@ -464,7 +472,7 @@ class Events(BaseEvents):
 		selection = self.parent.cmb.GetSelection()
 		if selection == None:
 			return
-		date = self.parent.clutl.dateToInteger(self.parent.clutl.getDateValue()[selection])
+		date = self.parent.clutl.transform_date(self.parent.clutl.getDateValue()[selection])
 		self.parent.progs.retrieveRadioListings(self.selected,date)
 		title = self.parent.progs.gettitle() #番組のタイトル
 		pfm = self.parent.progs.getpfm() #出演者の名前
@@ -531,19 +539,21 @@ class Events(BaseEvents):
 		self.parent.get_latest_programList()
 
 	def record_immediately(self, event):
-		title = self.parent.progs.getNowProgram(self.selected)
 		if self.selected == None:
 			return
-		elif not self.recording:
-			self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
-			self.recording = True
-			self.parent.get_streamUrl(self.selected)
-			replace = title.replace(" ","-")
-			#放送局の名前でディレクトリを作成、スペースを除去しないと正しく保存されないので_に置き換える
-			dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.selected].replace(" ", "_"))
-			self.parent.recorder.record(self.parent.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
+		title = self.parent.progs.getNowProgram(self.selected)
+		self.parent.get_streamUrl(self.selected)
+		replace = title.replace(" ","-")
+		#放送局の名前でディレクトリを作成、スペースを除去しないと正しく保存されないので_に置き換える
+		dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.selected].replace(" ", "_"))
+		if self.parent.recorder.record(self.parent.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}"):
+			if not self.recording:
+				self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
+				self.recording = True
+			else:
+				self.onRecordingStop()
 		else:
-			self.onRecordingStop()
+			return
 
 	def onRecordingStop(self):
 		self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))

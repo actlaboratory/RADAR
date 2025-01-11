@@ -18,3 +18,4 @@ output/
 *.wav
 .vscode
 tests/
+.codegpt
