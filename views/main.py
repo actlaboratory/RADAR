@@ -9,6 +9,7 @@ import time
 import winsound
 import region_dic
 import re
+from views import showRadioProgramScheduleListBase
 import recorder
 from views import recordingWizzard
 from views import token
@@ -514,8 +515,7 @@ class Events(BaseEvents):
 		self.parent.log.debug("volume decreased")
 
 	def initializeInfoView(self, event):
-		self.parent.Clear()
-		proglst = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected], "showOnly")
+		proglst = showRadioProgramScheduleListBase.ShowSchedule(self.selected, self.parent.stid[self.selected])
 		proglst.Initialize()
 		proglst.Show()
 		return
@@ -582,9 +582,9 @@ class Events(BaseEvents):
 		self.recording = False
 
 	def recording_schedule(self, event):
-		rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected], "schedule")
+		rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
 		if self.parent.app.config.getstring("record", "recording_schedule") == "INACTIVE":
-			rw.Initialize()
+			rw.init()
 			rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
 			rw.Show()
 			if self.parent.app.config.getstring("record", "recording_schedule") == "READY":
