@@ -5,6 +5,7 @@ import locale
 import recorder
 import simpleDialog
 from views import token
+
 import views.ViewCreator
 from views import programmanager
 from logging import getLogger
@@ -15,10 +16,12 @@ import tcutil
 import datetime
 
 class RecordingWizzard(BaseDialog):
-    def __init__(self, stid, radioname):
+    def __init__(self, stid, radioname, mode):
         super().__init__("recordingWizzardDialog")
-        self.starttimer = wx.Timer()
-        self.endtimer = wx.Timer()
+        self.mode = mode
+        if self.mode == "schedule":
+            self.starttimer = wx.Timer()
+            self.endtimer = wx.Timer()
         self.config = globalVars.app.config
         self.config["recording"]["recording_schedule"] = "INACTIVE" #動作していない
         self.stid = stid
@@ -37,14 +40,14 @@ class RecordingWizzard(BaseDialog):
 
     def Initialize(self):
         self.log.debug("created")
-        super().Initialize(self.app.hMainView.hFrame,_("予約録音ウィザード"))
+        super().Initialize(self.app.hMainView.hFrame,_("番組表"))
         self.InstallControls()
         return True
 
     def InstallControls(self):
         """いろんなウィジェットを設置する"""
         self.creator=views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.sizer,wx.VERTICAL,20,style=wx.EXPAND|wx.ALL,margin=20)
-        self.lst,programlist = self.creator.virtualListCtrl(_("録音する番組を選択してください"))
+        self.lst,programlist = self.creator.virtualListCtrl(_("番組一覧"))
         self.lst.AppendColumn(_("タイトル"))
         self.lst.AppendColumn(_("出演者"))
         self.lst.AppendColumn(_("開始時間"))
@@ -53,8 +56,9 @@ class RecordingWizzard(BaseDialog):
         self.lst.Focus(0)
         self.lst.Select(0)
         self.fnh = self.creator.okbutton(_("完了(&F)"), self.onFinishButton)
-        self.cancel = self.creator.cancelbutton(_("キャンセル(&C)"), None)
-        self.cancel.SetDefault()
+        self.cls = self.creator.closebutton(_("閉じる(&C)"), self.onCloseBtn)
+        self.cls.SetDefault()
+        return
 
     def calendarSelector(self):
         """日時指定用コンボボックスを作成し、内容を設定"""
@@ -95,8 +99,6 @@ class RecordingWizzard(BaseDialog):
             self.endt += datetime.timedelta(days=1)
         time_until_start = (self.stdt - current).total_seconds() * 1000
         time_until_end = (self.endt - current).total_seconds() * 1000
-        print(time_until_start)
-        print(time_until_end)
         #過去の番組をスケジュールしようとした
         if time_until_start < 0:
             simpleDialog.errorDialog(_("過去の番組の録音をスケジュールすることはできません。番組を選び直してください。"))
@@ -151,6 +153,10 @@ class RecordingWizzard(BaseDialog):
         program_tol = self.progs.get_tol()
         for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
             self.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
+
+    def onCloseBtn(self, event):
+        event.Skip()
+        return
 
     def get_start_timer_status(self):
         return self.starttimer.IsRunning()
