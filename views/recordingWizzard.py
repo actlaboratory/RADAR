@@ -1,22 +1,23 @@
 import wx
+from views import showRadioProgramScheduleListBase
 import globalVars
 import ConfigManager
 import locale
 import recorder
 import simpleDialog
 from views import token
+
 import views.ViewCreator
 from views import programmanager
 from logging import getLogger
 from plyer import notification
 from views.baseDialog import *
-import itertools
 import tcutil
 import datetime
 
-class RecordingWizzard(BaseDialog):
+class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
     def __init__(self, stid, radioname):
-        super().__init__("recordingWizzardDialog")
+        super().__init__(stid, radioname)
         self.starttimer = wx.Timer()
         self.endtimer = wx.Timer()
         self.config = globalVars.app.config
@@ -25,6 +26,7 @@ class RecordingWizzard(BaseDialog):
         self.radioname = radioname
         self.clutl = tcutil.CalendarUtil()
         self.progs = programmanager.ProgramManager()
+        super().Initialize()
         self.recorder = recorder.Recorder()
 
     def getFileType(self, id):
@@ -35,36 +37,10 @@ class RecordingWizzard(BaseDialog):
         url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
         self.m3u8 = self.progs.gettoken.gen_temp_chunk_m3u8_url( url ,self.progs.token)
 
-    def Initialize(self):
+    def init(self):
         self.log.debug("created")
-        super().Initialize(self.app.hMainView.hFrame,_("予約録音ウィザード"))
-        self.InstallControls()
-        return True
-
-    def InstallControls(self):
-        """いろんなウィジェットを設置する"""
-        self.creator=views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.sizer,wx.VERTICAL,20,style=wx.EXPAND|wx.ALL,margin=20)
-        self.lst,programlist = self.creator.virtualListCtrl(_("録音する番組を選択してください"))
-        self.lst.AppendColumn(_("タイトル"))
-        self.lst.AppendColumn(_("出演者"))
-        self.lst.AppendColumn(_("開始時間"))
-        self.lst.AppendColumn(_("終了時間"))
-        self.calendarSelector()
-        self.lst.Focus(0)
-        self.lst.Select(0)
         self.fnh = self.creator.okbutton(_("完了(&F)"), self.onFinishButton)
-        self.cancel = self.creator.cancelbutton(_("キャンセル(&C)"), None)
-        self.cancel.SetDefault()
-
-    def calendarSelector(self):
-        """日時指定用コンボボックスを作成し、内容を設定"""
-        self.cmb,label = self.creator.combobox(_("日時を指定"), self.clutl.getDateValue())
-        self.cmb.SetSelection(0)
-        self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
-        # 初期状態を反映するために明示的にイベントを発生させる
-        event = wx.CommandEvent(wx.EVT_COMBOBOX.typeId, self.cmb.GetId())
-        event.SetInt(0)
-        self.cmb.ProcessEvent(event)
+        return True
 
     def onFinishButton(self, event):
         try:
@@ -95,8 +71,6 @@ class RecordingWizzard(BaseDialog):
             self.endt += datetime.timedelta(days=1)
         time_until_start = (self.stdt - current).total_seconds() * 1000
         time_until_end = (self.endt - current).total_seconds() * 1000
-        print(time_until_start)
-        print(time_until_end)
         #過去の番組をスケジュールしようとした
         if time_until_start < 0:
             simpleDialog.errorDialog(_("過去の番組の録音をスケジュールすることはできません。番組を選び直してください。"))
@@ -136,21 +110,6 @@ class RecordingWizzard(BaseDialog):
         self.starttimer.Stop()
         self.endtimer.Stop()
         self.config["record"]["recording_schedule"] = "INACTIVE" #デフォル状態に戻す
-
-    def show_programlist(self, event):
-        self.lst.clear()
-        selection = self.cmb.GetSelection()
-        self.selection = selection
-        if selection == None:
-            return
-        date = self.clutl.transform_date(self.clutl.getDateValue()[selection])
-        self.progs.retrieveRadioListings(self.stid,date)
-        title = self.progs.gettitle() #番組のタイトル
-        pfm = self.progs.getpfm() #出演者の名前
-        program_ftl = self.progs.get_ftl()
-        program_tol = self.progs.get_tol()
-        for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
-            self.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
 
     def get_start_timer_status(self):
         return self.starttimer.IsRunning()

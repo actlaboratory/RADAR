@@ -9,23 +9,22 @@ import time
 import winsound
 import region_dic
 import re
+from views import showRadioProgramScheduleListBase
 import recorder
 from views import recordingWizzard
 from views import token
 from views import programmanager
 from views import changeDevice
 import xml.etree.ElementTree as ET
-import itertools
+import socket
 import subprocess
-
 import constants
 import globalVars
 import update
 import menuItemsStore
 import datetime
-
 from .base import *
-from urllib import request
+import urllib
 from simpleDialog import *
 
 from views import globalKeyConfig
@@ -70,7 +69,8 @@ class MainView(BaseView):
 		self.exit_button()
 		self.SHOW_NOW_PROGRAMLIST()
 		self.AreaTreeCtrl()
-		self.getradio()
+		self.setupradio()
+		self.setRadioList()
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
 
 	def update_program_info(self):
@@ -91,42 +91,19 @@ class MainView(BaseView):
 	def AreaTreeCtrl(self):
 		self.tree,broadcaster = self.creator.treeCtrl(_("放送エリア"))
 
-	def infoListView(self):
-		self.lst,programinfo = self.creator.virtualListCtrl(_("番組表一覧"))
-		self.lst.AppendColumn(_("タイトル"))
-		self.lst.AppendColumn(_("出演者"))
-		self.lst.AppendColumn(_("開始時間"))
-		self.lst.AppendColumn(_("終了時間"))
-		self.backbtn()
-		self.calendarSelector()
-		self.lst.Focus(0)
-		self.lst.Select(0)
-
-
-	def calendarSelector(self):
-		"""日時指定用コンボボックスを作成し、内容を設定"""
-		self.cmb,label = self.creator.combobox(_("日時を指定"), self.clutl.getDateValue())
-		self.cmb.SetSelection(0)
-		self.cmb.Bind(wx.EVT_COMBOBOX, self.events.show_programlist)
-
-# 初期状態を反映するために明示的にイベントを発生させる
-		event = wx.CommandEvent(wx.EVT_COMBOBOX.typeId, self.cmb.GetId())
-		event.SetInt(0)  # 選択されたインデックスを明示
-		self.cmb.ProcessEvent(event)  # イベントを手動発火
 
 	def backbtn(self):
-		self.bkbtn = self.creator.button(_("前の画面に戻る"), self.events.onbackbutton)
-		return
+		self.bkbtn = self.creator.cancelbutton(_("前の画面に戻る"), None)
 
 	def nextbtn(self):
 		self.nxtBtn = self.creator.button(_("次へ&(N)", None))
 
-	def getradio(self):
+	def setupradio(self):
 		"""ステーションidを取得後、ツリービューに描画"""
 		self.stid = {}
-		region = region_dic.REGION
-		if self.area in region:
-			self.log.debug("region:"+region[self.area])
+		self.region = region_dic.REGION
+		if self.area in self.region:
+			self.log.debug("region:"+self.region[self.area])
 		#ツリーのルート項目の作成
 		root = self.tree.AddRoot(_("放送局一覧"))
 		#エリア情報の取得に失敗
@@ -137,23 +114,98 @@ class MainView(BaseView):
 			self.tree.SelectItem(root, select=True)
 			return
 
-		#ラジオ番組の取得
-		url = "https://radiko.jp/v3/station/region/full.xml" #放送局リストurl
-		#xmlから情報取得
-		req = request.Request(url) 
-		with request.urlopen(req) as response:
-			xml_data = response.read().decode() #デフォルトではbytesオブジェクトなので文字列へのデコードが必要
-			parsed = ET.fromstring(xml_data)
+	def get_radio_stations(self, url, max_retries=3, timeout=30):
+		"""
+		ラジオ局情報を取得する関数
+		
+		Parameters:
+		- url: radiko.jpのAPI URL
+		- max_retries: 最大リトライ回数
+		- timeout: タイムアウト時間（秒）
+		
+		Returns:
+		- tuple: (成功/失敗, XMLデータ/エラーメッセージ)
+		"""
+		for attempt in range(max_retries):
+			try:
+				sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+				parsed_url = urllib.parse.urlparse(url)
+				host = parsed_url.hostname
+				port = parsed_url.port or 443
+				sock.settimeout(timeout)
+				
+				result = sock.connect_ex((host, port))
+				sock.close()
+				
+				if result != 0:
+					if attempt < max_retries - 1:
+						wait_time = (attempt + 1) * 2
+						self.log.debug(f"接続エラー。{wait_time}秒後にリトライします。(試行 {attempt + 1}/{max_retries})")
+						time.sleep(wait_time)
+						continue
+					return False, "接続に失敗しました。インターネットの接続状況をご確認ください。"
+
+				req = urllib.request.Request(url)
+				req.add_header('User-Agent', 'Mozilla/5.0')
+				
+				with urllib.request.urlopen(req, timeout=timeout) as response:
+					return True, response.read().decode()
+
+			except socket.timeout:
+					if attempt < max_retries - 1:
+						wait_time = (attempt + 1) * 2
+						self.log.debug(f"タイムアウトが発生しました。{wait_time}秒後にリトライします。")
+						time.sleep(wait_time)
+					else:
+						return False, "タイムアウトによりデータの取得に失敗しました。"
+				
+			except Exception as e:
+				self.log.error(f"予期せぬエラーが発生しました: {str(e)}")
+				return False, f"予期せぬエラーが発生しました: {str(e)}"
+
+	def setRadioList(self):
+		root = self.tree.GetRootItem()
+		# ラジオ局情報の取得
+		url = "https://radiko.jp/v3/station/region/full.xml"
+		success, result = self.get_radio_stations(url)
+		if not success:
+			errorDialog(_(result))
+			self.tree.SetFocus()
+			self.tree.Expand(root)
+			self.tree.SelectItem(root, select=True)
+			return
+
+		try:
+			# XMLのパース
+			parsed = ET.fromstring(result)
+			
 			for r in parsed:
 				for station in r:
 					stream = {r.attrib["ascii_name"]:{}}
-					stream[r.attrib["ascii_name"]] = {"radioname":station.find("name").text,"radioid":station.find("id").text}
+					stream[r.attrib["ascii_name"]] = {
+						"radioname": station.find("name").text,
+						"radioid": station.find("id").text
+					}
+					
 					if "ZENKOKU" in stream:
 						self.tree.AppendItem(root, stream["ZENKOKU"]["radioname"], data=stream["ZENKOKU"]["radioid"])
 						self.stid[stream["ZENKOKU"]["radioid"]] = stream["ZENKOKU"]["radioname"]
-					if region[self.area] in stream:
-						self.tree.AppendItem(root, stream[region[self.area]]["radioname"], data=stream[region[self.area]]["radioid"])
-						self.stid[stream[region[self.area]]["radioid"]] = stream[region[self.area]]["radioname"]
+					
+					if self.region[self.area] in stream:
+						self.tree.AppendItem(root, stream[self.region[self.area]]["radioname"], data=stream[self.region[self.area]]["radioid"])
+						self.stid[stream[self.region[self.area]]["radioid"]] = stream[self.region[self.area]]["radioname"]
+
+		except ET.ParseError:
+			self.log.error("Failed to parse xml!")
+			errorDialog(_("放送局情報の取得に失敗しました。\nしばらく時間をおいて再度お試しください。"))
+			return
+
+		except Exception as e:
+			self.log.error(f"An unexpected error occurred: {str(e)}")
+			errorDialog(_("予期せぬエラーが発生しました。\n詳細はログをご確認ください。この問題が引き続き発生する場合は開発者までお問い合わせください。"))
+			return
+
+		# イベントバインドとツリーの設定
 		self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
 		self.tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.events.onRadioSelected)
 		self.tree.SetFocus()
@@ -207,8 +259,8 @@ class MainView(BaseView):
 		self.DSCBOX.Disable()
 		self.areaDetermination()
 		self.AreaTreeCtrl()
-		self.getradio()
-
+		self.setupradio()
+		self.setRadioList()
 
 class Menu(BaseMenu):
 	def Apply(self, target):
@@ -384,7 +436,7 @@ class Events(BaseEvents):
 
 			else:
 				self.parent.stop()
-		except request.HTTPError as error:
+		except urllib.request.HTTPError as error:
 			errorDialog(_("再生に失敗しました。聴取可能な都道府県内であることをご確認ください。\nこの症状が引き続き発生する場合は、放送局一覧を再描画してからお試しください。"))
 			self.parent.log.error("Playback failure!"+str(error))
 			return
@@ -402,9 +454,9 @@ class Events(BaseEvents):
 
 	def show_description(self):
 		"""番組の説明を表示"""
-		if self.parent.progs.getProgramDsc(self.id):
+		if self.parent.progs.getNowProgramDsc(self.id):
 			self.parent.DSCBOX.Enable()
-			self.parent.DSCBOX.SetValue(self.parent.progs.getProgramDsc(self.id))
+			self.parent.DSCBOX.SetValue(self.parent.progs.getNowProgramDsc(self.id))
 		else:
 			self.parent.DSCBOX.SetValue("説明無し")
 
@@ -463,41 +515,10 @@ class Events(BaseEvents):
 		self.parent.log.debug("volume decreased")
 
 	def initializeInfoView(self, event):
-		self.parent.Clear()
-		self.parent.infoListView()
-		self.parent.lst.SetFocus()
-
-	def show_programlist(self, event):
-		self.parent.lst.clear()
-		selection = self.parent.cmb.GetSelection()
-		if selection == None:
-			return
-		date = self.parent.clutl.transform_date(self.parent.clutl.getDateValue()[selection])
-		self.parent.progs.retrieveRadioListings(self.selected,date)
-		title = self.parent.progs.gettitle() #番組のタイトル
-		pfm = self.parent.progs.getpfm() #出演者の名前
-		program_ftl = self.parent.progs.get_ftl()
-		program_tol = self.parent.progs.get_tol()
-		for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
-			self.parent.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
-
-	def onbackbutton(self, event):
-		self.parent.Clear()
-		self.parent.areaDetermination()
-		self.parent.description()
-		self.parent.volume, tmp = self.parent.creator.slider(_("音量(&V)"), event=self.onVolumeChanged, defaultValue=self.parent.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
-		self.parent.volume.SetValue(self.parent.app.config.getint("play", "volume"))
-		self.parent.menu.hRecordingFileTypeMenu.Check(self.parent.app.config.getint("recording", "menu_id"), self.parent.app.config.getboolean("recording", "check_menu"))
-		self.parent.recorder.setFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
-		self.parent.exit_button()
-		self.parent.SHOW_NOW_PROGRAMLIST()
-		self.parent.AreaTreeCtrl()
-		self.parent.getradio()
-		#再生状態に応じて説明を表示
-		if self.playing:
-			self.show_description()
-			self.parent.nplist.Enable()
-			self.onReLoad(event)
+		proglst = showRadioProgramScheduleListBase.ShowSchedule(self.selected, self.parent.stid[self.selected])
+		proglst.Initialize()
+		proglst.Show()
+		return
 
 	def onMute(self, event):
 		if not self.mute_status:
@@ -561,17 +582,17 @@ class Events(BaseEvents):
 		self.recording = False
 
 	def recording_schedule(self, event):
-		self.rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
+		rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
 		if self.parent.app.config.getstring("record", "recording_schedule") == "INACTIVE":
-			self.rw.Initialize()
-			self.rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
-			self.rw.Show()
+			rw.init()
+			rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
+			rw.Show()
 			if self.parent.app.config.getstring("record", "recording_schedule") == "READY":
 				self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音の取り消し(&T)"))
 			return
 		if self.parent.app.config.getstring("record", "recording_schedule") != "INACTIVE":
 			message = yesNoDialog(_("確認"), _("予約録音を中止しますか？"))
 			if message == wx.ID_NO:  return
-			self.rw.stop()
+			rw.stop()
 			self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音(&R)"))
 			return
