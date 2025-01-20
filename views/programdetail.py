@@ -13,16 +13,19 @@ class dialog(baseDialog.BaseDialog):
 
     def InstallControls(self):
         """いろんなwidgetを設置する。"""
-        textList = []
         creator = ViewCreator.ViewCreator(self.viewMode, self.panel, self.sizer, wx.VERTICAL, 10, style=wx.ALL, margin=20)
-        self.info, dummy = creator.inputbox("番組説明", defaultValue="\r\n".join(textList), style=wx.TE_MULTILINE|wx.TE_READONLY | wx.TE_NO_VSCROLL | wx.BORDER_RAISED, sizerFlag=wx.EXPAND, x=750, textLayout=None)
+        self.info, dummy = creator.inputbox(_("番組説明"), defaultValue="\r\n".join(self.textList), style=wx.TE_MULTILINE|wx.TE_READONLY | wx.TE_NO_VSCROLL | wx.BORDER_RAISED, sizerFlag=wx.EXPAND, x=750, textLayout=None)
         f = self.info.GetFont()
         f.SetPointSize((int)(f.GetPointSize() * (2/3)))
         self.info.SetFont(f)
         self.info.SetMinSize(wx.Size(750,240))
 
-
         # フッター
         footerCreator = ViewCreator.ViewCreator(self.viewMode, self.panel, self.sizer, style=wx.ALIGN_RIGHT | wx.ALL, margin=20)
         self.closeBtn = footerCreator.closebutton(_("閉じる"))
         self.closeBtn.SetDefault()
+
+    def add_inputbox(self, description, ix):
+        """番組詳細情報をテキストボックスに追加する"""
+        self.textList = []
+        self.textList.append(description[ix])
