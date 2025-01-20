@@ -140,3 +140,8 @@ class ProgramManager:
         title = items[0].get("title")
         artist = items[0].get("artist")
         music = f"{artist}:{title}"
+
+    def getDescriptions(self):
+        desc_elements = self.root.findall(".//desc")
+        descriptions = [description.text for description in desc_elements]
+        return descriptions

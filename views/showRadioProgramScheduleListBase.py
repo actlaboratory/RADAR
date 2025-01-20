@@ -9,6 +9,7 @@ from logging import getLogger
 from views.baseDialog import *
 import tcutil
 import datetime
+import re
 
 class ShowSchedule(BaseDialog):
     def __init__(self, stid, radioname):
@@ -18,6 +19,8 @@ class ShowSchedule(BaseDialog):
         self.radioname = radioname
         self.clutl = tcutil.CalendarUtil()
         self.progs = programmanager.ProgramManager()
+        self.dsclst = []
+
     def Initialize(self):
         self.log.debug("created")
         super().Initialize(self.app.hMainView.hFrame,_("番組表"))
@@ -61,8 +64,10 @@ class ShowSchedule(BaseDialog):
         pfm = self.progs.getpfm() #出演者の名前
         program_ftl = self.progs.get_ftl()
         program_tol = self.progs.get_tol()
-        for t,p,ftl,tol in zip(title,pfm,program_ftl,program_tol):
+        description = self.progs.getDescriptions() #番組の説明
+        for t,p,ftl,tol,d in zip(title,pfm,program_ftl,program_tol, description):
             self.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
+            self.dsclst.append(re.sub(re.compile('<.*?>'), '', d))
 
     def onCloseBtn(self, event):
         event.Skip()
@@ -70,9 +75,8 @@ class ShowSchedule(BaseDialog):
 
     def show_detail(self, event):
         """番組詳細"""
-        title = self.progs.gettitle() #番組のタイトル
         pd = programdetail.dialog()
-        pd.add_inputbox()
+        pd.add_inputbox(self.dsclst, self.lst.GetFocusedItem())
         pd.Initialize()
         pd.Show()
         return
