@@ -54,6 +54,7 @@ class ShowSchedule(BaseDialog):
 
     def show_programlist(self, event):
         self.lst.clear()
+        self.dsclst.clear()
         selection = self.cmb.GetSelection()
         self.selection = selection
         if selection == None:
