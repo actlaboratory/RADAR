@@ -454,9 +454,9 @@ class Events(BaseEvents):
 
 	def show_description(self):
 		"""番組の説明を表示"""
-		if self.parent.progs.getProgramDsc(self.id):
+		if self.parent.progs.getNowProgramDsc(self.id):
 			self.parent.DSCBOX.Enable()
-			self.parent.DSCBOX.SetValue(self.parent.progs.getProgramDsc(self.id))
+			self.parent.DSCBOX.SetValue(self.parent.progs.getNowProgramDsc(self.id))
 		else:
 			self.parent.DSCBOX.SetValue("説明無し")
 

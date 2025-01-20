@@ -44,7 +44,6 @@ class ProgramManager:
             lists[2] = f"0{lists[2]}"
         formatted_date = f"{lists[0]}{lists[1]}{lists[2]}"
         url = f"{self.getprogramlist()}/program/station/date/{formatted_date}/{id}.xml"
-        print(url)
 
         # XMLデータを取得
         response = requests.get(url)
@@ -93,7 +92,6 @@ class ProgramManager:
         self.results = results
         self.response = response
         for result,title in zip(results,progs):
-
             title_dic[result.get("id")] = title.xpath(".//title")[0].text
 
         #stationidに該当する番組名を返す
@@ -109,21 +107,21 @@ class ProgramManager:
         if id in pfm_dic:
             return pfm_dic[id]
 
-    def getProgramDsc(self, id):
-        dsc_dic = {}
+    def getNowProgramDsc(self, id):
         """番組の説明を取得して返す"""
-
+        dsc_dic = {}
         for result,dsc in zip(self.results,self.progs):
             str = dsc.xpath(".//desc")[0].text
             if str is not None:
                 dsc_dic[result.get("id")] = re.sub(re.compile('<.*?>'), '', str) #htmlタグを除去
-
         if id in dsc_dic:
             return dsc_dic[id]
 
     def get_ftl(self):
         results = []
         prog_elements = self.root.findall(".//prog")
+        dsc = [dsc.get("desc") for dsc in prog_elements]
+        print(dsc)
         prog_ftl = [ftl.get("ftl") for ftl in prog_elements]
         return prog_ftl
 
@@ -142,4 +140,3 @@ class ProgramManager:
         title = items[0].get("title")
         artist = items[0].get("artist")
         music = f"{artist}:{title}"
-        return music
