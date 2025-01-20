@@ -343,6 +343,7 @@ class Events(BaseEvents):
 	id = None
 	recording = False
 
+
 	def onRecordMenuSelect(self, event):
 		"""録音品質メニューの動作"""
 		selected = event.GetId()
@@ -569,7 +570,6 @@ class Events(BaseEvents):
 		dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.selected].replace(" ", "_"))
 		if self.parent.recorder.record(self.parent.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}"):
 			if not self.recording:
-				self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
 				self.recording = True
 			else:
 				self.onRecordingStop()
@@ -587,12 +587,4 @@ class Events(BaseEvents):
 			rw.init()
 			rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
 			rw.Show()
-			if self.parent.app.config.getstring("record", "recording_schedule") == "READY":
-				self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音の取り消し(&T)"))
-			return
-		if self.parent.app.config.getstring("record", "recording_schedule") != "INACTIVE":
-			message = yesNoDialog(_("確認"), _("予約録音を中止しますか？"))
-			if message == wx.ID_NO:  return
-			rw.stop()
-			self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音(&R)"))
 			return

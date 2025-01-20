@@ -21,6 +21,8 @@ logLevelSelection = {
     "10":"debug",
     "0":"quiet"
 }
+now_record = False
+
 
 
 class Recorder:
@@ -80,6 +82,9 @@ class Recorder:
                 self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except Exception as e:
             self.log.error(f"Recording failed: {e}")
+        globalVars.app.hMainView.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
+        globalVars.app.hMainView.menu.EnableMenu("RECORDING_SCHEDULE", False)
+        now_record = True
         return True
 
     def stop_record(self):
@@ -87,6 +92,9 @@ class Recorder:
         self.log.debug("recording stopped!")
         if self.code:
             self.cleanup()
+        globalVars.app.hMainView.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
+        now_record = False
+        globalVars.app.hMainView.menu.EnableMenu("RECORDING_SCHEDULE", True)
 
     def cleanup(self, *args):
         """プロセスを安全に終了"""
