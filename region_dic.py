@@ -12,7 +12,7 @@ REGION = {
 	"totigi":"KANTO",
 	"saitama":"KANTO",
 	"chiba":"KANTO",
-	"toukyou":"KANTO",
+	"tokyo":"KANTO",
 	"kanagawa":"KANTO",
 	"shizuoka":"chubu",
 	"aichi":"chubu",
