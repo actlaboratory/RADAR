@@ -93,8 +93,8 @@ class Recorder:
         if self.code:
             self.cleanup()
         globalVars.app.hMainView.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
-        now_record = False
         globalVars.app.hMainView.menu.EnableMenu("RECORDING_SCHEDULE", True)
+        now_record = False
 
     def cleanup(self, *args):
         """プロセスを安全に終了"""

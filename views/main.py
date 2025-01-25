@@ -583,8 +583,7 @@ class Events(BaseEvents):
 
 	def recording_schedule(self, event):
 		rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
-		if self.parent.app.config.getstring("record", "recording_schedule") == "INACTIVE":
-			rw.init()
-			rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
-			rw.Show()
-			return
+		rw.init()
+		rw.getFileType(self.parent.app.config.getint("recording", "menu_id")-10000)
+		rw.Show()
+		return

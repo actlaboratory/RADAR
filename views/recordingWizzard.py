@@ -1,12 +1,10 @@
 import wx
 from views import showRadioProgramScheduleListBase
 import globalVars
-import ConfigManager
 import locale
 import recorder
 import simpleDialog
 from views import token
-
 import views.ViewCreator
 from views import programmanager
 from logging import getLogger
@@ -18,16 +16,18 @@ import datetime
 class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
     def __init__(self, stid, radioname):
         super().__init__(stid, radioname)
-        self.starttimer = wx.Timer()
-        self.endtimer = wx.Timer()
         self.config = globalVars.app.config
-        self.config["recording"]["recording_schedule"] = "INACTIVE" #動作していない
         self.stid = stid
         self.radioname = radioname
         self.clutl = tcutil.CalendarUtil()
         self.progs = programmanager.ProgramManager()
         super().Initialize()
         self.recorder = recorder.Recorder()
+        #タイマーオブジェクトをインスタンス化
+        self.starttimer = wx.Timer()
+        self.endtimer = wx.Timer()
+        main_window = globalVars.app.hMainView.hFrame
+        main_window.Bind(wx.EVT_CLOSE, self.on_application_close)
 
     def getFileType(self, id):
         """メニューidを受取.mp3か.wavを判断して返す"""
@@ -78,11 +78,13 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             return
         self.starttimer.StartOnce(int(time_until_start))
         self.endtimer.StartOnce(int(time_until_end))
-        self.config["record"]["recording_schedule"] = "READY" #録音準備状態
         notification.notify(title='録音準備', message=f'録音がスケジュールされました。録音は、{self.stdt}に開始されます。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
-        self.log.debug("The recording was scheduled successfully!")
+        #メニュー名を変更しておく
+        globalVars.app.hMainView.menu.SetMenuLabel("RECORDING_SCHEDULE", _("予約録音を取り消し(&S)"))
+
         self.starttimer.Bind(wx.EVT_TIMER, self.onStartTimer)
         self.endtimer.Bind(wx.EVT_TIMER, self.onEndTimer)
+        self.log.info("The recording was scheduled successfully!")
         event.Skip()
         return
 
@@ -95,7 +97,6 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         #放送局名で作成されたディレクトリ名に使用不能な文字が含まれていたら置き換える
         dirs = self.recorder.create_recordingDir(self.radioname.replace(" ", "_"))
         self.recorder.record(self.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
-        self.config["record"]["recording_schedule"] = "RUNNING" #予約録音実行中
         self.log.debug("timer is started")
         notification.notify(title='番組録音開始!', message='スケジュールされた番組の録音を開始しました。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
 
@@ -104,12 +105,24 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self.log.debug("timer is stoped")
 
     def stop(self):
-        if self.config.getstring("record", "recording_schedule") == "RUNNING":
-            self.recorder.stop_record()
-            self.log.info("Scheduled recording was cancelled by the user!")
-        self.starttimer.Stop()
-        self.endtimer.Stop()
-        self.config["record"]["recording_schedule"] = "INACTIVE" #デフォル状態に戻す
+        self.recorder.stop_record()
+        self.log.info("Scheduled recording was cancelled by the user!")
+        self.cleanup_timers()
+
+    def cleanup_timers(self):
+        """Properly stop and destroy timers"""
+        if self.starttimer:
+            self.starttimer.Stop()
+            self.starttimer = None
+        if self.endtimer:
+            self.endtimer.Stop()
+            self.endtimer = None
+
+    def on_application_close(self, event):
+        """アプリケーションが終了された場合適切に処理を中断する"""
+        self.stop()
+        event.Skip()
+        return
 
     def get_start_timer_status(self):
         return self.starttimer.IsRunning()
