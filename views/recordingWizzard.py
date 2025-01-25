@@ -99,6 +99,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self.recorder.record(self.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}") #datetime+番組タイトルでファイル名を決定
         self.log.debug("timer is started")
         notification.notify(title='番組録音開始!', message='スケジュールされた番組の録音を開始しました。', app_name='rpb', app_icon='', timeout=10, ticker='', toast=False)
+        globalVars.app.hMainView.menu.SetMenuLabel("RECORDING_SCHEDULE", _("録音を中止(&S)"))
 
     def onEndTimer(self, event):
         self.stop()

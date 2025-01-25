@@ -68,7 +68,10 @@ class ShowSchedule(BaseDialog):
         description = self.progs.getDescriptions() #番組の説明
         for t,p,ftl,tol,d in zip(title,pfm,program_ftl,program_tol, description):
             self.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
-            self.dsclst.append(re.sub(re.compile('<.*?>'), '', d))
+            if d:
+                self.dsclst.append(re.sub(re.compile('<.*?>'), '', d))
+            else:
+                self.dsclst.append("説明無し")
 
     def onCloseBtn(self, event):
         event.Skip()

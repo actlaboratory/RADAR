@@ -120,8 +120,6 @@ class ProgramManager:
     def get_ftl(self):
         results = []
         prog_elements = self.root.findall(".//prog")
-        dsc = [dsc.get("desc") for dsc in prog_elements]
-        print(dsc)
         prog_ftl = [ftl.get("ftl") for ftl in prog_elements]
         return prog_ftl
 
