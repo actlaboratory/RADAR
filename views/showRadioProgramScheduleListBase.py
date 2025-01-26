@@ -20,6 +20,10 @@ class ShowSchedule(BaseDialog):
         self.clutl = tcutil.CalendarUtil()
         self.progs = programmanager.ProgramManager()
         self.dsclst = []
+        self.tilst = []
+        self.pfmlst = []
+        self.stlst = []
+        self.enlst = []
 
     def Initialize(self):
         self.log.debug("created")
@@ -44,7 +48,7 @@ class ShowSchedule(BaseDialog):
 
     def calendarSelector(self):
         """日時指定用コンボボックスを作成し、内容を設定"""
-        self.cmb,label = self.creator.combobox(_("日時を指定"), self.clutl.getDateValue())
+        self.cmb,label = self.creator.combobox(_("日付指定"), self.clutl.getDateValue())
         self.cmb.SetSelection(0)
         self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
         # 初期状態を反映するために明示的にイベントを発生させる
@@ -55,6 +59,10 @@ class ShowSchedule(BaseDialog):
     def show_programlist(self, event):
         self.lst.clear()
         self.dsclst.clear()
+        self.tilst.clear()
+        self.pfmlst.clear()
+        self.stlst.clear()
+        self.enlst.clear()
         selection = self.cmb.GetSelection()
         self.selection = selection
         if selection == None:
@@ -72,6 +80,13 @@ class ShowSchedule(BaseDialog):
                 self.dsclst.append(re.sub(re.compile('<.*?>'), '', d))
             else:
                 self.dsclst.append("説明無し")
+            self.tilst.append(t)
+            if p:
+                self.pfmlst.append(p)
+            else:
+                self.pfmlst.append("")
+            self.stlst.append(ftl[:2]+":"+ftl[2:4])
+            self.enlst.append(tol[:2]+":"+tol[2:4])
 
     def onCloseBtn(self, event):
         event.Skip()
@@ -80,7 +95,11 @@ class ShowSchedule(BaseDialog):
     def show_detail(self, event):
         """番組詳細"""
         pd = programdetail.dialog()
-        pd.add_inputbox(self.dsclst, self.lst.GetFocusedItem())
+        pd.show_dsc(self.dsclst, self.lst.GetFocusedItem())
+        pd.show_title(self.tilst, self.lst.GetFocusedItem())
+        pd.show_pfm(self.pfmlst, self.lst.GetFocusedItem())
+        pd.show_starttime(self.stlst, self.lst.GetFocusedItem())
+        pd.show_endtime(self.enlst, self.lst.GetFocusedItem())
         pd.Initialize()
         pd.Show()
         return
