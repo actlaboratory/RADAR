@@ -28,6 +28,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self.endtimer = wx.Timer()
         main_window = globalVars.app.hMainView.hFrame
         main_window.Bind(wx.EVT_CLOSE, self.on_application_close)
+        self.getFileType(globalVars.app.config.getint("recording", "menu_id"))
 
     def getFileType(self, id):
         """メニューidを受取.mp3か.wavを判断して返す"""
