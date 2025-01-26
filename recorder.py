@@ -38,7 +38,6 @@ class Recorder:
             "mp3",
             "wav",
         ]
-        print(self.filetypes[1])
         self.code = None
 
         # 終了時にプロセスを安全に終了するためのハンドラーを設定
