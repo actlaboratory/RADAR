@@ -56,12 +56,7 @@ class MainView(BaseView):
 		self.clutl = tcutil.CalendarUtil()
 		self.progs = programmanager.ProgramManager()
 		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
-		try:
-			self.menu.hRecordingFileTypeMenu.Check(self.app.config.getint("recording","menu_id"), self.app.config.getboolean("recording","check_menu"))
-			self.recorder.setFileType(self.app.config.getint("recording", "menu_id")-10000)
-		except:
-			pass
-
+		self.recorder.setFileType(self.app.config.getint("recording", "menu_id"))
 		self.areaDetermination()
 		self.description()
 		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
@@ -71,6 +66,7 @@ class MainView(BaseView):
 		self.AreaTreeCtrl()
 		self.setupradio()
 		self.setRadioList()
+		self.menu.hRecordingFileTypeMenu.Check(self.app.config.getint("recording","menu_id"), self.app.config.getboolean("recording","check_menu"))
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
 
 	def update_program_info(self):
@@ -351,7 +347,7 @@ class Events(BaseEvents):
 			self.parent.menu.hRecordingFileTypeMenu.Check(selected+1, False)
 		if selected == 10001 and self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected):
 			self.parent.menu.hRecordingFileTypeMenu.Check(selected-1, False)
-		self.parent.recorder.setFileType(selected - 10000)
+		self.parent.recorder.setFileType(selected)
 		self.parent.app.config["recording"]["menu_id"] = selected
 		self.parent.app.config["recording"]["check_menu"] = self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected)
 

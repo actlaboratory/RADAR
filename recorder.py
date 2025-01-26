@@ -23,8 +23,6 @@ logLevelSelection = {
 }
 now_record = False
 
-
-
 class Recorder:
     def __init__(self):
         self.log = getLogger("%s.%s" % (constants.LOG_PREFIX, "recorder"))
@@ -49,7 +47,11 @@ class Recorder:
 
     def setFileType(self, index):
         """録音音質を決定"""
-        self.ftp = self.filetypes[index]
+        if index > 0:
+            self.ftp = self.filetypes[index-10000]
+        else:
+            self.ftp = self.filetypes[index]
+            globalVars.app.config["recording"]["menu_id"] = index+10000
         self.log.info(f"File type determined: {self.ftp}")
 
     def record(self, streamUrl, path):
