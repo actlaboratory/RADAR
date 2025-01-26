@@ -580,6 +580,5 @@ class Events(BaseEvents):
 	def recording_schedule(self, event):
 		rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
 		rw.init()
-		rw.getFileType(self.parent.app.config.getint("recording", "menu_id"))
 		rw.Show()
 		return
