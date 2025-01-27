@@ -557,25 +557,81 @@ class Events(BaseEvents):
 		self.parent.get_latest_programList()
 
 	def record_immediately(self, event):
-		if self.selected == None:
+		"""録音の開始/停止を処理するメソッド"""
+		if self.selected is None:
+			self.log.debug("No station selected for recording")
 			return
-		title = self.parent.progs.getNowProgram(self.selected)
-		self.parent.get_streamUrl(self.selected)
-		replace = title.replace(" ","-")
-		#放送局の名前でディレクトリを作成、スペースを除去しないと正しく保存されないので_に置き換える
-		dirs = self.parent.recorder.create_recordingDir(self.parent.stid[self.selected].replace(" ", "_"))
-		if self.parent.recorder.record(self.parent.m3u8, f"{dirs}\{str(datetime.date.today()) + replace}"):
-			if not self.recording:
-				self.recording = True
+
+		# 録音中の場合は停止処理
+		if self.recording:
+			self.onRecordingStop()
+			return
+
+		# 録音開始処理
+		try:
+			# 現在の番組情報を取得
+			title = self.parent.progs.getNowProgram(self.selected)
+			if not title:
+				self.log.error("Failed to get program title")
+				simpleDialog.errorDialog(_("番組情報の取得に失敗しました。"))
+				return
+
+			# ストリームURLの取得
+			self.parent.get_streamUrl(self.selected)
+			if not self.parent.m3u8:
+				self.log.error("Failed to get stream URL")
+				simpleDialog.errorDialog(_("ストリームURLの取得に失敗しました。"))
+				return
+
+			# ファイル名とディレクトリの準備
+			replace = title.replace(" ", "-")
+			station_dir = self.parent.stid[self.selected].replace(" ", "_")
+			dirs = self.parent.recorder.create_recordingDir(station_dir)
+			file_path = f"{dirs}\{str(datetime.date.today())}{replace}"
+			
+			# 録音開始
+			if self.parent.recorder.record(self.parent.m3u8, file_path):
+				self.log.info(f"Recording started: {title}")
+				self._update_ui_for_recording(True)
 			else:
-				self.onRecordingStop()
+				self.log.error("Recording failed to start")
+				simpleDialog.errorDialog(_("録音の開始に失敗しました。"))
+		
+		except Exception as e:
+			self.log.error(f"Error during recording start: {e}")
+			simpleDialog.errorDialog(_("録音の開始中にエラーが発生しました。"))
+			self._update_ui_for_recording(False)
 		else:
 			return
 
 	def onRecordingStop(self):
-		self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
-		self.parent.recorder.stop_record()
-		self.recording = False
+		"""録音を停止する"""
+		try:
+			self.log.debug("Attempting to stop recording")
+			self.parent.recorder.stop_record()
+			self._update_ui_for_recording(False)
+			self.log.info("Recording stopped successfully")
+		
+		except Exception as e:
+			self.log.error(f"Error during recording stop: {e}")
+			simpleDialog.errorDialog(_("録音の停止中にエラーが発生しました。"))
+			# UIは録音停止状態に更新
+			self._update_ui_for_recording(False)
+
+	def _update_ui_for_recording(self, is_recording):
+		"""録音状態に応じてUIを更新する"""
+		try:
+			if is_recording:
+				self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
+				self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_SCHEDULE"), False)
+				self.recording = True
+			else:
+				self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
+				self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_SCHEDULE"), True)
+				self.recording = False
+		
+		except Exception as e:
+			self.log.error(f"Error updating UI: {e}")
 
 	def recording_schedule(self, event):
 		rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])

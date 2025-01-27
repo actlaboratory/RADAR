@@ -21,7 +21,7 @@ logLevelSelection = {
     "10":"debug",
     "0":"quiet"
 }
-now_record = False
+recording = False
 
 class Recorder:
     def __init__(self):
@@ -39,6 +39,7 @@ class Recorder:
             "wav",
         ]
         self.code = None
+        self.recording = False
 
         # 終了時にプロセスを安全に終了するためのハンドラーを設定
         atexit.register(self.cleanup)
@@ -82,38 +83,70 @@ class Recorder:
                 self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=log_file, stderr=log_file)
             else:
                 self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            self.recording = True
+            return True
         except Exception as e:
             self.log.error(f"Recording failed: {e}")
-        globalVars.app.hMainView.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
-        globalVars.app.hMainView.menu.EnableMenu("RECORDING_SCHEDULE", False)
-        now_record = True
-        return True
+            return False
 
-    def stop_record(self):
+    def stop_record(self, called_from_destructor=False):
         """録音を終了"""
-        self.log.debug("recording stopped!")
-        if self.code:
-            self.cleanup()
-        globalVars.app.hMainView.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
-        globalVars.app.hMainView.menu.EnableMenu("RECORDING_SCHEDULE", True)
-        now_record = False
+        self.log.debug("Recording stop requested")
+        
+        if not self.code:
+            self.log.debug("No active recording process found")
+            self.recording = False
+            return
 
-    def cleanup(self, *args):
-        """プロセスを安全に終了"""
-        if self.code and self.code.poll() is None:
-            self.log.debug("Cleaning up recording process")
-            try:
-                self.code.stdin.close()
+        try:
+            # プロセスが実行中かチェック
+            if self.code.poll() is None:
+                self.log.debug("Active recording process found, attempting to stop")
+                # 標準入力を閉じる
+                try:
+                    self.code.stdin.close()
+                except Exception as e:
+                    self.log.error(f"Error closing stdin: {e}")
+
+                # プロセスを終了
                 self.code.terminate()
-                self.code.wait()
+                
+                # 終了を待機
+                try:
+                    self.code.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.log.warning("Process didn't terminate gracefully, forcing kill")
+                    self.code.kill()
+                    try:
+                        self.code.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self.log.error("Failed to kill process even after force kill")
+            else:
+                self.log.debug("Recording process has already ended")
+
+            # 通知を表示
+            if not called_from_destructor:
                 notification.notify(
                     title='録音完了',
                     message=f'ファイルは正しく{self.path}として保存されました。',
                     app_name='rpb',
                     timeout=10
                 )
-            except Exception as e:
-                self.log.error(f"Failed to stop recording: {e}")
+
+        except Exception as e:
+            self.log.error(f"Error during recording stop: {e}")
+        finally:
+            self.recording = False
+            self.code = None
+            self.log.debug("Recording cleanup completed")
+
+    def cleanup(self, *args):
+        """プロセスを安全に終了"""
+        if self.recording:
+            self.log.debug("Cleanup requested while recording is active")
+            self.stop_record(called_from_destructor=True)
+        else:
+            self.log.debug("Cleanup requested but no active recording")
 
     def create_recordingDir(self, stationid):
         """放送局名のディレクトリを作成"""
@@ -127,3 +160,9 @@ class Recorder:
             self.log.error(f"Failed to create directory: {e}")
 
         return dir_path
+
+    def __del__(self):
+        if self.recording:  # 録音中の場合は停止を試みる
+            self.stop_record()
+            self.log.info("Emergency recording stop completed during instance destruction")
+        self.log.debug("deleted")
