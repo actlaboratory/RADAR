@@ -6,10 +6,24 @@
 import wx
 import tcutil
 import time
+import locale
+
+# ロケール設定を修正
+try:
+    locale.setlocale(locale.LC_TIME, 'Japanese_Japan.932')
+except locale.Error:
+    try:
+        locale.setlocale(locale.LC_TIME, 'ja_JP.UTF-8')
+    except locale.Error:
+        try:
+            locale.setlocale(locale.LC_TIME, 'C')
+        except locale.Error:
+            pass  # デフォルトのまま
 import winsound
 import region_dic
 import re
 from views import showRadioProgramScheduleListBase
+from plyer import notification
 import recorder
 from views import recordingWizzard
 from views import token
@@ -52,6 +66,7 @@ class MainView(BaseView):
 
 		self._player = player.player()
 		self.updateInfoTimer = wx.Timer()
+		self.recordingStatusTimer = wx.Timer()
 		self.tmg = tcutil.TimeManager()
 		self.clutl = tcutil.CalendarUtil()
 		self.progs = programmanager.ProgramManager()
@@ -68,6 +83,18 @@ class MainView(BaseView):
 		self.setRadioList()
 		self.menu.hRecordingFileTypeMenu.Check(self.app.config.getint("recording","menu_id"), self.app.config.getboolean("recording","check_menu"))
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
+		
+		# 録音スケジュール監視を開始
+		try:
+			from recorder import schedule_manager
+			schedule_manager.start_monitoring()
+			self.log.info("Recording schedule monitoring started")
+		except Exception as e:
+			self.log.error(f"Failed to start schedule monitoring: {e}")
+		
+		# 録音状態監視タイマーを開始
+		self.recordingStatusTimer.Start(5000)  # 5秒ごとにチェック
+		self.recordingStatusTimer.Bind(wx.EVT_TIMER, self.events.check_recording_status)
 
 	def update_program_info(self):
 		self.updateInfoTimer.Start(self.tmg.replace_milliseconds(3)) #設定した頻度で番組情報を更新
@@ -360,6 +387,23 @@ class Events(BaseEvents):
 		r = d.Show()
 
 	def exit(self, event):
+		try:
+			# 録音状態監視タイマーを停止
+			if self.parent.recordingStatusTimer:
+				self.parent.recordingStatusTimer.Stop()
+			
+			# 録音スケジュール監視を停止
+			from recorder import schedule_manager
+			schedule_manager.stop_monitoring()
+			
+			# 全ての録音を停止
+			from recorder import recorder_manager
+			recorder_manager.stop_all()
+			
+			self.log.info("Application cleanup completed")
+		except Exception as e:
+			self.log.error(f"Error during application cleanup: {e}")
+		
 		self.parent._player.exit()
 		self.parent.hFrame.Close()
 
@@ -573,14 +617,14 @@ class Events(BaseEvents):
 			title = self.parent.progs.getNowProgram(self.selected)
 			if not title:
 				self.log.error("Failed to get program title")
-				simpleDialog.errorDialog(_("番組情報の取得に失敗しました。"))
+				errorDialog(_("番組情報の取得に失敗しました。"))
 				return
 
 			# ストリームURLの取得
 			self.parent.get_streamUrl(self.selected)
 			if not self.parent.m3u8:
 				self.log.error("Failed to get stream URL")
-				simpleDialog.errorDialog(_("ストリームURLの取得に失敗しました。"))
+				errorDialog(_("ストリームURLの取得に失敗しました。"))
 				return
 
 			# ファイル名とディレクトリの準備
@@ -589,32 +633,38 @@ class Events(BaseEvents):
 			dirs = self.parent.recorder.create_recordingDir(station_dir)
 			file_path = f"{dirs}\{str(datetime.date.today())}{replace}"
 			
-			# 録音開始
-			if self.parent.recorder.record(self.parent.m3u8, file_path):
+			# 新しい録音システムを使用
+			from recorder import recorder_manager
+			stream_url = self.parent.m3u8
+			end_time = time.time() + (8 * 3600)  # 8時間後
+			info = f"{self.parent.stid[self.selected]} {title}"
+			filetype = self.parent.recorder.ftp
+			
+			recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype)
+			if recorder:
 				self.log.info(f"Recording started: {title}")
 				self._update_ui_for_recording(True)
 			else:
 				self.log.error("Recording failed to start")
-				simpleDialog.errorDialog(_("録音の開始に失敗しました。"))
+				errorDialog(_("録音の開始に失敗しました。"))
 		
 		except Exception as e:
 			self.log.error(f"Error during recording start: {e}")
-			simpleDialog.errorDialog(_("録音の開始中にエラーが発生しました。"))
+			errorDialog(_("録音の開始中にエラーが発生しました。"))
 			self._update_ui_for_recording(False)
-		else:
-			return
 
 	def onRecordingStop(self):
 		"""録音を停止する"""
 		try:
 			self.log.debug("Attempting to stop recording")
-			self.parent.recorder.stop_record()
+			from recorder import recorder_manager
+			recorder_manager.stop_all()
 			self._update_ui_for_recording(False)
 			self.log.info("Recording stopped successfully")
 		
 		except Exception as e:
 			self.log.error(f"Error during recording stop: {e}")
-			simpleDialog.errorDialog(_("録音の停止中にエラーが発生しました。"))
+			errorDialog(_("録音の停止中にエラーが発生しました。"))
 			# UIは録音停止状態に更新
 			self._update_ui_for_recording(False)
 
@@ -633,8 +683,52 @@ class Events(BaseEvents):
 		except Exception as e:
 			self.log.error(f"Error updating UI: {e}")
 
+	def check_recording_status(self, event):
+		"""録音状態をチェックしてUIを更新"""
+		try:
+			from recorder import recorder_manager
+			active_recorders = recorder_manager.get_active_recorders()
+			
+			if active_recorders:
+				if not self.recording:
+					self._update_ui_for_recording(True)
+			else:
+				if self.recording:
+					self._update_ui_for_recording(False)
+					
+		except Exception as e:
+			self.log.error(f"Error checking recording status: {e}")
+
 	def recording_schedule(self, event):
-		rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
-		rw.init()
-		rw.Show()
-		return
+		"""録音予約ウィザードを表示または予約をキャンセル"""
+		try:
+			from recorder import schedule_manager
+			schedules = schedule_manager.get_schedules()
+			
+			# 現在選択されている局の予約があるかチェック
+			current_schedule = None
+			for schedule in schedules:
+				if schedule.station_id == self.selected:
+					current_schedule = schedule
+					break
+			
+			if current_schedule:
+				# 予約がある場合はキャンセル
+				schedule_manager.remove_schedule(current_schedule.id)
+				self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", "予約録音(&S)")
+				notification.notify(
+					title='録音キャンセル', 
+					message='録音予約をキャンセルしました。', 
+					app_name='rpb', 
+					timeout=10
+				)
+				self.log.info("Recording schedule cancelled")
+			else:
+				# 予約がない場合は新規作成
+				rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
+				rw.Show()
+				
+		except Exception as e:
+			#raise e
+			self.log.error(f"Error in recording schedule: {e}")
+			errorDialog(_("録音予約の処理に失敗しました。"))
