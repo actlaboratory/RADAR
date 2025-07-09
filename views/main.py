@@ -700,33 +700,11 @@ class Events(BaseEvents):
 			self.log.error(f"Error checking recording status: {e}")
 
 	def recording_schedule(self, event):
-		"""録音予約ウィザードを表示または予約をキャンセル"""
+		"""録音予約ウィザードを表示"""
 		try:
-			from recorder import schedule_manager
-			schedules = schedule_manager.get_schedules()
-			
-			# 現在選択されている局の予約があるかチェック
-			current_schedule = None
-			for schedule in schedules:
-				if schedule.station_id == self.selected:
-					current_schedule = schedule
-					break
-			
-			if current_schedule:
-				# 予約がある場合はキャンセル
-				schedule_manager.remove_schedule(current_schedule.id)
-				self.parent.menu.SetMenuLabel("RECORDING_SCHEDULE", "予約録音(&S)")
-				notification.notify(
-					title='録音キャンセル', 
-					message='録音予約をキャンセルしました。', 
-					app_name='rpb', 
-					timeout=10
-				)
-				self.log.info("Recording schedule cancelled")
-			else:
-				# 予約がない場合は新規作成
-				rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
-				rw.Show()
+			# 常に新規作成ウィザードを表示
+			rw = recordingWizzard.RecordingWizzard(self.selected, self.parent.stid[self.selected])
+			rw.Show()
 				
 		except Exception as e:
 			#raise e

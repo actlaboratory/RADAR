@@ -25,6 +25,7 @@ dic={
 
 	"RECORDING_IMMEDIATELY":_("今すぐ録音(&r)"),
 	"RECORDING_SCHEDULE":_("予約録音(&s)"),
+	"RECORDING_SCHEDULE_REMOVE":_("予約録音の取り消し"),
 	"RECORDING_OPTION":_("録音品質の選択"),
 	"RECORDING_MP3":_("MP3(&M)"),
 	"RECORDING_WAV":_("WAV(&W)"),
