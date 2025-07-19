@@ -210,11 +210,9 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
     def update_menu_status(self):
         """メニュー項目の状態を更新"""
         try:
-            # メインウィンドウのメニュー状態更新をトリガー
-            if hasattr(globalVars.app.hMainView, 'recordingStatusTimer'):
-                # タイマーイベントを手動で発生させる
-                event = wx.TimerEvent()
-                globalVars.app.hMainView.events.check_recording_status(event)
+            # メインウィンドウのメニュー状態更新を直接呼び出し
+            if hasattr(globalVars.app.hMainView, 'events'):
+                globalVars.app.hMainView.events._update_schedule_menu_status()
         except Exception as e:
             self.log.error(f"Error updating menu status: {e}")
 
