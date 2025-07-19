@@ -329,6 +329,7 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hRecordingMenu, {
 			"RECORDING_IMMEDIATELY":self.parent.events.record_immediately,
 			"RECORDING_SCHEDULE":self.parent.events.recording_schedule,
+			"RECORDING_SCHEDULE_REMOVE":self.parent.events.remove_schedule,
 		})
 
 		#録音品質選択メニュー
@@ -695,9 +696,27 @@ class Events(BaseEvents):
 			else:
 				if self.recording:
 					self._update_ui_for_recording(False)
+			
+			# 予約録音の状態をチェックしてメニュー項目を更新
+			self._update_schedule_menu_status()
 					
 		except Exception as e:
 			self.log.error(f"Error checking recording status: {e}")
+
+	def _update_schedule_menu_status(self):
+		"""予約録音の状態に応じてメニュー項目を更新"""
+		try:
+			from recorder import schedule_manager
+			schedules = schedule_manager.get_schedules()
+			
+			# 予約録音がある場合はメニュー項目を有効にする
+			if schedules:
+				self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_SCHEDULE_REMOVE"), True)
+			else:
+				self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_SCHEDULE_REMOVE"), False)
+				
+		except Exception as e:
+			self.log.error(f"Error updating schedule menu status: {e}")
 
 	def recording_schedule(self, event):
 		"""録音予約ウィザードを表示"""
@@ -710,3 +729,26 @@ class Events(BaseEvents):
 			#raise e
 			self.log.error(f"Error in recording schedule: {e}")
 			errorDialog(_("録音予約の処理に失敗しました。"))
+
+	def remove_schedule(self, event):
+		"""予約録音の取り消し処理"""
+		try:
+			from recorder import schedule_manager
+			from views import scheduled_program_list
+			import simpleDialog
+			
+			# 予約録音の件数を取得
+			schedules = schedule_manager.get_schedules()
+			
+			if len(schedules) > 0:
+				# 予約がある場合はダイアログを表示
+				dialog = scheduled_program_list.ScheduledProgram()
+				dialog.Initialize()
+				dialog.Show()
+			else:
+				# 予約がない場合
+				simpleDialog.dialog(_("予約録音なし"), "削除する予約録音がありません。")
+			
+		except Exception as e:
+			self.log.error(f"Error in remove_schedule: {e}")
+			simpleDialog.errorDialog(f"予約録音の削除に失敗しました: {e}")

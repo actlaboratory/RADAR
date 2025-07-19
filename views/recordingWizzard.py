@@ -149,8 +149,8 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 timeout=10
             )
             
-            # RECORDING_SCHEDULE_REMOVEメニュー項目を追加
-            self.add_remove_menu_item()
+            # メニュー項目の状態を更新（グローバル管理）
+            self.update_menu_status()
             
             self.log.info(f"Recording scheduled successfully: {program_title}")
             # ダイアログを閉じてメイン画面に戻る
@@ -170,8 +170,8 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 self.current_schedule = None
                 self.log.info("Scheduled recording was cancelled by the user!")
                 
-                # RECORDING_SCHEDULE_REMOVEメニュー項目を削除
-                self.remove_remove_menu_item()
+                # メニュー項目の状態を更新（グローバル管理）
+                self.update_menu_status()
                 
                 notification.notify(
                     title='録音キャンセル', 
@@ -183,15 +183,22 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             self.log.error(f"Error cancelling recording: {e}")
             simpleDialog.errorDialog(f"録音キャンセルに失敗しました: {e}")
 
+    def remove_current_schedule(self):
+        """現在の予約を削除（外部から呼び出し用）"""
+        try:
+            if self.current_schedule:
+                schedule_manager.remove_schedule(self.current_schedule.id)
+                self.current_schedule = None
+                self.log.info("Current schedule was removed")
+        except Exception as e:
+            self.log.error(f"Error removing current schedule: {e}")
+
     def on_application_close(self, event):
         """アプリケーション終了時の処理"""
         try:
             # 現在の予約があればキャンセル
             if self.current_schedule:
                 self.stop()
-            else:
-                # 予約がない場合でも、メニュー項目が残っている可能性があるので削除
-                self.remove_remove_menu_item()
         except Exception as e:
             self.log.error(f"Error during application close: {e}")
         event.Skip()
@@ -200,64 +207,16 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         """予約状態を取得"""
         return self.current_schedule is not None
 
-    def add_remove_menu_item(self):
-        """RECORDING_SCHEDULE_REMOVEメニュー項目を追加"""
+    def update_menu_status(self):
+        """メニュー項目の状態を更新"""
         try:
-            import menuItemsStore
-            import menuItemsDic
-            from views.main import Events
-            
-            # 録音メニューを取得
-            recording_menu = globalVars.app.hMainView.menu.hRecordingMenu
-            
-            # メニュー項目を追加
-            recording_menu.Append(
-                menuItemsStore.getRef("RECORDING_SCHEDULE_REMOVE"),
-                menuItemsDic.dic["RECORDING_SCHEDULE_REMOVE"]
-            )
-            
-            # イベントハンドラーを設定
-            globalVars.app.hMainView.hFrame.Bind(
-                wx.EVT_MENU,
-                self.on_remove_schedule,
-                id=menuItemsStore.getRef("RECORDING_SCHEDULE_REMOVE")
-            )
-            
-            self.log.info("RECORDING_SCHEDULE_REMOVE menu item added")
-            
+            # メインウィンドウのメニュー状態更新をトリガー
+            if hasattr(globalVars.app.hMainView, 'recordingStatusTimer'):
+                # タイマーイベントを手動で発生させる
+                event = wx.TimerEvent()
+                globalVars.app.hMainView.events.check_recording_status(event)
         except Exception as e:
-            self.log.error(f"Error adding remove menu item: {e}")
-
-    def remove_remove_menu_item(self):
-        """RECORDING_SCHEDULE_REMOVEメニュー項目を削除"""
-        try:
-            import menuItemsStore
-            
-            # 録音メニューを取得
-            recording_menu = globalVars.app.hMainView.menu.hRecordingMenu
-            
-            # メニュー項目を削除
-            menu_id = menuItemsStore.getRef("RECORDING_SCHEDULE_REMOVE")
-            recording_menu.Delete(menu_id)
-            
-            # イベントハンドラーのバインドを解除
-            globalVars.app.hMainView.hFrame.Unbind(
-                wx.EVT_MENU,
-                id=menuItemsStore.getRef("RECORDING_SCHEDULE_REMOVE")
-            )
-            
-            self.log.info("RECORDING_SCHEDULE_REMOVE menu item removed")
-            
-        except Exception as e:
-            self.log.error(f"Error removing remove menu item: {e}")
-
-    def on_remove_schedule(self, event):
-        """RECORDING_SCHEDULE_REMOVEメニュー項目が選択された時の処理"""
-        try:
-            self.stop()
-            event.Skip()
-        except Exception as e:
-            self.log.error(f"Error in on_remove_schedule: {e}")
+            self.log.error(f"Error updating menu status: {e}")
 
     def InstallControls(self):
         """コントロールを配置"""
