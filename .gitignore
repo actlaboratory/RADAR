@@ -19,3 +19,4 @@ output/
 .vscode
 tests/
 .codegpt
+recording_schedules.json
