@@ -664,7 +664,7 @@ class Events(BaseEvents):
 			replace = title.replace(" ", "-")
 			station_dir = self.parent.stid[self.selected].replace(" ", "_")
 			from recorder import create_recording_dir
-			dirs = create_recording_dir(station_dir)
+			dirs = create_recording_dir(station_dir, title)
 			file_path = f"{dirs}\{str(datetime.date.today())}_{replace}"
 			
 			# ファイルタイプを取得（現在のメニュー選択状態から）

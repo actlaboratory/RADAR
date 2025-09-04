@@ -8,6 +8,7 @@ import constants
 import atexit
 import signal
 import locale
+import re
 from plyer import notification
 from logging import getLogger
 from views import token
@@ -744,18 +745,31 @@ signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
 # 後方互換性のためのヘルパー関数
-def create_recording_dir(station_id):
+def create_recording_dir(station_id, program_title=None):
     """放送局名のディレクトリを作成（後方互換性）"""
     # 設定から出力先フォルダを取得
     base_dir = get_output_directory()
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
     
-    dir_path = os.path.join(base_dir, station_id)
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
+    # 放送局ディレクトリを作成
+    station_dir = os.path.join(base_dir, station_id)
+    if not os.path.exists(station_dir):
+        os.makedirs(station_dir)
     
-    return dir_path
+    # 番組ごとのサブフォルダ作成設定をチェック
+    if program_title and get_create_station_subdir_setting():
+        # 番組タイトルをファイル名に適した形式に変換
+        safe_program_title = re.sub(r'[<>:"/\\|?*]', '_', program_title)
+        safe_program_title = safe_program_title.strip()
+        
+        # 放送局\番組タイトルのディレクトリを作成
+        program_dir = os.path.join(station_dir, safe_program_title)
+        if not os.path.exists(program_dir):
+            os.makedirs(program_dir)
+        return program_dir
+    
+    return station_dir
 
 def get_output_directory():
     """設定から録音出力先ディレクトリを取得"""
@@ -787,6 +801,21 @@ def get_output_directory():
         logger = getLogger("recorder")
         logger.warning(f"Failed to get output directory from config: {e}, using default")
         return "OUTPUT"
+
+def get_create_station_subdir_setting():
+    """番組ごとのサブフォルダ作成設定を取得"""
+    try:
+        # globalVarsから設定を取得
+        if hasattr(globalVars, 'app') and hasattr(globalVars.app, 'config'):
+            return globalVars.app.config.getboolean("record", "createStationSubDir", True)
+        else:
+            # フォールバック: デフォルト値を使用
+            return True
+    except Exception as e:
+        # エラーが発生した場合はデフォルト値を使用
+        logger = getLogger("recorder")
+        logger.warning(f"Failed to get createStationSubDir setting: {e}, using default")
+        return True
 
 def get_file_type_from_config():
     """設定からファイルタイプを取得（後方互換性）"""
