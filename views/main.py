@@ -81,7 +81,19 @@ class MainView(BaseView):
 		self.AreaTreeCtrl()
 		self.setupradio()
 		self.setRadioList()
-		self.menu.hRecordingFileTypeMenu.Check(self.app.config.getint("recording","menu_id"), self.app.config.getboolean("recording","check_menu"))
+		# 録音設定の初期化
+		try:
+			menu_id = self.app.config.getint("recording", "menu_id")
+			check_menu = self.app.config.getboolean("recording", "check_menu")
+		except:
+			# 設定が存在しない場合はデフォルト値を使用
+			menu_id = 10000  # MP3
+			check_menu = True
+			# 設定を保存
+			self.app.config["recording"]["menu_id"] = menu_id
+			self.app.config["recording"]["check_menu"] = check_menu
+		
+		self.menu.hRecordingFileTypeMenu.Check(menu_id, check_menu)
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
 		self.events._update_schedule_menu_status()
 		
@@ -372,13 +384,20 @@ class Events(BaseEvents):
 	def onRecordMenuSelect(self, event):
 		"""録音品質メニューの動作"""
 		selected = event.GetId()
+		
+		# 排他的選択（ラジオボタン的な動作）
 		if selected == 10000 and self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected):
-			self.parent.menu.hRecordingFileTypeMenu.Check(selected+1, False)
-		if selected == 10001 and self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected):
-			self.parent.menu.hRecordingFileTypeMenu.Check(selected-1, False)
-		self.parent.recorder.setFileType(selected)
+			self.parent.menu.hRecordingFileTypeMenu.Check(10001, False)  # WAVをオフ
+		elif selected == 10001 and self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected):
+			self.parent.menu.hRecordingFileTypeMenu.Check(10000, False)  # MP3をオフ
+		
+		# 設定を保存
 		self.parent.app.config["recording"]["menu_id"] = selected
 		self.parent.app.config["recording"]["check_menu"] = self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected)
+		
+		# デバッグログ
+		filetype = "mp3" if selected == 10000 else "wav"
+		self.log.info(f"Recording file type changed to: {filetype}")
 
 	def onUpdateProcess(self, event):
 		self.parent.get_latest_info()
@@ -637,16 +656,21 @@ class Events(BaseEvents):
 			# ファイル名とディレクトリの準備
 			replace = title.replace(" ", "-")
 			station_dir = self.parent.stid[self.selected].replace(" ", "_")
-			from recorder import create_recording_dir, get_file_type_from_config
+			from recorder import create_recording_dir
 			dirs = create_recording_dir(station_dir)
 			file_path = f"{dirs}\{str(datetime.date.today())}_{replace}"
 			
+			# ファイルタイプを取得（現在のメニュー選択状態から）
+			if self.parent.menu.hRecordingFileTypeMenu.IsChecked(10001):  # WAV
+				filetype = "wav"
+			else:  # MP3（デフォルト）
+				filetype = "mp3"
+			self.log.info(f"Recording with file type: {filetype}")
 			
 			from recorder import recorder_manager
 			stream_url = self.parent.m3u8
 			end_time = time.time() + (8 * 3600)  # 8時間後
 			info = f"{self.parent.stid[self.selected]} {title}"
-			filetype = get_file_type_from_config()
 			
 			# 録音完了時のコールバック
 			def on_recording_complete(recorder):

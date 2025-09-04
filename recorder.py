@@ -79,12 +79,15 @@ class Recorder:
         try:
             self.logger.info(f"Start recording: {self.stream_url} -> {self.output_path}.{self.filetype}")
             ffmpeg_path = self._get_ffmpeg_path()
+            
+            # ファイルタイプに応じた音質設定を取得
+            quality_settings = self._get_quality_settings()
+            
             cmd = [
                 ffmpeg_path,
                 "-loglevel", "error",
                 "-i", self.stream_url,
-                "-f", self.filetype,
-                "-ac", "2",
+            ] + quality_settings + [
                 "-vn", f"{self.output_path}.{self.filetype}",
                 "-y"
             ]
@@ -165,6 +168,29 @@ class Recorder:
         if not os.path.exists(ffmpeg_path):
             raise RecorderError("ffmpeg.exe not found.")
         return ffmpeg_path
+
+    def _get_quality_settings(self):
+        """ファイルタイプに応じた音質設定を取得"""
+        if self.filetype == "wav":
+            # WAV: 無圧縮、44.1kHz、16bit、ステレオ
+            return [
+                "-acodec", "pcm_s16le",
+                "-ar", "44100",
+                "-ac", "2"
+            ]
+        elif self.filetype == "mp3":
+            # MP3: 高品質、192kbps、44.1kHz、ステレオ
+            return [
+                "-acodec", "libmp3lame",
+                "-b:a", "192k",
+                "-ar", "44100",
+                "-ac", "2"
+            ]
+        else:
+            # デフォルト設定（コピー）
+            return [
+                "-acodec", "copy"
+            ]
 
     def is_recording(self):
         """録音中かどうかを返す"""
@@ -712,9 +738,13 @@ def get_file_type_from_config():
     try:
         config = ConfigManager.ConfigManager()
         menu_id = config.getint("recording", "menu_id")
-        if menu_id > 0:
-            return filetypes[menu_id-10000]
+        if menu_id == 10000:  # MP3
+            return "mp3"
+        elif menu_id == 10001:  # WAV
+            return "wav"
         else:
-            return filetypes[menu_id]
-    except:
+            # デフォルトはMP3
+            return "mp3"
+    except Exception as e:
+        # 設定が存在しない場合はデフォルトでMP3
         return "mp3"
