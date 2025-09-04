@@ -16,6 +16,8 @@ import time
 import json
 import datetime
 from accessible_output2.outputs.base import OutputError
+from concurrent.futures import ThreadPoolExecutor
+import queue
 
 import simpleDialog
 
@@ -90,16 +92,35 @@ class Recorder:
         """録音を安全に停止"""
         self.logger.info(f"Stop requested for: {self.output_path}.{self.filetype}")
         self._stop_event.set()
+        
         if self.process and self.process.poll() is None:
             try:
+                # まずstdinを閉じる（ffmpegに終了シグナルを送る）
+                if self.process.stdin:
+                    self.process.stdin.close()
+                
+                # プロセスを終了
                 self.process.terminate()
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.logger.warning("Terminate failed, killing process")
+                
+                # 終了を待つ
                 try:
-                    self.process.kill()
-                except Exception as e:
-                    self.logger.error(f"Kill failed: {e}")
+                    self.process.wait(timeout=5)
+                    self.logger.debug("Process terminated gracefully")
+                except subprocess.TimeoutExpired:
+                    self.logger.warning("Terminate failed, killing process")
+                    try:
+                        self.process.kill()
+                        self.process.wait(timeout=2)
+                        self.logger.debug("Process killed forcefully")
+                    except subprocess.TimeoutExpired:
+                        self.logger.error("Failed to kill process even after force kill")
+                    except Exception as e:
+                        self.logger.error(f"Kill failed: {e}")
+                        
+            except Exception as e:
+                self.logger.error(f"Error during process termination: {e}")
+        
+        # 状態をリセット
         self.recording = False
         self.process = None
         self.logger.info(f"Recording stopped: {self.output_path}.{self.filetype}")
@@ -203,8 +224,23 @@ class RecorderManager:
     def stop_all(self):
         """全ての録音を停止"""
         with self.lock:
+            # 停止処理を並列で実行
+            stop_threads = []
             for rec_entry in self.recorders:
-                rec_entry["recorder"].stop()
+                def stop_recorder(rec):
+                    try:
+                        rec.stop()
+                    except Exception as e:
+                        self.logger.error(f"Error stopping recorder: {e}")
+                
+                thread = threading.Thread(target=stop_recorder, args=(rec_entry["recorder"],), daemon=True)
+                thread.start()
+                stop_threads.append(thread)
+            
+            # 全ての停止スレッドの完了を待つ（最大10秒）
+            for thread in stop_threads:
+                thread.join(timeout=10)
+            
             self.recorders.clear()
         self.logger.info("All recorders stopped.")
 
@@ -307,6 +343,8 @@ class ScheduleManager:
         self.timer = None
         self.running = False
         self.lock = threading.Lock()
+        self.token_manager = None  # 認証トークン管理
+        self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="schedule_executor")
         self.load_schedules()
 
     def add_schedule(self, schedule):
@@ -342,6 +380,10 @@ class ScheduleManager:
         self.running = False
         if self.timer:
             self.timer.join(timeout=5)
+        
+        # スレッドプールをシャットダウン
+        self.executor.shutdown(wait=True, timeout=10)
+        
         self.logger.info("Schedule monitoring stopped")
 
     def _monitor_loop(self):
@@ -358,38 +400,89 @@ class ScheduleManager:
                 self.logger.error(f"Error in monitor loop: {e}")
                 time.sleep(SCHEDULE_CHECK_INTERVAL)
 
+    def _get_authenticated_stream_url(self, station_id, max_retries=3):
+        """認証済みのストリームURLを取得（リトライ機能付き）"""
+        for attempt in range(max_retries):
+            try:
+                if not self.token_manager:
+                    self.token_manager = token.Token()
+                
+                # 認証を実行
+                auth_response = self.token_manager.auth1()
+                partial_key, auth_token = self.token_manager.get_partial_key(auth_response)
+                self.token_manager.auth2(partial_key, auth_token)
+                
+                # 認証済みストリームURLを取得
+                base_url = f'http://f-radiko.smartstream.ne.jp/{station_id}/_definst_/simul-stream.stream/playlist.m3u8'
+                stream_url = self.token_manager.gen_temp_chunk_m3u8_url(base_url, auth_token)
+                
+                self.logger.debug(f"Authenticated stream URL obtained: {stream_url}")
+                return stream_url
+                
+            except Exception as e:
+                self.logger.warning(f"Authentication attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    # リトライ前に短時間待機（非同期スレッドなので短縮）
+                    time.sleep(0.5)
+                    # トークンマネージャーをリセット
+                    self.token_manager = None
+                else:
+                    self.logger.error(f"Failed to get authenticated stream URL after {max_retries} attempts: {e}")
+                    raise
+
     def _execute_schedule(self, schedule, current_time):
-        """予約を実行"""
-        try:
-            self.logger.info(f"Executing schedule: {schedule.program_title}")
-            
-            # ストリームURLの取得（実際の実装では適切な方法で取得）
-            stream_url = f'http://f-radiko.smartstream.ne.jp/{schedule.station_id}/_definst_/simul-stream.stream/playlist.m3u8'
-            
-            # 録音開始
-            end_time = time.mktime(schedule.end_time.timetuple())
-            info = f"{schedule.station_name} {schedule.program_title}"
-            
-            self.recorder_manager.start_recording(
-                stream_url, 
-                schedule.output_path, 
-                info, 
-                end_time, 
-                schedule.filetype
-            )
-            
-            schedule.mark_executed(current_time)
-            self.save_schedules()
-            
-            notification.notify(
-                title='録音開始',
-                message=f'{schedule.program_title} の録音を開始しました。',
-                app_name='rpb',
-                timeout=10
-            )
-            
-        except Exception as e:
-            self.logger.error(f"Failed to execute schedule {schedule.id}: {e}")
+        """予約を実行（非同期）"""
+        self.logger.info(f"Executing schedule: {schedule.program_title}")
+        
+        # 非同期で認証と録音を実行
+        def execute_async():
+            try:
+                # 認証済みストリームURLの取得
+                stream_url = self._get_authenticated_stream_url(schedule.station_id)
+                
+                # 録音開始
+                end_time = time.mktime(schedule.end_time.timetuple())
+                info = f"{schedule.station_name} {schedule.program_title}"
+                
+                self.recorder_manager.start_recording(
+                    stream_url, 
+                    schedule.output_path, 
+                    info, 
+                    end_time, 
+                    schedule.filetype
+                )
+                
+                schedule.mark_executed(current_time)
+                self.save_schedules()
+                
+                notification.notify(
+                    title='録音開始',
+                    message=f'{schedule.program_title} の録音を開始しました。',
+                    app_name='rpb',
+                    timeout=10
+                )
+                
+            except Exception as e:
+                self.logger.error(f"Failed to execute schedule {schedule.id}: {e}")
+                
+                # 認証エラーの場合はユーザーに通知
+                if "403" in str(e) or "Forbidden" in str(e) or "access denied" in str(e):
+                    notification.notify(
+                        title='録音失敗',
+                        message=f'{schedule.program_title} の録音に失敗しました。認証エラーが発生しました。',
+                        app_name='rpb',
+                        timeout=10
+                    )
+                else:
+                    notification.notify(
+                        title='録音失敗',
+                        message=f'{schedule.program_title} の録音に失敗しました。エラー: {str(e)[:100]}',
+                        app_name='rpb',
+                        timeout=10
+                    )
+        
+        # スレッドプールで実行
+        self.executor.submit(execute_async)
 
     def save_schedules(self):
         """予約をファイルに保存"""
@@ -419,142 +512,28 @@ schedule_manager = ScheduleManager(recorder_manager)
 atexit.register(recorder_manager.cleanup)
 atexit.register(schedule_manager.stop_monitoring)
 
-# 後方互換性のための古いRecorderクラス
-class LegacyRecorder:
-    """後方互換性のための古いRecorderクラス"""
-    def __init__(self):
-        self.log = getLogger("%s.%s" % (constants.LOG_PREFIX, "recorder"))
-        self.config = ConfigManager.ConfigManager()
+# 後方互換性のためのヘルパー関数
+def create_recording_dir(station_id):
+    """放送局名のディレクトリを作成（後方互換性）"""
+    base_dir = "OUTPUT"
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir)
+    
+    dir_path = os.path.join(base_dir, station_id)
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    
+    return dir_path
 
-        # outputフォルダの存在をチェックして、なかったら作る
-        self.BASE_RECORDING_DIR = "OUTPUT"
-        if not os.path.exists(self.BASE_RECORDING_DIR):
-            os.makedirs(self.BASE_RECORDING_DIR)
-            self.log.info("created baseRecordingDirectory")
-
-        self.filetypes = ["mp3", "wav"]
-        self.ftp = "mp3"
-        self.code = None
-        self.recording = False
-        self.path = None
-
-        # 終了時にプロセスを安全に終了するためのハンドラーを設定
-        atexit.register(self.cleanup)
-        signal.signal(signal.SIGTERM, self.cleanup)
-        signal.signal(signal.SIGINT, self.cleanup)
-
-    def setFileType(self, index):
-        """録音音質を決定"""
-        if index > 0:
-            self.ftp = self.filetypes[index-10000]
+def get_file_type_from_config():
+    """設定からファイルタイプを取得（後方互換性）"""
+    filetypes = ["mp3", "wav"]
+    try:
+        config = ConfigManager.ConfigManager()
+        menu_id = config.getint("recording", "menu_id")
+        if menu_id > 0:
+            return filetypes[menu_id-10000]
         else:
-            self.ftp = self.filetypes[index]
-            globalVars.app.config["recording"]["menu_id"] = index+10000
-        self.log.info(f"File type determined: {self.ftp}")
-
-    def record(self, streamUrl, path):
-        """ffmpegを用いて録音（後方互換性）"""
-        if not os.path.exists(constants.FFMPEG_PATH):
-            simpleDialog.errorDialog(_("録音を開始できませんでした。ffmpeg.exeが見つかりません。"))
-            self.log.error("'ffmpeg.exe' not found.")
-            return False
-            
-        self.path = path
-        logLevel = globalVars.app.config.getint("general", "log_level")
-        selected_log_mode = logLevelSelection[str(logLevel)]
-        
-        try:
-            ffmpeg_setting = [
-                constants.FFMPEG_PATH,
-                "-loglevel", selected_log_mode,
-                "-i", streamUrl,
-                "-f", self.ftp,
-                "-ac", "2",
-                "-vn", f"{path}.{self.ftp}",
-                "-y"
-            ]
-            if selected_log_mode != "quiet":
-                log_file = open(os.path.join(os.getcwd(), constants.FFMPEG_LOG_FILE), "w")
-                self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=log_file, stderr=log_file)
-            else:
-                self.code = subprocess.Popen(ffmpeg_setting, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            self.recording = True
-            return True
-        except Exception as e:
-            self.log.error(f"Recording failed: {e}")
-            return False
-
-    def stop_record(self, called_from_destructor=False):
-        """録音を終了（後方互換性）"""
-        self.log.debug("Recording stop requested")
-        
-        if not self.code:
-            self.log.debug("No active recording process found")
-            self.recording = False
-            return
-
-        try:
-            if self.code.poll() is None:
-                self.log.debug("Active recording process found, attempting to stop")
-                try:
-                    self.code.stdin.close()
-                except Exception as e:
-                    self.log.error(f"Error closing stdin: {e}")
-
-                self.code.terminate()
-                
-                try:
-                    self.code.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.log.warning("Process didn't terminate gracefully, forcing kill")
-                    self.code.kill()
-                    try:
-                        self.code.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        self.log.error("Failed to kill process even after force kill")
-            else:
-                self.log.debug("Recording process has already ended")
-
-            if not called_from_destructor:
-                notification.notify(
-                    title='録音完了',
-                    message=f'ファイルは正しく{self.path}として保存されました。',
-                    app_name='rpb',
-                    timeout=10
-                )
-
-        except Exception as e:
-            self.log.error(f"Error during recording stop: {e}")
-        finally:
-            self.recording = False
-            self.code = None
-            self.log.debug("Recording cleanup completed")
-
-    def cleanup(self, *args):
-        """プロセスを安全に終了"""
-        if self.recording:
-            self.log.debug("Cleanup requested while recording is active")
-            self.stop_record(called_from_destructor=True)
-        else:
-            self.log.debug("Cleanup requested but no active recording")
-
-    def create_recordingDir(self, stationid):
-        """放送局名のディレクトリを作成"""
-        try:
-            dir_path = os.path.join(self.BASE_RECORDING_DIR, stationid)
-            if not os.path.exists(dir_path):
-                os.makedirs(dir_path)
-                self.log.debug("Directory created: " + dir_path)
-        except Exception as e:
-            self.log.error(f"Failed to create directory: {e}")
-
-        return dir_path
-
-    def __del__(self):
-        if self.recording:
-            self.stop_record()
-            self.log.info("Emergency recording stop completed during instance destruction")
-        self.log.debug("deleted")
-
-# 後方互換性のためのエイリアス
-Recorder = LegacyRecorder
+            return filetypes[menu_id]
+    except:
+        return "mp3"

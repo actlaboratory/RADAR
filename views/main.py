@@ -70,8 +70,8 @@ class MainView(BaseView):
 		self.tmg = tcutil.TimeManager()
 		self.clutl = tcutil.CalendarUtil()
 		self.progs = programmanager.ProgramManager()
-		self.recorder = recorder.Recorder() #recording moduleをインスタンス化
-		self.recorder.setFileType(self.app.config.getint("recording", "menu_id"))
+		# レコーダーは新しいシステムを使用（recorder_manager）
+		# ファイルタイプは設定から取得
 		self.areaDetermination()
 		self.description()
 		self.volume, tmp = self.creator.slider(_("音量(&V)"), event=self.events.onVolumeChanged, defaultValue=self.app.config.getint("play", "volume", 100, 0, 100), textLayout=None)
@@ -632,15 +632,16 @@ class Events(BaseEvents):
 			# ファイル名とディレクトリの準備
 			replace = title.replace(" ", "-")
 			station_dir = self.parent.stid[self.selected].replace(" ", "_")
-			dirs = self.parent.recorder.create_recordingDir(station_dir)
+			from recorder import create_recording_dir, get_file_type_from_config
+			dirs = create_recording_dir(station_dir)
 			file_path = f"{dirs}\{str(datetime.date.today())}{replace}"
 			
-			# 新しい録音システムを使用
+			
 			from recorder import recorder_manager
 			stream_url = self.parent.m3u8
 			end_time = time.time() + (8 * 3600)  # 8時間後
 			info = f"{self.parent.stid[self.selected]} {title}"
-			filetype = self.parent.recorder.ftp
+			filetype = get_file_type_from_config()
 			
 			recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype)
 			if recorder:
@@ -651,6 +652,7 @@ class Events(BaseEvents):
 				errorDialog(_("録音の開始に失敗しました。"))
 		
 		except Exception as e:
+			raise e
 			self.log.error(f"Error during recording start: {e}")
 			errorDialog(_("録音の開始中にエラーが発生しました。"))
 			self._update_ui_for_recording(False)
