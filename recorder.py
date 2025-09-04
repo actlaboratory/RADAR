@@ -452,7 +452,7 @@ class ScheduleManager:
             self.timer.join(timeout=5)
         
         # スレッドプールをシャットダウン
-        self.executor.shutdown(wait=True, timeout=10)
+        self.executor.shutdown(wait=True)
         
         self.logger.info("Schedule monitoring stopped")
 
