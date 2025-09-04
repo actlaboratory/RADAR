@@ -149,9 +149,6 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 timeout=10
             )
             
-            # メニュー項目の状態を更新（グローバル管理）
-            self.update_menu_status()
-            
             self.log.info(f"Recording scheduled successfully: {program_title}")
             # ダイアログを閉じてメイン画面に戻る
             self.Destroy()
@@ -162,59 +159,15 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             self.log.error(f"Error in onFinishButton: {e}")
             simpleDialog.errorDialog(f"録音スケジュールに失敗しました: {e}")
 
-    def stop(self):
-        """録音予約をキャンセル"""
-        try:
-            if self.current_schedule:
-                schedule_manager.remove_schedule(self.current_schedule.id)
-                self.current_schedule = None
-                self.log.info("Scheduled recording was cancelled by the user!")
-                
-                # メニュー項目の状態を更新（グローバル管理）
-                self.update_menu_status()
-                
-                notification.notify(
-                    title='録音キャンセル', 
-                    message='録音予約をキャンセルしました。', 
-                    app_name='rpb', 
-                    timeout=10
-                )
-        except Exception as e:
-            self.log.error(f"Error cancelling recording: {e}")
-            simpleDialog.errorDialog(f"録音キャンセルに失敗しました: {e}")
-
-    def remove_current_schedule(self):
-        """現在の予約を削除（外部から呼び出し用）"""
-        try:
-            if self.current_schedule:
-                schedule_manager.remove_schedule(self.current_schedule.id)
-                self.current_schedule = None
-                self.log.info("Current schedule was removed")
-        except Exception as e:
-            self.log.error(f"Error removing current schedule: {e}")
-
     def on_application_close(self, event):
         """アプリケーション終了時の処理"""
         try:
-            # 現在の予約があればキャンセル
-            if self.current_schedule:
-                self.stop()
+            # アプリケーション終了時は特に何もしない
+            pass
         except Exception as e:
             self.log.error(f"Error during application close: {e}")
         event.Skip()
 
-    def get_schedule_status(self):
-        """予約状態を取得"""
-        return self.current_schedule is not None
-
-    def update_menu_status(self):
-        """メニュー項目の状態を更新"""
-        try:
-            # メインウィンドウのメニュー状態更新を直接呼び出し
-            if hasattr(globalVars.app.hMainView, 'events'):
-                globalVars.app.hMainView.events._update_schedule_menu_status()
-        except Exception as e:
-            self.log.error(f"Error updating menu status: {e}")
 
     def InstallControls(self):
         """コントロールを配置"""

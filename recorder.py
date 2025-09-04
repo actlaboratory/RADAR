@@ -49,6 +49,13 @@ SCHEDULE_CHECK_INTERVAL = 5  # 秒
 SCHEDULE_EXECUTION_WINDOW = 10  # 秒
 MIN_RETRY_INTERVAL = 60  # 秒
 
+# 録音ステータス定数
+RECORDING_STATUS_SCHEDULED = "scheduled"  # 予約スケジュール済み
+RECORDING_STATUS_RECORDING = "recording"  # 録音中
+RECORDING_STATUS_COMPLETED = "completed"  # 録音が正しく完了している
+RECORDING_STATUS_CANCELLED = "cancelled"  # ユーザーによってキャンセルされた
+RECORDING_STATUS_FAILED = "failed"  # 予約録音がエラーによって失敗した
+
 class RecorderError(Exception):
     """録音関連のエラー"""
     pass
@@ -166,7 +173,7 @@ class RecorderManager:
         self.lock = threading.Lock()
         self.max_hours = MAX_RECORDING_HOURS
 
-    def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3"):
+    def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None):
         """録音を開始"""
         def on_error(rec, error):
             self._handle_error(rec, error, info, stream_url, output_path, end_time, filetype)
@@ -177,15 +184,16 @@ class RecorderManager:
                 "recorder": recorder,
                 "info": info,
                 "retry_count": 0,
-                "end_time": end_time
+                "end_time": end_time,
+                "on_complete": on_complete
             })
         recorder.start()
         # 終了タイマー
-        threading.Thread(target=self._schedule_stop, args=(recorder, end_time), daemon=True).start()
+        threading.Thread(target=self._schedule_stop, args=(recorder, end_time, on_complete), daemon=True).start()
         self.logger.info(f"Recorder started: {info}")
         return recorder
 
-    def _schedule_stop(self, recorder, end_time):
+    def _schedule_stop(self, recorder, end_time, on_complete=None):
         """指定時刻に録音を停止"""
         now = time.time()
         wait = max(0, end_time - now)
@@ -195,6 +203,10 @@ class RecorderManager:
         time.sleep(wait)
         recorder.stop()
         self.logger.info(f"Recorder stopped by schedule: {recorder.output_path}")
+        
+        # 録音完了コールバックを呼び出し
+        if on_complete:
+            on_complete(recorder)
 
     def _handle_error(self, recorder, error, info, stream_url, output_path, end_time, filetype):
         """エラー処理とリトライ"""
@@ -279,6 +291,7 @@ class RecordingSchedule:
         self.repeat_days = repeat_days or []  # 週次繰り返しの場合の曜日リスト
         self.last_execution = None
         self.enabled = True
+        self.status = RECORDING_STATUS_SCHEDULED  # 初期ステータス
 
     def to_dict(self):
         """辞書形式に変換"""
@@ -294,7 +307,8 @@ class RecordingSchedule:
             "repeat_type": self.repeat_type,
             "repeat_days": self.repeat_days,
             "last_execution": self.last_execution.isoformat() if self.last_execution else None,
-            "enabled": self.enabled
+            "enabled": self.enabled,
+            "status": self.status
         }
 
     @classmethod
@@ -314,6 +328,7 @@ class RecordingSchedule:
         schedule.id = data["id"]
         schedule.last_execution = datetime.datetime.fromisoformat(data["last_execution"]) if data["last_execution"] else None
         schedule.enabled = data["enabled"]
+        schedule.status = data.get("status", RECORDING_STATUS_SCHEDULED)  # 後方互換性のためデフォルト値を設定
         return schedule
 
     def should_execute(self, current_time):
@@ -332,6 +347,21 @@ class RecordingSchedule:
     def mark_executed(self, current_time):
         """実行済みとしてマーク"""
         self.last_execution = current_time
+
+    def set_status(self, status):
+        """ステータスを更新"""
+        self.status = status
+
+    def get_status_display_name(self):
+        """ステータスの表示名を取得"""
+        status_names = {
+            RECORDING_STATUS_SCHEDULED: "予約済み",
+            RECORDING_STATUS_RECORDING: "録音中",
+            RECORDING_STATUS_COMPLETED: "完了",
+            RECORDING_STATUS_CANCELLED: "キャンセル",
+            RECORDING_STATUS_FAILED: "失敗"
+        }
+        return status_names.get(self.status, "不明")
 
 class ScheduleManager:
     """録音予約管理"""
@@ -360,6 +390,17 @@ class ScheduleManager:
             self.schedules = [s for s in self.schedules if s.id != schedule_id]
         self.save_schedules()
         self.logger.info(f"Schedule removed: {schedule_id}")
+
+    def cancel_schedule(self, schedule_id):
+        """予約をキャンセル（ステータスを更新）"""
+        with self.lock:
+            for schedule in self.schedules:
+                if schedule.id == schedule_id:
+                    schedule.set_status(RECORDING_STATUS_CANCELLED)
+                    self.save_schedules()
+                    self.logger.info(f"Schedule cancelled: {schedule_id}")
+                    return True
+        return False
 
     def get_schedules(self):
         """予約一覧を取得"""
@@ -434,6 +475,10 @@ class ScheduleManager:
         """予約を実行（非同期）"""
         self.logger.info(f"Executing schedule: {schedule.program_title}")
         
+        # ステータスを録音中に更新
+        schedule.set_status(RECORDING_STATUS_RECORDING)
+        self.save_schedules()
+        
         # 非同期で認証と録音を実行
         def execute_async():
             try:
@@ -444,12 +489,24 @@ class ScheduleManager:
                 end_time = time.mktime(schedule.end_time.timetuple())
                 info = f"{schedule.station_name} {schedule.program_title}"
                 
+                # 録音完了時のコールバック
+                def on_recording_complete(recorder):
+                    schedule.set_status(RECORDING_STATUS_COMPLETED)
+                    self.save_schedules()
+                    notification.notify(
+                        title='録音完了',
+                        message=f'{schedule.program_title} の録音が完了しました。',
+                        app_name='rpb',
+                        timeout=10
+                    )
+                
                 self.recorder_manager.start_recording(
                     stream_url, 
                     schedule.output_path, 
                     info, 
                     end_time, 
-                    schedule.filetype
+                    schedule.filetype,
+                    on_complete=on_recording_complete
                 )
                 
                 schedule.mark_executed(current_time)
@@ -464,6 +521,10 @@ class ScheduleManager:
                 
             except Exception as e:
                 self.logger.error(f"Failed to execute schedule {schedule.id}: {e}")
+                
+                # ステータスを失敗に更新
+                schedule.set_status(RECORDING_STATUS_FAILED)
+                self.save_schedules()
                 
                 # 認証エラーの場合はユーザーに通知
                 if "403" in str(e) or "Forbidden" in str(e) or "access denied" in str(e):
