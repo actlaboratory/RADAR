@@ -343,6 +343,7 @@ class Menu(BaseMenu):
 			"RECORDING_IMMEDIATELY":self.parent.events.record_immediately,
 			"RECORDING_SCHEDULE":self.parent.events.recording_schedule,
 			"RECORDING_SCHEDULE_MANAGE":self.parent.events.manage_schedules,
+			"RECORDING_MANAGE":self.parent.events.manage_recordings,
 		})
 
 		#録音品質選択メニュー
@@ -548,12 +549,14 @@ class Events(BaseEvents):
 	def onRadioSelected(self, event):
 		self.selected = self.parent.tree.GetItemData(self.parent.tree.GetFocusedItem())
 		if self.selected == None:
-
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_PROGRAMLIST"),False)
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"),False)
 			return
+		
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_PROGRAMLIST"),True)
-		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"), True)
+		
+		# 選択した放送局の録音状態をチェックしてメニューを更新
+		self._update_recording_menu_for_station(self.selected)
 
 	def onVolumeChanged(self, event):
 		value = self.parent.volume.GetValue()
@@ -627,9 +630,13 @@ class Events(BaseEvents):
 			self.log.debug("No station selected for recording")
 			return
 
+		# 選択した放送局の録音状態をチェック
+		from recorder import recorder_manager
+		is_station_recording = self._is_station_recording(self.selected)
+		
 		# 録音中の場合は停止処理
-		if self.recording:
-			self.onRecordingStop()
+		if is_station_recording:
+			self._stop_station_recording(self.selected)
 			return
 
 		# 録音開始処理
@@ -667,14 +674,13 @@ class Events(BaseEvents):
 				filetype = "mp3"
 			self.log.info(f"Recording with file type: {filetype}")
 			
-			from recorder import recorder_manager
 			stream_url = self.parent.m3u8
 			end_time = time.time() + (8 * 3600)  # 8時間後
 			info = f"{self.parent.stid[self.selected]} {title}"
 			
 			# 録音完了時のコールバック
 			def on_recording_complete(recorder):
-				self._update_ui_for_recording(False)
+				self._update_recording_menu_for_station(self.selected)
 				notification.notify(
 					title='録音完了',
 					message=f'{title} の録音が完了しました。',
@@ -685,7 +691,7 @@ class Events(BaseEvents):
 			recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype, on_recording_complete)
 			if recorder:
 				self.log.info(f"Recording started: {title}")
-				self._update_ui_for_recording(True)
+				self._update_recording_menu_for_station(self.selected)
 				# 録音開始時の通知
 				notification.notify(
 					title='録音開始',
@@ -700,50 +706,15 @@ class Events(BaseEvents):
 		except Exception as e:
 			self.log.error(f"Error during recording start: {e}")
 			errorDialog(_("録音の開始中にエラーが発生しました。"))
-			self._update_ui_for_recording(False)
+			self._update_recording_menu_for_station(self.selected)
 
-	def onRecordingStop(self):
-		"""録音を停止する"""
-		try:
-			self.log.debug("Attempting to stop recording")
-			from recorder import recorder_manager
-			recorder_manager.stop_all()
-			self._update_ui_for_recording(False)
-			self.log.info("Recording stopped successfully")
-		
-		except Exception as e:
-			self.log.error(f"Error during recording stop: {e}")
-			errorDialog(_("録音の停止中にエラーが発生しました。"))
-			# UIは録音停止状態に更新
-			self._update_ui_for_recording(False)
-
-	def _update_ui_for_recording(self, is_recording):
-		"""録音状態に応じてUIを更新する"""
-		try:
-			if is_recording:
-				self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("録音を停止(&T)"))
-				self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_SCHEDULE"), False)
-				self.recording = True
-			else:
-				self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
-				self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_SCHEDULE"), True)
-				self.recording = False
-		
-		except Exception as e:
-			self.log.error(f"Error updating UI: {e}")
 
 	def check_recording_status(self, event):
 		"""録音状態をチェックしてUIを更新"""
 		try:
-			from recorder import recorder_manager
-			active_recorders = recorder_manager.get_active_recorders()
-			
-			if active_recorders:
-				if not self.recording:
-					self._update_ui_for_recording(True)
-			else:
-				if self.recording:
-					self._update_ui_for_recording(False)
+			# 現在選択されている放送局がある場合、その放送局の録音状態をチェック
+			if self.selected:
+				self._update_recording_menu_for_station(self.selected)
 			
 			# 予約録音の状態をチェックしてメニュー項目を更新
 			self._update_schedule_menu_status()
@@ -758,6 +729,56 @@ class Events(BaseEvents):
 			pass
 		except Exception as e:
 			self.log.error(f"Error updating schedule menu status: {e}")
+
+	def _is_station_recording(self, station_id):
+		"""指定された放送局が録音中かどうかを判定"""
+		try:
+			from recorder import recorder_manager
+			return recorder_manager.is_station_recording(station_id)
+		except Exception as e:
+			self.log.error(f"Error checking station recording status: {e}")
+			return False
+
+	def _stop_station_recording(self, station_id):
+		"""指定された放送局の録音を停止"""
+		try:
+			from recorder import recorder_manager
+			stopped_count = recorder_manager.stop_station_recording(station_id)
+			
+			if stopped_count > 0:
+				self.log.info(f"Stopped {stopped_count} recording(s) for station: {station_id}")
+				notification.notify(
+					title='録音停止',
+					message=f'{self.parent.stid.get(station_id, station_id)} の録音を停止しました。',
+					app_name='rpb',
+					timeout=10
+				)
+			else:
+				self.log.warning(f"No active recordings found for station: {station_id}")
+			
+			# メニューを更新（件数表示のみ）
+			self._update_recording_menu_for_station(station_id)
+			
+		except Exception as e:
+			self.log.error(f"Error stopping station recording: {e}")
+			errorDialog(_("録音の停止中にエラーが発生しました。"))
+
+	def _update_recording_menu_for_station(self, station_id):
+		"""指定された放送局の録音状態に応じてメニューを更新（件数表示のみ）"""
+		try:
+			from recorder import recorder_manager
+			active_count = len(recorder_manager.get_active_recorders())
+			
+			# 件数表示のみでメニューラベルを更新
+			if active_count > 0:
+				self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)") + f" ({active_count}件録音中)")
+			else:
+				self.parent.menu.SetMenuLabel("RECORDING_IMMEDIATELY", _("今すぐ録音(&R)"))
+			
+			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"), True)
+			
+		except Exception as e:
+			self.log.error(f"Error updating recording menu for station: {e}")
 
 	def recording_schedule(self, event):
 		"""録音予約ウィザードを表示"""
@@ -782,3 +803,15 @@ class Events(BaseEvents):
 		except Exception as e:
 			self.log.error(f"Error in manage_schedules: {e}")
 			errorDialog(f"予約録音管理の表示に失敗しました: {e}")
+
+	def manage_recordings(self, event):
+		"""録音管理ダイアログを表示"""
+		try:
+			from views import recordingManager
+			dialog = recordingManager.RecordingManagerDialog()
+			dialog.Initialize()
+			dialog.Show()
+			
+		except Exception as e:
+			self.log.error(f"Error in manage_recordings: {e}")
+			errorDialog(f"録音管理の表示に失敗しました: {e}")

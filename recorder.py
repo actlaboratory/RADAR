@@ -298,10 +298,10 @@ class RecorderManager:
     def stop_recorder(self, recorder):
         """指定された録音を停止"""
         with self.lock:
-            for rec_entry in self.recorders:
+            for i, rec_entry in enumerate(self.recorders):
                 if rec_entry["recorder"] == recorder:
                     rec_entry["recorder"].stop()
-                    self.recorders.remove(rec_entry)
+                    del self.recorders[i]
                     self.logger.info(f"Recorder stopped: {rec_entry['info']}")
                     break
 
@@ -309,6 +309,30 @@ class RecorderManager:
         """アクティブな録音の一覧を取得"""
         with self.lock:
             return [(r["recorder"], r["info"]) for r in self.recorders if r["recorder"].is_recording()]
+
+    def get_station_recorders(self, station_id):
+        """指定された放送局の録音一覧を取得"""
+        with self.lock:
+            return [r for r in self.recorders if station_id in r["info"] and r["recorder"].is_recording()]
+
+    def is_station_recording(self, station_id):
+        """指定された放送局が録音中かどうかを判定"""
+        with self.lock:
+            return any(station_id in r["info"] and r["recorder"].is_recording() for r in self.recorders)
+
+    def stop_station_recording(self, station_id):
+        """指定された放送局の録音を停止"""
+        with self.lock:
+            stopped_count = 0
+            # 後ろから削除することでインデックスの問題を回避
+            for i in range(len(self.recorders) - 1, -1, -1):
+                rec_entry = self.recorders[i]
+                if station_id in rec_entry["info"] and rec_entry["recorder"].is_recording():
+                    rec_entry["recorder"].stop()
+                    del self.recorders[i]
+                    stopped_count += 1
+                    self.logger.info(f"Stopped recording for station {station_id}: {rec_entry['info']}")
+            return stopped_count
 
     def cleanup(self):
         """クリーンアップ"""

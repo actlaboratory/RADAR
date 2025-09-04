@@ -18,6 +18,7 @@ defaultKeymap["mainView"]={
 	"FUNCTION_OUTPUT_CHANGEDEVICE":"F6",
 
 	"UPDATE_PROGRAMLIST":"CTRL+F5",
+	"RECORDING_MANAGE":"ctrl+shift+R",
 
 	"HELP_UPDATE":"",
 	"HELP_VERSIONINFO":"",
