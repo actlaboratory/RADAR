@@ -94,6 +94,7 @@ class Recorder:
         except Exception as e:
             self.logger.error(f"Failed to start recording: {e}")
             self._notify_error(e)
+            raise  # 例外を再投げしてRecorderManagerでキャッチできるようにする
 
     def stop(self):
         """録音を安全に停止"""
@@ -137,9 +138,15 @@ class Recorder:
         try:
             while not self._stop_event.is_set():
                 if self.process.poll() is not None:
-                    # プロセスが異常終了
-                    stderr = self.process.stderr.read().decode(errors="ignore") if self.process.stderr else ""
-                    raise RecorderError(f"Recording process exited unexpectedly: {stderr}")
+                    # プロセスが終了
+                    if self._stop_event.is_set():
+                        # 正常終了（stop()が呼ばれた場合）
+                        self.logger.debug("Recording process stopped normally")
+                        break
+                    else:
+                        # 異常終了
+                        stderr = self.process.stderr.read().decode(errors="ignore") if self.process.stderr else ""
+                        raise RecorderError(f"Recording process exited unexpectedly: {stderr}")
                 time.sleep(1)
         except Exception as e:
             self.logger.error(f"Monitor error: {e}")
@@ -175,23 +182,27 @@ class RecorderManager:
 
     def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None):
         """録音を開始"""
-        def on_error(rec, error):
-            self._handle_error(rec, error, info, stream_url, output_path, end_time, filetype)
-        
-        recorder = Recorder(stream_url, output_path, filetype, on_error=on_error, logger=self.logger)
-        with self.lock:
-            self.recorders.append({
-                "recorder": recorder,
-                "info": info,
-                "retry_count": 0,
-                "end_time": end_time,
-                "on_complete": on_complete
-            })
-        recorder.start()
-        # 終了タイマー
-        threading.Thread(target=self._schedule_stop, args=(recorder, end_time, on_complete), daemon=True).start()
-        self.logger.info(f"Recorder started: {info}")
-        return recorder
+        try:
+            def on_error(rec, error):
+                self._handle_error(rec, error, info, stream_url, output_path, end_time, filetype)
+            
+            recorder = Recorder(stream_url, output_path, filetype, on_error=on_error, logger=self.logger)
+            with self.lock:
+                self.recorders.append({
+                    "recorder": recorder,
+                    "info": info,
+                    "retry_count": 0,
+                    "end_time": end_time,
+                    "on_complete": on_complete
+                })
+            recorder.start()
+            # 終了タイマー
+            threading.Thread(target=self._schedule_stop, args=(recorder, end_time, on_complete), daemon=True).start()
+            self.logger.info(f"Recorder started: {info}")
+            return recorder
+        except Exception as e:
+            self.logger.error(f"Failed to start recording: {e}")
+            return None
 
     def _schedule_stop(self, recorder, end_time, on_complete=None):
         """指定時刻に録音を停止"""
@@ -228,7 +239,9 @@ class RecorderManager:
                 
             if retry < MAX_RETRY:
                 self.logger.info(f"Retrying recording: {new_path}")
-                self.start_recording(stream_url, new_path, info, end_time, filetype)
+                # 元のコールバックを保持してリトライ
+                on_complete = rec_entry.get("on_complete")
+                self.start_recording(stream_url, new_path, info, end_time, filetype, on_complete)
             else:
                 self.logger.error(f"Recording failed after {MAX_RETRY} attempts: {info}")
                 notification.notify(title="録音失敗", message=f"{info} の録音に失敗しました。", app_name="rpb", timeout=10)
@@ -500,7 +513,7 @@ class ScheduleManager:
                         timeout=10
                     )
                 
-                self.recorder_manager.start_recording(
+                recorder = self.recorder_manager.start_recording(
                     stream_url, 
                     schedule.output_path, 
                     info, 
@@ -509,15 +522,26 @@ class ScheduleManager:
                     on_complete=on_recording_complete
                 )
                 
-                schedule.mark_executed(current_time)
-                self.save_schedules()
-                
-                notification.notify(
-                    title='録音開始',
-                    message=f'{schedule.program_title} の録音を開始しました。',
-                    app_name='rpb',
-                    timeout=10
-                )
+                if recorder:
+                    schedule.mark_executed(current_time)
+                    self.save_schedules()
+                    
+                    notification.notify(
+                        title='録音開始',
+                        message=f'{schedule.program_title} の録音を開始しました。',
+                        app_name='rpb',
+                        timeout=10
+                    )
+                else:
+                    # 録音開始に失敗
+                    schedule.set_status(RECORDING_STATUS_FAILED)
+                    self.save_schedules()
+                    notification.notify(
+                        title='録音失敗',
+                        message=f'{schedule.program_title} の録音開始に失敗しました。',
+                        app_name='rpb',
+                        timeout=10
+                    )
                 
             except Exception as e:
                 self.logger.error(f"Failed to execute schedule {schedule.id}: {e}")

@@ -618,9 +618,14 @@ class Events(BaseEvents):
 			# 現在の番組情報を取得
 			title = self.parent.progs.getNowProgram(self.selected)
 			if not title:
-				self.log.error("Failed to get program title")
-				errorDialog(_("番組情報の取得に失敗しました。"))
-				return
+				self.log.warning("Failed to get program title, using fallback")
+				# 番組タイトルが取得できない場合は、放送局名と時刻を使用
+				current_time = datetime.datetime.now().strftime("%H%M")
+				title = f"番組不明_{current_time}"
+			else:
+				# 番組タイトルをファイル名に適した形式に変換
+				title = re.sub(r'[<>:"/\\|?*]', '_', title)  # 無効な文字を置換
+				title = title.strip()
 
 			# ストリームURLの取得
 			self.parent.get_streamUrl(self.selected)
@@ -634,7 +639,7 @@ class Events(BaseEvents):
 			station_dir = self.parent.stid[self.selected].replace(" ", "_")
 			from recorder import create_recording_dir, get_file_type_from_config
 			dirs = create_recording_dir(station_dir)
-			file_path = f"{dirs}\{str(datetime.date.today())}{replace}"
+			file_path = f"{dirs}\{str(datetime.date.today())}_{replace}"
 			
 			
 			from recorder import recorder_manager
@@ -652,7 +657,6 @@ class Events(BaseEvents):
 				errorDialog(_("録音の開始に失敗しました。"))
 		
 		except Exception as e:
-			raise e
 			self.log.error(f"Error during recording start: {e}")
 			errorDialog(_("録音の開始中にエラーが発生しました。"))
 			self._update_ui_for_recording(False)
@@ -722,7 +726,6 @@ class Events(BaseEvents):
 			rw.Show()
 				
 		except Exception as e:
-			#raise e
 			self.log.error(f"Error in recording schedule: {e}")
 			errorDialog(_("録音予約の処理に失敗しました。"))
 

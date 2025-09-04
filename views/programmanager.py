@@ -77,45 +77,100 @@ class ProgramManager:
 
     def getNowProgram(self, id):
         """現在再生中の番組タイトルを返す"""
-        title_dic = {} #stationidをキー、番組名を値とする辞書
-        if id in self.values:
+        try:
+            title_dic = {} #stationidをキー、番組名を値とする辞書
+            if id not in self.values:
+                self.log.warning(f"Station ID {id} not found in values")
+                return None
+                
             jp_number = self.values[id]
-        #引数の都道府県コードをつけてリクエスト
-        url = f"{self.getprogramlist()}/program/now/{jp_number}.xml"
-        response = requests.get(url)
-        xml_data = response.content
-        root = lxml.etree.parse(url)
-        results = root.xpath(".//station")
-        progs = root.xpath(".//progs")
-        self.url = url
-        self.progs = progs
-        self.results = results
-        self.response = response
-        for result,title in zip(results,progs):
-            title_dic[result.get("id")] = title.xpath(".//title")[0].text
+            #引数の都道府県コードをつけてリクエスト
+            url = f"{self.getprogramlist()}/program/now/{jp_number}.xml"
+            
+            try:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+            except requests.RequestException as e:
+                self.log.error(f"Failed to fetch program data: {e}")
+                return None
+                
+            try:
+                root = lxml.etree.parse(url)
+                results = root.xpath(".//station")
+                progs = root.xpath(".//progs")
+            except Exception as e:
+                self.log.error(f"Failed to parse XML: {e}")
+                return None
+                
+            self.url = url
+            self.progs = progs
+            self.results = results
+            self.response = response
+            
+            for result, title in zip(results, progs):
+                try:
+                    title_element = title.xpath(".//title")
+                    if title_element and title_element[0].text:
+                        title_dic[result.get("id")] = title_element[0].text
+                except Exception as e:
+                    self.log.warning(f"Failed to extract title for station {result.get('id')}: {e}")
+                    continue
 
-        #stationidに該当する番組名を返す
-        if id in title_dic:
-            return title_dic[id]
+            #stationidに該当する番組名を返す
+            if id in title_dic:
+                return title_dic[id]
+            else:
+                self.log.warning(f"No program found for station ID {id}")
+                return None
+                
+        except Exception as e:
+            self.log.error(f"Unexpected error in getNowProgram: {e}")
+            return None
 
     def getnowProgramPfm(self, id):
         """現在放送中の番組の出演者を返す"""
-        pfm_dic = {}
-        for result,pfm in zip(self.results,self.progs):
-            pfm_dic[result.get("id")] = pfm.xpath(".//pfm")[0].text
+        try:
+            pfm_dic = {}
+            for result, pfm in zip(self.results, self.progs):
+                try:
+                    pfm_element = pfm.xpath(".//pfm")
+                    if pfm_element and pfm_element[0].text:
+                        pfm_dic[result.get("id")] = pfm_element[0].text
+                except Exception as e:
+                    self.log.warning(f"Failed to extract performer for station {result.get('id')}: {e}")
+                    continue
 
-        if id in pfm_dic:
-            return pfm_dic[id]
+            if id in pfm_dic:
+                return pfm_dic[id]
+            else:
+                return None
+        except Exception as e:
+            self.log.error(f"Unexpected error in getnowProgramPfm: {e}")
+            return None
 
     def getNowProgramDsc(self, id):
         """番組の説明を取得して返す"""
-        dsc_dic = {}
-        for result,dsc in zip(self.results,self.progs):
-            str = dsc.xpath(".//desc")[0].text
-            if str is not None:
-                dsc_dic[result.get("id")] = re.sub(re.compile('<.*?>'), '', str) #htmlタグを除去
-        if id in dsc_dic:
-            return dsc_dic[id]
+        try:
+            dsc_dic = {}
+            for result, dsc in zip(self.results, self.progs):
+                try:
+                    desc_element = dsc.xpath(".//desc")
+                    if desc_element and desc_element[0].text:
+                        desc_text = desc_element[0].text
+                        # HTMLタグを除去
+                        clean_text = re.sub(re.compile('<.*?>'), '', desc_text)
+                        dsc_dic[result.get("id")] = clean_text
+                except Exception as e:
+                    self.log.warning(f"Failed to extract description for station {result.get('id')}: {e}")
+                    continue
+                    
+            if id in dsc_dic:
+                return dsc_dic[id]
+            else:
+                return None
+        except Exception as e:
+            self.log.error(f"Unexpected error in getNowProgramDsc: {e}")
+            return None
 
     def get_ftl(self):
         results = []
