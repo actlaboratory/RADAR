@@ -30,6 +30,10 @@ class DefaultSettings:
 			"server": "",
 			"port": 8080
 		}
+		config["recording"] = {
+			"menu_id": "10000",  # MP3をデフォルトに
+			"check_menu": "True"
+		}
 		return config
 
 initialValues={}
