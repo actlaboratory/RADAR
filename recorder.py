@@ -172,10 +172,10 @@ class Recorder:
     def _get_quality_settings(self):
         """ファイルタイプに応じた音質設定を取得"""
         if self.filetype == "wav":
-            # WAV: 無圧縮、44.1kHz、16bit、ステレオ
+            # WAV: 最高音質、48kHz、24bit、ステレオ
             return [
-                "-acodec", "pcm_s16le",
-                "-ar", "44100",
+                "-acodec", "pcm_s24le",
+                "-ar", "48000",
                 "-ac", "2"
             ]
         elif self.filetype == "mp3":
