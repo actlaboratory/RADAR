@@ -83,6 +83,7 @@ class MainView(BaseView):
 		self.setRadioList()
 		self.menu.hRecordingFileTypeMenu.Check(self.app.config.getint("recording","menu_id"), self.app.config.getboolean("recording","check_menu"))
 		self.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"),False)
+		self.events._update_schedule_menu_status()
 		
 		# 録音スケジュール監視を開始
 		try:
