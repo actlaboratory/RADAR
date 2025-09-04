@@ -746,7 +746,8 @@ signal.signal(signal.SIGINT, signal_handler)
 # 後方互換性のためのヘルパー関数
 def create_recording_dir(station_id):
     """放送局名のディレクトリを作成（後方互換性）"""
-    base_dir = "OUTPUT"
+    # 設定から出力先フォルダを取得
+    base_dir = get_output_directory()
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
     
@@ -755,6 +756,37 @@ def create_recording_dir(station_id):
         os.makedirs(dir_path)
     
     return dir_path
+
+def get_output_directory():
+    """設定から録音出力先ディレクトリを取得"""
+    try:
+        # globalVarsから設定を取得
+        if hasattr(globalVars, 'app') and hasattr(globalVars.app, 'config'):
+            output_dir = globalVars.app.config.getstring("recording", "output_directory", "OUTPUT")
+            
+            # 相対パスの場合は絶対パスに変換
+            if not os.path.isabs(output_dir):
+                output_dir = os.path.abspath(output_dir)
+            
+            # ディレクトリが存在しない場合は作成を試行
+            if not os.path.exists(output_dir):
+                try:
+                    os.makedirs(output_dir, exist_ok=True)
+                except (PermissionError, OSError) as e:
+                    logger = getLogger("recorder")
+                    logger.error(f"Failed to create output directory {output_dir}: {e}")
+                    # 作成に失敗した場合はデフォルトディレクトリを使用
+                    return "OUTPUT"
+            
+            return output_dir
+        else:
+            # フォールバック: デフォルト値を使用
+            return "OUTPUT"
+    except Exception as e:
+        # エラーが発生した場合はデフォルト値を使用
+        logger = getLogger("recorder")
+        logger.warning(f"Failed to get output directory from config: {e}, using default")
+        return "OUTPUT"
 
 def get_file_type_from_config():
     """設定からファイルタイプを取得（後方互換性）"""

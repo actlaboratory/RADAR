@@ -7,6 +7,7 @@ import wx
 import constants
 import simpleDialog
 import views.ViewCreator
+from views.folderSelector import FolderSelector
 
 from enum import Enum,auto
 from views.baseDialog import *
@@ -81,6 +82,11 @@ class Dialog(BaseDialog):
 		#record
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("録音"),style=wx.ALL|wx.EXPAND,margin=20)
 		self.createstationsubdir = creator.checkbox(_("放送局ごとにサブフォルダを作成(&U)"))
+		
+		# 録音出力先フォルダ選択（録音タブ内に追加）
+		self.output_directory, static = creator.inputbox(_("録音ファイルの出力先フォルダ(&O)"))
+		self.output_directory.hideScrollBar(wx.HORIZONTAL)
+		self.browse_button = creator.button(_("参照(&B)"), self.onBrowseOutputFolder)
 
 		# network
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("ネットワーク"),style=wx.ALL,margin=20)
@@ -107,6 +113,7 @@ class Dialog(BaseDialog):
 
 		# record
 		self._setValue(self.createstationsubdir, "record", "createStationSubDir", configType.BOOL, True)
+		self._setValue(self.output_directory, "recording", "output_directory", configType.STRING, "OUTPUT")
 		
 		# network
 		self._setValue(self.update, "general", "update", configType.BOOL)
@@ -115,6 +122,15 @@ class Dialog(BaseDialog):
 		self._setValue(self.port, "proxy", "port", configType.STRING)
 
 	def onOkButton(self, event):
+		# 録音出力先フォルダのバリデーション
+		output_dir = self.output_directory.GetValue()
+		if output_dir:
+			folder_selector = FolderSelector(self.wnd)
+			is_valid, error_message = folder_selector.validate_folder_path(output_dir)
+			if not is_valid:
+				simpleDialog.errorDialog(f"録音出力先フォルダが無効です: {error_message}")
+				return
+		
 		result = self._save()
 		event.Skip()
 
@@ -157,6 +173,23 @@ class Dialog(BaseDialog):
 		self.app.InitSpeech()
 		self.app.setProxyEnviron()
 
+	def onBrowseOutputFolder(self, event):
+		"""録音出力先フォルダ選択ボタンのイベントハンドラー"""
+		current_path = self.output_directory.GetValue()
+		if not current_path:
+			current_path = "OUTPUT"
+		
+		folder_selector = FolderSelector(self.wnd, _("録音ファイルの出力先フォルダを選択"))
+		selected_path = folder_selector.select_folder(current_path)
+		
+		if selected_path:
+			# フォルダの妥当性をチェック
+			is_valid, error_message = folder_selector.validate_folder_path(selected_path)
+			if is_valid:
+				self.output_directory.SetValue(selected_path)
+			else:
+				simpleDialog.errorDialog(f"選択されたフォルダが無効です: {error_message}")
+	
 	def browseDir(self, event):
 		target = self.dir
 		dialog = wx.DirDialog(self.wnd, _("保存先フォルダを選択"))

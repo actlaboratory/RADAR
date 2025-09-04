@@ -32,7 +32,8 @@ class DefaultSettings:
 		}
 		config["recording"] = {
 			"menu_id": "10000",  # MP3をデフォルトに
-			"check_menu": "True"
+			"check_menu": "True",
+			"output_directory": "OUTPUT"  # 録音ファイルの出力先フォルダ
 		}
 		return config
 
