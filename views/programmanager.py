@@ -78,6 +78,55 @@ class ProgramManager:
     def getNowProgram(self, id):
         """現在再生中の番組タイトルを返す"""
         try:
+            # 方法1: 放送局IDを直接使用して番組情報を取得
+            url = f"{self.getprogramlist()}/program/now/{id}.xml"
+            self.log.debug(f"Trying direct station API for {id}: {url}")
+            
+            try:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+            except requests.RequestException as e:
+                self.log.warning(f"Direct station API failed for {id}: {e}")
+                # 方法2: 都道府県コードを使用（フォールバック）
+                return self._getNowProgramByArea(id)
+                
+            try:
+                root = lxml.etree.parse(url)
+                results = root.xpath(".//station")
+                progs = root.xpath(".//progs")
+            except Exception as e:
+                self.log.warning(f"Failed to parse direct station XML for {id}: {e}")
+                # 方法2: 都道府県コードを使用（フォールバック）
+                return self._getNowProgramByArea(id)
+                
+            self.url = url
+            self.progs = progs
+            self.results = results
+            self.response = response
+            
+            # 直接取得した場合、該当する放送局の番組情報を探す
+            for result, prog in zip(results, progs):
+                if result.get("id") == id:
+                    try:
+                        title_element = prog.xpath(".//title")
+                        if title_element and title_element[0].text:
+                            self.log.debug(f"Found program title via direct API for {id}: {title_element[0].text}")
+                            return title_element[0].text
+                    except Exception as e:
+                        self.log.warning(f"Failed to extract title for station {id}: {e}")
+                        continue
+            
+            # 見つからない場合は都道府県コードを使用
+            self.log.debug(f"No program found via direct API for {id}, trying area-based method")
+            return self._getNowProgramByArea(id)
+                
+        except Exception as e:
+            self.log.error(f"Unexpected error in getNowProgram: {e}")
+            return None
+
+    def _getNowProgramByArea(self, id):
+        """都道府県コードを使用して番組情報を取得（フォールバック）"""
+        try:
             title_dic = {} #stationidをキー、番組名を値とする辞書
             if id not in self.values:
                 self.log.warning(f"Station ID {id} not found in values")
@@ -86,12 +135,13 @@ class ProgramManager:
             jp_number = self.values[id]
             #引数の都道府県コードをつけてリクエスト
             url = f"{self.getprogramlist()}/program/now/{jp_number}.xml"
+            self.log.debug(f"Trying area-based API for {id} (area: {jp_number}): {url}")
             
             try:
                 response = requests.get(url, timeout=10)
                 response.raise_for_status()
             except requests.RequestException as e:
-                self.log.error(f"Failed to fetch program data: {e}")
+                self.log.error(f"Failed to fetch program data by area: {e}")
                 return None
                 
             try:
@@ -99,7 +149,7 @@ class ProgramManager:
                 results = root.xpath(".//station")
                 progs = root.xpath(".//progs")
             except Exception as e:
-                self.log.error(f"Failed to parse XML: {e}")
+                self.log.error(f"Failed to parse XML by area: {e}")
                 return None
                 
             self.url = url
@@ -118,18 +168,31 @@ class ProgramManager:
 
             #stationidに該当する番組名を返す
             if id in title_dic:
+                self.log.debug(f"Found program title via area-based API for {id}: {title_dic[id]}")
                 return title_dic[id]
             else:
-                self.log.warning(f"No program found for station ID {id}")
+                self.log.warning(f"No program found for station ID {id} in area {jp_number}")
                 return None
                 
         except Exception as e:
-            self.log.error(f"Unexpected error in getNowProgram: {e}")
+            self.log.error(f"Unexpected error in _getNowProgramByArea: {e}")
             return None
 
     def getnowProgramPfm(self, id):
         """現在放送中の番組の出演者を返す"""
         try:
+            # 直接取得した場合、該当する放送局の出演者情報を探す
+            for result, prog in zip(self.results, self.progs):
+                if result.get("id") == id:
+                    try:
+                        pfm_element = prog.xpath(".//pfm")
+                        if pfm_element and pfm_element[0].text:
+                            return pfm_element[0].text
+                    except Exception as e:
+                        self.log.warning(f"Failed to extract performer for station {id}: {e}")
+                        continue
+            
+            # 見つからない場合は従来の方法で検索
             pfm_dic = {}
             for result, pfm in zip(self.results, self.progs):
                 try:
@@ -151,6 +214,21 @@ class ProgramManager:
     def getNowProgramDsc(self, id):
         """番組の説明を取得して返す"""
         try:
+            # 直接取得した場合、該当する放送局の説明情報を探す
+            for result, prog in zip(self.results, self.progs):
+                if result.get("id") == id:
+                    try:
+                        desc_element = prog.xpath(".//desc")
+                        if desc_element and desc_element[0].text:
+                            desc_text = desc_element[0].text
+                            # HTMLタグを除去
+                            clean_text = re.sub(re.compile('<.*?>'), '', desc_text)
+                            return clean_text
+                    except Exception as e:
+                        self.log.warning(f"Failed to extract description for station {id}: {e}")
+                        continue
+            
+            # 見つからない場合は従来の方法で検索
             dsc_dic = {}
             for result, dsc in zip(self.results, self.progs):
                 try:
