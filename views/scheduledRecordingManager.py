@@ -36,6 +36,7 @@ class ScheduledRecordingManager(BaseDialog):
         self.refresh_btn = self.creator.button(_("更新(&R)"), self.onRefresh)
         self.cancel_btn = self.creator.button(_("キャンセル(&C)"), self.onCancel)
         self.remove_btn = self.creator.button(_("削除(&D)"), self.onRemove)
+        self.clear_all_btn = self.creator.button(_("すべて削除(&A)"), self.onClearAll)
         self.close_btn = self.creator.closebutton(_("閉じる(&X)"), self.onClose)
         self.close_btn.SetDefault()
 
@@ -122,6 +123,35 @@ class ScheduledRecordingManager(BaseDialog):
         except Exception as e:
             self.log.error(f"Error removing schedule: {e}")
             wx.MessageBox(f"削除に失敗しました: {e}", _("エラー"), wx.OK | wx.ICON_ERROR)
+
+    def onClearAll(self, event):
+        """すべての予約を削除"""
+        try:
+            if not self.schedules:
+                wx.MessageBox(_("削除する予約がありません。"), _("情報"), wx.OK | wx.ICON_INFORMATION)
+                return
+            
+            # 確認ダイアログ
+            result = wx.MessageBox(
+                f"すべての録音予約（{len(self.schedules)}件）を削除しますか？\n"
+                "録音中の予約はキャンセルされます。\n"
+                "（この操作は取り消せません）",
+                _("確認"),
+                wx.YES_NO | wx.ICON_WARNING
+            )
+            
+            if result == wx.YES:
+                removed_count = schedule_manager.clear_all_schedules()
+                self.load_schedules()
+                wx.MessageBox(
+                    f"すべての予約を削除しました。\n（{removed_count}件の予約を削除）",
+                    _("完了"),
+                    wx.OK | wx.ICON_INFORMATION
+                )
+                
+        except Exception as e:
+            self.log.error(f"Error clearing all schedules: {e}")
+            wx.MessageBox(f"すべて削除に失敗しました: {e}", _("エラー"), wx.OK | wx.ICON_ERROR)
 
     def onClose(self, event):
         """ダイアログを閉じる"""

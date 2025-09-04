@@ -404,6 +404,22 @@ class ScheduleManager:
         self.save_schedules()
         self.logger.info(f"Schedule removed: {schedule_id}")
 
+    def clear_all_schedules(self):
+        """すべての予約を削除"""
+        with self.lock:
+            # 録音中のスケジュールをキャンセル
+            for schedule in self.schedules:
+                if schedule.status == RECORDING_STATUS_RECORDING:
+                    schedule.set_status(RECORDING_STATUS_CANCELLED)
+                    self.logger.info(f"Cancelled recording schedule: {schedule.program_title}")
+            
+            # すべてのスケジュールを削除
+            removed_count = len(self.schedules)
+            self.schedules.clear()
+            self.save_schedules()
+            self.logger.info(f"Cleared all schedules: {removed_count} schedules removed")
+            return removed_count
+
     def cancel_schedule(self, schedule_id):
         """予約をキャンセル（ステータスを更新）"""
         with self.lock:
