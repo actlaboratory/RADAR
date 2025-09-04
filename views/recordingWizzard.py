@@ -119,11 +119,9 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             # 出力パスを準備
             replace = program_title.replace(" ", "-")
             # 設定から出力先フォルダを取得
-            from recorder import get_output_directory
-            base_dir = get_output_directory()
-            dirs = os.path.join(base_dir, self.radioname.replace(" ", "_"))
-            if not os.path.exists(dirs):
-                os.makedirs(dirs)
+            from recorder import create_recording_dir
+            station_dir = self.radioname.replace(" ", "_")
+            dirs = create_recording_dir(station_dir, program_title)
             output_path = os.path.join(dirs, f"{str(datetime.date.today()) + replace}")
             
             # 録音予約を作成

@@ -35,6 +35,9 @@ class DefaultSettings:
 			"check_menu": "True",
 			"output_directory": "OUTPUT"  # 録音ファイルの出力先フォルダ
 		}
+		config["record"] = {
+			"createStationSubDir": True  # 番組ごとにサブフォルダを作成
+		}
 		return config
 
 initialValues={}

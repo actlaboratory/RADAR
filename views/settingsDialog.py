@@ -81,7 +81,7 @@ class Dialog(BaseDialog):
 
 		#record
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("録音"),style=wx.ALL|wx.EXPAND,margin=20)
-		self.createstationsubdir = creator.checkbox(_("放送局ごとにサブフォルダを作成(&U)"))
+		self.createstationsubdir = creator.checkbox(_("番組ごとにサブフォルダを作成(&U)"))
 		
 		# 録音出力先フォルダ選択（録音タブ内に追加）
 		self.output_directory, static = creator.inputbox(_("録音ファイルの出力先フォルダ(&O)"))
