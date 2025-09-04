@@ -394,13 +394,13 @@ class Events(BaseEvents):
 			if self.parent.recordingStatusTimer:
 				self.parent.recordingStatusTimer.Stop()
 			
-			# 録音スケジュール監視を停止
+			# 録音スケジュールのクリーンアップ
 			from recorder import schedule_manager
-			schedule_manager.stop_monitoring()
+			schedule_manager.cleanup()
 			
 			# 全ての録音を停止
 			from recorder import recorder_manager
-			recorder_manager.stop_all()
+			recorder_manager.cleanup()
 			
 			self.log.info("Application cleanup completed")
 		except Exception as e:
@@ -648,10 +648,27 @@ class Events(BaseEvents):
 			info = f"{self.parent.stid[self.selected]} {title}"
 			filetype = get_file_type_from_config()
 			
-			recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype)
+			# 録音完了時のコールバック
+			def on_recording_complete(recorder):
+				self._update_ui_for_recording(False)
+				notification.notify(
+					title='録音完了',
+					message=f'{title} の録音が完了しました。',
+					app_name='rpb',
+					timeout=10
+				)
+			
+			recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype, on_recording_complete)
 			if recorder:
 				self.log.info(f"Recording started: {title}")
 				self._update_ui_for_recording(True)
+				# 録音開始時の通知
+				notification.notify(
+					title='録音開始',
+					message=f'{title} の録音を開始しました。',
+					app_name='rpb',
+					timeout=10
+				)
 			else:
 				self.log.error("Recording failed to start")
 				errorDialog(_("録音の開始に失敗しました。"))

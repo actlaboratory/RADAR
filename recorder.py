@@ -526,9 +526,19 @@ class ScheduleManager:
                     schedule.mark_executed(current_time)
                     self.save_schedules()
                     
+                    # 現在のスケジュール数を取得
+                    active_schedules = [s for s in self.schedules if s.enabled and s.status == RECORDING_STATUS_RECORDING]
+                    schedule_count = len(active_schedules)
+                    
+                    # 通知メッセージを決定
+                    if schedule_count == 1:
+                        message = f'{schedule.program_title} の録音を開始しました。'
+                    else:
+                        message = f'{schedule.program_title} の録音を開始しました。（{schedule_count}件の録音中）'
+                    
                     notification.notify(
                         title='録音開始',
-                        message=f'{schedule.program_title} の録音を開始しました。',
+                        message=message,
                         app_name='rpb',
                         timeout=10
                     )
@@ -589,13 +599,83 @@ class ScheduleManager:
             self.logger.error(f"Failed to load schedules: {e}")
             self.schedules = []
 
+    def cleanup(self):
+        """アプリ終了時のクリーンアップ処理"""
+        try:
+            self.logger.info("Starting schedule cleanup...")
+            
+            # 監視を停止
+            self.stop_monitoring()
+            
+            # 録音中のスケジュールをキャンセル状態に更新
+            with self.lock:
+                updated_count = 0
+                for schedule in self.schedules:
+                    if schedule.status == RECORDING_STATUS_RECORDING:
+                        schedule.set_status(RECORDING_STATUS_CANCELLED)
+                        updated_count += 1
+                        self.logger.info(f"Cancelled recording schedule: {schedule.program_title}")
+                
+                if updated_count > 0:
+                    self.save_schedules()
+                    self.logger.info(f"Updated {updated_count} recording schedules to cancelled status")
+            
+            # スレッドプールをシャットダウン
+            if self.executor:
+                self.executor.shutdown(wait=False)
+                self.logger.info("Schedule executor shutdown completed")
+            
+            self.logger.info("Schedule cleanup completed")
+            
+        except Exception as e:
+            self.logger.error(f"Error during schedule cleanup: {e}")
+
+    def cleanup_on_error(self):
+        """異常終了時のクリーンアップ処理"""
+        try:
+            self.logger.warning("Starting emergency schedule cleanup...")
+            
+            # 録音中のスケジュールを失敗状態に更新
+            with self.lock:
+                updated_count = 0
+                for schedule in self.schedules:
+                    if schedule.status == RECORDING_STATUS_RECORDING:
+                        schedule.set_status(RECORDING_STATUS_FAILED)
+                        updated_count += 1
+                        self.logger.warning(f"Marked recording schedule as failed: {schedule.program_title}")
+                
+                if updated_count > 0:
+                    self.save_schedules()
+                    self.logger.warning(f"Updated {updated_count} recording schedules to failed status")
+            
+            self.logger.warning("Emergency schedule cleanup completed")
+            
+        except Exception as e:
+            self.logger.error(f"Error during emergency schedule cleanup: {e}")
+
 # グローバルインスタンス
 recorder_manager = RecorderManager()
 schedule_manager = ScheduleManager(recorder_manager)
 
 # 終了時のクリーンアップ
 atexit.register(recorder_manager.cleanup)
-atexit.register(schedule_manager.stop_monitoring)
+atexit.register(schedule_manager.cleanup)
+
+# シグナルハンドラー（WindowsではSIGTERMとSIGINTのみ）
+def signal_handler(signum, frame):
+    """シグナル受信時のクリーンアップ処理"""
+    try:
+        print(f"Received signal {signum}, cleaning up...")
+        schedule_manager.cleanup_on_error()
+        recorder_manager.cleanup()
+    except Exception as e:
+        print(f"Error during signal cleanup: {e}")
+    finally:
+        os._exit(1)
+
+# シグナルハンドラーを登録
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 # 後方互換性のためのヘルパー関数
 def create_recording_dir(station_id):

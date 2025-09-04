@@ -141,10 +141,18 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             # 監視を開始（初回のみ）
             schedule_manager.start_monitoring()
             
+            # 現在のスケジュール数を取得
+            total_schedules = len(schedule_manager.schedules)
+            
             # UI更新
+            if total_schedules == 1:
+                message = f'録音がスケジュールされました。録音は、{self.stdt}に開始されます。'
+            else:
+                message = f'録音がスケジュールされました。録音は、{self.stdt}に開始されます。（{total_schedules}件の録音予約中）'
+            
             notification.notify(
                 title='録音準備', 
-                message=f'録音がスケジュールされました。録音は、{self.stdt}に開始されます。', 
+                message=message, 
                 app_name='rpb', 
                 timeout=10
             )
