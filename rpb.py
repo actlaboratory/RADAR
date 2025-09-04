@@ -22,6 +22,7 @@ else: os.chdir(os.path.abspath(os.path.dirname(__file__)))
 
 def exchandler(type, exc, tb):
 	msg=traceback.format_exception(type, exc, tb)
+	print(msg)
 	if type == requests.exceptions.ConnectionError:
 		simpleDialog.errorDialog(_("通信に失敗しました。インターネット接続を確認してください。プログラムを終了します。"))
 		os._exit(1)
