@@ -263,14 +263,33 @@ class ProgramManager:
         return prog_tol
 
     def get_onair_music(self, id):
-        url = f'http://radiko.jp/v3/feed/pc/noa/{id}.xml'
-        response = requests.get(url)
-        xml_data = response.content
-        root = lxml.etree.parse(url)
-        items = root.xpath(".//item")
-        title = items[0].get("title")
-        artist = items[0].get("artist")
-        music = f"{artist}:{title}"
+        """オンエア中の曲情報を取得"""
+        try:
+            url = f'http://radiko.jp/v3/feed/pc/noa/{id}.xml'
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            
+            root = lxml.etree.parse(url)
+            items = root.xpath(".//item")
+            
+            if items and len(items) > 0:
+                title = items[0].get("title", "")
+                artist = items[0].get("artist", "")
+                if title and artist:
+                    music = f"{artist} - {title}"
+                elif title:
+                    music = title
+                else:
+                    music = "曲情報なし"
+            else:
+                music = "曲情報なし"
+                
+            self.log.debug(f"Online music for {id}: {music}")
+            return music
+            
+        except Exception as e:
+            self.log.warning(f"Failed to get online music for {id}: {e}")
+            return "曲情報取得エラー"
 
     def getDescriptions(self):
         desc_elements = self.root.findall(".//desc")

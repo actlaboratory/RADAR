@@ -154,7 +154,11 @@ class Events(BaseEvents):
 	selected = None
 
 	def onUpdateProcess(self, event):
-		self.parent.get_latest_info()
+		"""番組情報を定期的に更新"""
+		if self.playing and self.id:
+			# 現在再生中の放送局の番組情報を更新
+			if hasattr(self.parent, 'program_info_handler'):
+				self.parent.program_info_handler.get_latest_info()
 
 	def example(self, event):
 		d = sample.Dialog()

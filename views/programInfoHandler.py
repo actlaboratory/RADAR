@@ -33,10 +33,11 @@ class ProgramInfoHandler:
 
     def get_latest_info(self):
         """ctrl+f5によるリロード処理のときに呼ばれる"""
-        self.nplist.clear()
-        self.events.show_program_info()
-        self.events.show_onair_music()
-        self.events.show_description()
+        if hasattr(self.events, 'id') and self.events.id:
+            self.nplist.clear()
+            self.show_program_info(self.events.id)
+            self.show_onair_music(self.events.id)
+            self.show_description(self.events.id)
 
     def show_description(self, station_id):
         """番組の説明を表示"""
@@ -65,11 +66,12 @@ class ProgramInfoHandler:
         # オンエア曲情報を取得してくる
         try:
             onair_music = self.parent.progs.get_onair_music(station_id)
-        except OSError:
-            onair_music = None
-
-        # リストビューにアペンド
-        self.nplist.Append(("オンエア曲", onair_music, ), )
+            if onair_music and onair_music != "曲情報なし":
+                # リストビューにアペンド
+                self.nplist.Append(("オンエア曲", onair_music), )
+        except Exception as e:
+            self.log.warning(f"Failed to get online music: {e}")
+            self.nplist.Append(("オンエア曲", "曲情報取得エラー"), )
 
     def initializeInfoView(self, station_id):
         """番組一覧表示"""
