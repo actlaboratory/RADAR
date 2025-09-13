@@ -8,17 +8,6 @@ import tcutil
 import time
 import locale
 
-# ロケール設定を修正
-try:
-    locale.setlocale(locale.LC_TIME, 'Japanese_Japan.932')
-except locale.Error:
-    try:
-        locale.setlocale(locale.LC_TIME, 'ja_JP.UTF-8')
-    except locale.Error:
-        try:
-            locale.setlocale(locale.LC_TIME, 'C')
-        except locale.Error:
-            pass  # デフォルトのまま
 
 import constants
 import globalVars
