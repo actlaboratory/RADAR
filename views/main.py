@@ -7,6 +7,7 @@ import wx
 import tcutil
 import time
 import locale
+import os
 
 
 import constants
@@ -42,6 +43,9 @@ class MainView(BaseView):
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
 
+		# outputディレクトリの存在チェックと作成
+		self._ensure_output_directory()
+
 		# プログラム管理の初期化
 		self.progs = programmanager.ProgramManager()
 		
@@ -58,6 +62,19 @@ class MainView(BaseView):
 		self.radio_manager.setup_radio_ui()
 		self.program_info_handler.setup_program_info_ui()
 		self.exit_button()
+
+	def _ensure_output_directory(self):
+		"""outputディレクトリの存在をチェックし、存在しない場合は作成する"""
+		output_dir = "output"
+		try:
+			if not os.path.exists(output_dir):
+				os.makedirs(output_dir)
+				self.log.info(f"Created output directory: {output_dir}")
+			else:
+				self.log.debug(f"Output directory already exists: {output_dir}")
+		except Exception as e:
+			self.log.error(f"Failed to create output directory: {e}")
+			errorDialog(_("outputディレクトリの作成に失敗しました。\nアプリケーションを続行しますが、録音機能が正常に動作しない可能性があります。"))
 
 	def exit_button(self):
 		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
