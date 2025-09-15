@@ -91,7 +91,7 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hFileMenu, {
 			"FILE_EXAMPLE": self.parent.events.example,
 			"FILE_RELOAD": self.parent.events.onReLoad,
-			"FILE_EXIT": self.parent.events.exit,
+			"EXIT": self.parent.events.exit,
 		})
 
 		# 機能メニュー
@@ -165,7 +165,27 @@ class Events(BaseEvents):
 		d.Initialize()
 		r = d.Show()
 
+	def OnExit(self, event):
+		if event.CanVeto():
+			# Alt+F4が押された
+			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
+				self.hide()
+		super().OnExit(event)
+		globalVars.app.tb.Destroy()
+		return
+
+	def hide(self):
+		self.parent.hFrame.Hide()
+		return
+
+	def show(self):
+		self.parent.hFrame.Show()
+		self.parent.hPanel.SetFocus()
+		return
+
 	def exit(self, event):
+		import winsound
+		winsound.Beep(850, 1000)
 		try:
 			# 各ハンドラーのクリーンアップ
 			if hasattr(self.parent, 'recording_handler'):
@@ -175,8 +195,10 @@ class Events(BaseEvents):
 			self.log.info("Application cleanup completed")
 		except Exception as e:
 			self.log.error(f"Error during application cleanup: {e}")
-		
-		self.parent.hFrame.Close()
+
+		self.parent.hFrame.Close(True)
+		globalVars.app.tb.Destroy()
+		return
 
 	def option(self, event):
 		d = settingsDialog.Dialog()
