@@ -118,7 +118,7 @@ class ProgramCacheManager:
                 cursor.execute('''
                     INSERT OR REPLACE INTO cache_metadata (key, value, updated_at)
                     VALUES (?, ?, CURRENT_TIMESTAMP)
-                ''', ('last_update', datetime.datetime.now().isoformat()))
+                ''', ('last_update', datetime.datetime.now().strftime('%Y%m%d')))
                 
                 self.conn.commit()
                 self.log.info(f"Updated {len(insert_data)} programs for date {date}")
@@ -270,6 +270,88 @@ class ProgramCacheManager:
         except Exception as e:
             self.log.error(f"Failed to check cache validity: {e}")
             return False
+    
+    def get_weekly_data_summary(self):
+        """1週間分のデータサマリーを取得"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                
+                # 今日から1週間分の日付範囲を計算
+                today = datetime.datetime.now()
+                week_dates = []
+                for i in range(7):
+                    target_date = today + datetime.timedelta(days=i)
+                    week_dates.append(target_date.strftime('%Y%m%d'))
+                
+                # 各日付のデータ数を取得
+                summary = {}
+                for date_str in week_dates:
+                    cursor.execute("SELECT COUNT(*) FROM programs WHERE date = ?", (date_str,))
+                    count = cursor.fetchone()[0]
+                    summary[date_str] = count
+                
+                # 総データ数
+                cursor.execute("SELECT COUNT(*) FROM programs")
+                total_count = cursor.fetchone()[0]
+                
+                # 放送局数
+                cursor.execute("SELECT COUNT(DISTINCT station_id) FROM programs")
+                station_count = cursor.fetchone()[0]
+                
+                return {
+                    'weekly_summary': summary,
+                    'total_programs': total_count,
+                    'total_stations': station_count,
+                    'date_range': week_dates
+                }
+                
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to get weekly data summary: {e}")
+                return None
+    
+    def is_weekly_cache_complete(self):
+        """1週間分のキャッシュが完全かチェック"""
+        try:
+            summary = self.get_weekly_data_summary()
+            if not summary:
+                return False
+            
+            # 各日付に最低限のデータがあるかチェック
+            min_programs_per_day = 10  # 最低限の番組数
+            for date_str, count in summary['weekly_summary'].items():
+                if count < min_programs_per_day:
+                    self.log.debug(f"Insufficient data for {date_str}: {count} programs")
+                    return False
+            
+            self.log.info(f"Weekly cache is complete: {summary['total_programs']} programs across {summary['total_stations']} stations")
+            return True
+            
+        except Exception as e:
+            self.log.error(f"Failed to check weekly cache completeness: {e}")
+            return False
+    
+    def get_available_date_range(self):
+        """利用可能な日付範囲を取得"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT MIN(date), MAX(date) FROM programs")
+                result = cursor.fetchone()
+                
+                if result and result[0] and result[1]:
+                    return {
+                        'start_date': result[0],
+                        'end_date': result[1],
+                        'days_available': (datetime.datetime.strptime(result[1], '%Y%m%d') - 
+                                         datetime.datetime.strptime(result[0], '%Y%m%d')).days + 1
+                    }
+                else:
+                    return None
+                    
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to get available date range: {e}")
+                return None
     
     def close(self):
         """データベース接続を閉じる"""

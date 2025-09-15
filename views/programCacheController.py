@@ -49,26 +49,47 @@ class ProgramCacheController:
             self._handle_database_error(e)
     
     def _check_and_update_database(self):
-        """データベースの存在チェックと更新"""
+        """データベースの存在チェックと更新（今日基準）"""
         try:
             # キャッシュマネージャーを初期化
             self.cache_manager = ProgramCacheManager(self.db_path)
             
             # 最終更新日を取得
             last_update_str = self.cache_manager.get_last_update_time()
-            if last_update_str:
+            if last_update_str and len(last_update_str) >= 8:
                 self.last_update_date = last_update_str[:8]  # YYYYMMDD部分のみ
                 self.log.info(f"Last update date: {self.last_update_date}")
             else:
                 self.last_update_date = None
                 self.log.info("No previous update date found")
             
-            # 日付が変わっているかチェック
-            if self.last_update_date != self.startup_date:
-                self.log.info(f"Date changed from {self.last_update_date} to {self.startup_date}, updating database")
+            # 今日の日付を基準にした日付を計算
+            today = datetime.datetime.now()
+            today_date = today.strftime('%Y%m%d')
+            
+            # 1週間分のキャッシュが完全かチェック
+            is_weekly_complete = self.cache_manager.is_weekly_cache_complete()
+            
+            # 更新が必要な条件をチェック
+            needs_update = (
+                self.last_update_date is None or  # 初回起動
+                self.last_update_date != today_date or  # 基準日が変わった
+                not is_weekly_complete  # 週間データが不完全
+            )
+            
+            if needs_update:
+                reason = []
+                if self.last_update_date is None:
+                    reason.append("初回起動")
+                if self.last_update_date != today_date:
+                    reason.append(f"基準日変更 ({self.last_update_date} → {today_date})")
+                if not is_weekly_complete:
+                    reason.append("週間データ不完全")
+                
+                self.log.info(f"Database update needed: {', '.join(reason)}")
                 self._update_database()
             else:
-                self.log.info("Date unchanged, using existing database")
+                self.log.info("Weekly cache is complete, using existing database")
                 self._initialize_services()
             
         except Exception as e:
@@ -94,7 +115,7 @@ class ProgramCacheController:
             self._handle_database_error(e)
     
     def _update_database(self):
-        """データベースを更新"""
+        """データベースを更新（1週間分のデータを取得）"""
         try:
             if not self.radio_manager:
                 self.log.warning("RadioManager not available, skipping database update")
@@ -113,22 +134,23 @@ class ProgramCacheController:
             self.data_collector = ProgramDataCollector(self.cache_manager)
             self.data_collector.set_radio_manager(self.radio_manager)
             
-            # 今日と明日のデータを収集
-            today = datetime.datetime.now().strftime('%Y%m%d')
-            tomorrow = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime('%Y%m%d')
+            # 今日から1週間分のデータを効率的に収集
+            today = datetime.datetime.now()
+            today = today.replace(hour=0, minute=0, second=0, microsecond=0)
             
-            # データ収集を実行
-            success_today = self.data_collector.collect_all_stations_data(today, force_refresh=True)
-            success_tomorrow = self.data_collector.collect_all_stations_data(tomorrow, force_refresh=True)
+            self.log.info(f"Starting weekly data collection from {today.strftime('%Y%m%d')}")
             
-            if success_today or success_tomorrow:
-                self.log.info("Database update completed successfully")
+            # 週間データ収集を実行
+            success = self.data_collector.collect_weekly_data(today, force_refresh=True)
+            
+            if success:
+                self.log.info("Weekly database update completed successfully")
                 self.last_update_date = self.startup_date
             else:
-                self.log.warning("Database update failed, but continuing with existing data")
+                self.log.warning("Weekly database update failed, but continuing with existing data")
             
-            # 古いデータをクリーンアップ
-            self.cache_manager.cleanup_old_data(days=7)
+            # 古いデータをクリーンアップ（14日以上古いデータを削除）
+            self.cache_manager.cleanup_old_data(days=14)
             
             # サービスを初期化
             self._initialize_services()
@@ -136,6 +158,41 @@ class ProgramCacheController:
         except Exception as e:
             self.log.error(f"Failed to update database: {e}")
             self._handle_database_error(e)
+    
+    def force_weekly_update(self):
+        """1週間分のデータを強制的に更新"""
+        try:
+            if not self.radio_manager or not hasattr(self.radio_manager, 'stid') or not self.radio_manager.stid:
+                self.log.error("RadioManager or station list not available for weekly update")
+                return False
+            
+            self.log.info("Starting forced weekly data update")
+            
+            # データ収集器を初期化
+            if not self.data_collector:
+                self.data_collector = ProgramDataCollector(self.cache_manager)
+                self.data_collector.set_radio_manager(self.radio_manager)
+            
+            # 今日から1週間分のデータを効率的に収集
+            today = datetime.datetime.now()
+            today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            self.log.info(f"Starting forced weekly data collection from {today.strftime('%Y%m%d')}")
+            
+            # 週間データ収集を実行
+            success = self.data_collector.collect_weekly_data(today, force_refresh=True)
+            
+            if success:
+                self.log.info("Forced weekly database update completed successfully")
+                self.last_update_date = self.startup_date
+                return True
+            else:
+                self.log.warning("Forced weekly database update failed")
+                return False
+            
+        except Exception as e:
+            self.log.error(f"Failed to force weekly update: {e}")
+            return False
     
     def _initialize_services(self):
         """検索サービスを初期化"""
@@ -155,6 +212,26 @@ class ProgramCacheController:
         except Exception as e:
             self.log.error(f"Failed to initialize services: {e}")
             self._handle_database_error(e)
+    
+    def ensure_weekly_data(self):
+        """1週間分のデータが存在することを保証"""
+        try:
+            if not self.radio_manager or not hasattr(self.radio_manager, 'stid') or not self.radio_manager.stid:
+                self.log.warning("RadioManager not available for weekly data check")
+                return False
+            
+            # 1週間分のキャッシュが完全かチェック
+            if self.cache_manager and self.cache_manager.is_weekly_cache_complete():
+                self.log.info("Weekly cache is already complete")
+                return True
+            
+            # 不完全な場合は強制更新
+            self.log.info("Weekly cache is incomplete, forcing update")
+            return self.force_weekly_update()
+            
+        except Exception as e:
+            self.log.error(f"Failed to ensure weekly data: {e}")
+            return False
     
     def _handle_database_error(self, error):
         """データベースエラーの処理"""

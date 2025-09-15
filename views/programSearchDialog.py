@@ -15,9 +15,10 @@ from views.programDataCollector import ProgramDataCollector
 class ProgramSearchDialog(BaseDialog):
     """番組検索ダイアログ"""
     
-    def __init__(self, radio_manager=None):
+    def __init__(self, radio_manager=None, parent=None):
         super().__init__("ProgramSearchDialog")
         self.radio_manager = radio_manager
+        self.parent = parent
         self.log = getLogger(f"{constants.LOG_PREFIX}.ProgramSearchDialog")
         
         # 検索エンジンの初期化
@@ -53,8 +54,9 @@ class ProgramSearchDialog(BaseDialog):
         # ボタンエリア
         self.create_buttons()
         
-        # 初期データ収集
+        # 初期データ収集と日付オプション設定
         self.collect_initial_data()
+        self.setup_date_options()
     
     def create_search_inputs(self):
         """検索条件入力エリアを作成"""
@@ -72,7 +74,6 @@ class ProgramSearchDialog(BaseDialog):
         
         # 日付選択（コンボボックス）
         self.date_combo, date_label = self.creator.combobox(_("日付"), [])
-        self.setup_date_options()
         self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
         
         # 時間範囲選択（スピンコントロール）
@@ -148,34 +149,64 @@ class ProgramSearchDialog(BaseDialog):
         self.sizer.Add(button_sizer, 0, wx.ALIGN_RIGHT)
     
     def setup_date_options(self):
-        """日付選択オプションを設定"""
+        """日付選択オプションを設定（データベースの実際の日付範囲を使用）"""
         try:
-            # 今日から7日後までの日付オプションを作成
-            date_options = []
-            today = datetime.datetime.now()
+            # データベースから利用可能な日付範囲を取得
+            if hasattr(self, 'cache_manager') and self.cache_manager:
+                date_range = self.cache_manager.get_available_date_range()
+                if date_range and date_range['days_available'] > 0:
+                    self.log.info(f"Available date range: {date_range['start_date']} to {date_range['end_date']}")
+                    # データベースの日付範囲を使用
+                    start_date = datetime.datetime.strptime(date_range['start_date'], '%Y%m%d')
+                    end_date = datetime.datetime.strptime(date_range['end_date'], '%Y%m%d')
+                else:
+                    # データベースにデータがない場合は今日から1週間分
+                    start_date = datetime.datetime.now()
+                    end_date = start_date + datetime.timedelta(days=6)
+                    self.log.info("No data in database, using today + 6 days")
+            else:
+                # フォールバック: 今日から1週間分
+                start_date = datetime.datetime.now()
+                end_date = start_date + datetime.timedelta(days=6)
+                self.log.info("Cache manager not available, using today + 6 days")
             
-            for i in range(8):  # 今日から7日後まで
-                target_date = today + datetime.timedelta(days=i)
+            # 日付オプションを作成
+            date_options = []
+            current_date = start_date
+            while current_date <= end_date:
                 # エンコーディングエラーを避けるため、英語形式で表示
-                date_str = target_date.strftime('%Y-%m-%d')
-                date_value = target_date.strftime('%Y%m%d')
+                try:
+                    date_str = current_date.strftime('%Y-%m-%d')
+                except (ValueError, OSError):
+                    # ロケールエラーの場合は代替形式を使用
+                    date_str = f"{current_date.year:04d}-{current_date.month:02d}-{current_date.day:02d}"
+                
+                date_value = current_date.strftime('%Y%m%d')
                 date_options.append(f"{date_str} ({date_value})")
+                current_date += datetime.timedelta(days=1)
             
             self.date_combo.SetItems(date_options)
-            self.date_combo.SetSelection(0)  # 今日を選択
+            self.date_combo.SetSelection(0)  # 最初の日付を選択
+            
+            self.log.info(f"Date options set: {len(date_options)} dates from {date_options[0]} to {date_options[-1]}")
+            
+            # 各日付オプションの詳細をログ出力
+            for i, option in enumerate(date_options):
+                self.log.debug(f"Date option {i}: '{option}'")
             
         except Exception as e:
             self.log.error(f"Failed to setup date options: {e}")
             # フォールバック: シンプルな日付形式
             try:
                 date_options = []
-                today = datetime.datetime.now()
-                for i in range(8):
-                    target_date = today + datetime.timedelta(days=i)
+                start_date = datetime.datetime.now()
+                for i in range(7):
+                    target_date = start_date + datetime.timedelta(days=i)
                     date_value = target_date.strftime('%Y%m%d')
                     date_options.append(f"{date_value}")
                 self.date_combo.SetItems(date_options)
                 self.date_combo.SetSelection(0)
+                self.log.info(f"Fallback date options set: {date_options}")
             except Exception as e2:
                 self.log.error(f"Fallback date setup also failed: {e2}")
     
@@ -185,11 +216,57 @@ class ProgramSearchDialog(BaseDialog):
             # 放送局リストを更新
             self.update_station_list()
             
-            # 今日のデータを収集
+            # データベースの状態を確認
+            if hasattr(self, 'cache_manager') and self.cache_manager:
+                summary = self.cache_manager.get_weekly_data_summary()
+                if summary:
+                    self.log.info(f"Database status: {summary['total_programs']} programs across {summary['total_stations']} stations")
+                    self.log.info(f"Date range: {summary['date_range']}")
+                    for date_str, count in summary['weekly_summary'].items():
+                        self.log.debug(f"Date {date_str}: {count} programs")
+                    
+                    # 1週間分のデータが不完全な場合は強制更新
+                    if not self.cache_manager.is_weekly_cache_complete():
+                        self.log.info("Weekly cache is incomplete, forcing weekly data update")
+                        if hasattr(self.parent, 'program_cache_controller'):
+                            success = self.parent.program_cache_controller.ensure_weekly_data()
+                            if success:
+                                self.log.info("Weekly data update completed successfully")
+                            else:
+                                self.log.warning("Weekly data update failed")
+                else:
+                    self.log.warning("No database summary available")
+            
+            # 今日のデータを収集（フォールバック）
             self.data_collector.collect_all_stations_data()
             
         except Exception as e:
             self.log.error(f"Failed to collect initial data: {e}")
+    
+    def _debug_date_in_database(self, search_date):
+        """データベースの日付形式をデバッグ"""
+        try:
+            cursor = self.cache_manager.conn.cursor()
+            
+            # 指定された日付のデータを確認
+            cursor.execute("SELECT DISTINCT date FROM programs WHERE date = ? LIMIT 5", (search_date,))
+            exact_matches = cursor.fetchall()
+            
+            # 類似する日付を確認
+            cursor.execute("SELECT DISTINCT date FROM programs ORDER BY date LIMIT 10")
+            all_dates = cursor.fetchall()
+            
+            # 指定された日付の番組数を確認
+            cursor.execute("SELECT COUNT(*) FROM programs WHERE date = ?", (search_date,))
+            count = cursor.fetchone()[0]
+            
+            self.log.info(f"Debug - Search date: '{search_date}'")
+            self.log.info(f"Debug - Exact matches: {[row[0] for row in exact_matches]}")
+            self.log.info(f"Debug - Sample dates in DB: {[row[0] for row in all_dates]}")
+            self.log.info(f"Debug - Programs count for search date: {count}")
+            
+        except Exception as e:
+            self.log.error(f"Failed to debug date in database: {e}")
     
     def update_station_list(self):
         """放送局リストを更新"""
@@ -224,12 +301,24 @@ class ProgramSearchDialog(BaseDialog):
             wx.MessageBox(_("検索条件を入力してください。"), _("警告"), wx.OK|wx.ICON_WARNING)
             return
         
+        # デバッグ情報をログ出力
+        self.log.info(f"Search criteria: {search_criteria}")
+        
+        # データベースの日付形式を確認
+        if hasattr(self, 'cache_manager') and self.cache_manager and 'date' in search_criteria:
+            self._debug_date_in_database(search_criteria['date'])
+        
         # 検索実行
         use_time_range = search_criteria.pop('use_time_range_search', False)
         self.search_results = self.search_engine.search_combined(
             use_time_range_search=use_time_range,
             **search_criteria
         )
+        
+        # 検索結果のデバッグ情報
+        self.log.info(f"Search completed: {len(self.search_results)} results found")
+        if self.search_results:
+            self.log.debug(f"First result: {self.search_results[0]}")
         
         # 結果を表示
         self.display_results()
@@ -257,10 +346,17 @@ class ProgramSearchDialog(BaseDialog):
         date_selection = self.date_combo.GetSelection()
         if date_selection >= 0:
             date_text = self.date_combo.GetString(date_selection)
-            # 括弧内の日付値を抽出 (例: "2024年01月15日 (20240115)" → "20240115")
+            self.log.debug(f"Selected date text: '{date_text}'")
+            
+            # 括弧内の日付値を抽出 (例: "2024-01-15 (20240115)" → "20240115")
             if '(' in date_text and ')' in date_text:
                 date_value = date_text.split('(')[1].split(')')[0]
                 criteria['date'] = date_value
+                self.log.debug(f"Extracted date value: '{date_value}'")
+            else:
+                # フォールバック: 括弧がない場合はそのまま使用
+                criteria['date'] = date_text
+                self.log.debug(f"Using date text as is: '{date_text}'")
         
         # 時間範囲（スピンコントロールから取得）
         start_hour = self.start_hour_spin.GetValue()
@@ -295,19 +391,40 @@ class ProgramSearchDialog(BaseDialog):
         """検索結果を表示"""
         self.result_list.clear()
         
+        if not self.search_results:
+            # 結果がない場合のメッセージ
+            self.result_list.Append((_("検索結果がありません"), "", "", "", ""))
+            self.result_count_label.SetLabel(_("結果: 0件"))
+            return
+        
         for program in self.search_results:
             # 時間の表示を整形
             start_time = program.get('start_time', '')
             end_time = program.get('end_time', '')
             
-            # HH:MM:SS形式をHH:MM形式に変換
+            # HH:MM:SS形式からHH:MM形式に変換
             if start_time and len(start_time) >= 5:
                 start_time = start_time[:5]
             if end_time and len(end_time) >= 5:
                 end_time = end_time[:5]
             
+            # 日付情報を追加
+            date = program.get('date', '')
+            self.log.debug(f"Program date: '{date}' (type: {type(date)})")
+            
+            if date and len(date) == 8:
+                # YYYYMMDD形式をYYYY/MM/DD形式に変換
+                formatted_date = f"{date[:4]}/{date[4:6]}/{date[6:8]}"
+            else:
+                formatted_date = date
+            
+            # 放送局名に日付を追加
+            station_name = program.get('station_name', '')
+            if formatted_date:
+                station_name = f"[{formatted_date}] {station_name}"
+            
             self.result_list.Append((
-                program.get('station_name', ''),
+                station_name,
                 program.get('title', ''),
                 program.get('performer', ''),
                 start_time,
@@ -320,9 +437,8 @@ class ProgramSearchDialog(BaseDialog):
         
         if count > 0:
             self.result_list.Focus(0)
-        else:
-            # 結果がない場合のメッセージ
-            self.result_list.Append((_("検索結果がありません"), "", "", "", ""))
+            # 結果数をログ出力
+            self.log.info(f"Displayed {count} search results")
     
     def onItemActivated(self, event):
         """リストアイテムがダブルクリックされた時の処理"""
@@ -413,8 +529,16 @@ class ProgramSearchDialog(BaseDialog):
             self.cache_manager.conn.commit()
             self.log.info("Cache metadata cleared for force refresh")
         
-        # データ収集を実行
-        success = self.data_collector.collect_all_stations_data(force_refresh=True)
+        # 1週間分のデータを強制更新
+        success = False
+        if hasattr(self.parent, 'program_cache_controller'):
+            self.log.info("Starting forced weekly data update")
+            success = self.parent.program_cache_controller.force_weekly_update()
+        
+        # フォールバック: 今日のデータのみ収集
+        if not success:
+            self.log.warning("Weekly update failed, falling back to today's data only")
+            success = self.data_collector.collect_all_stations_data(force_refresh=True)
         
         if success:
             wx.MessageBox(_("データの更新が完了しました。"), _("完了"), wx.OK|wx.ICON_INFORMATION)

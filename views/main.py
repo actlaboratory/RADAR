@@ -435,7 +435,7 @@ class Events(BaseEvents):
 		"""番組検索ダイアログを表示"""
 		try:
 			if hasattr(self.parent, 'program_cache_controller'):
-				search_dialog = programSearchDialog.ProgramSearchDialog(self.parent.radio_manager)
+				search_dialog = programSearchDialog.ProgramSearchDialog(self.parent.radio_manager, self.parent)
 				search_dialog.Initialize()
 				search_dialog.Show()
 			else:
