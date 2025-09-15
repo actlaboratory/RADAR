@@ -72,6 +72,7 @@ class Dialog(BaseDialog):
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,views.ViewCreator.GridBagSizer,label=_("一般"),style=wx.ALL|wx.EXPAND,proportion=1,margin=20)
 		self.logLevel,dummy = creator.combobox(_("ログ記録レベル(&L)"),list(self.logLevelSelection.values()))
 		self.reader, static = creator.combobox(_("出力先(&O)"), list(self.readerSelection.values()))
+		self.minimizeonexit = creator.checkbox(_("終了時にタスクトレイに最小化(&M)"))
 
 		# view
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,views.ViewCreator.GridBagSizer,label=_("表示/言語"),style=wx.ALL,margin=20)
@@ -105,6 +106,7 @@ class Dialog(BaseDialog):
 		# general
 		self._setValue(self.reader,"speech","reader",configType.DIC,self.readerSelection)
 		self._setValue(self.logLevel,"general","log_level",configType.DIC,self.logLevelSelection)
+		self._setValue(self.minimizeonexit, "general", "minimizeOnExit", configType.BOOL, True)
 
 		# view
 		self._setValue(self.language,"general","language",configType.DIC,self.languageSelection)

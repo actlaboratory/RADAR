@@ -91,7 +91,7 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hFileMenu, {
 			"FILE_EXAMPLE": self.parent.events.example,
 			"FILE_RELOAD": self.parent.events.onReLoad,
-			"FILE_EXIT": self.parent.events.exit,
+			"EXIT": self.parent.events.exit,
 		})
 
 		# 機能メニュー
@@ -165,7 +165,43 @@ class Events(BaseEvents):
 		d.Initialize()
 		r = d.Show()
 
+	def OnExit(self, event):
+		if event.CanVeto():
+			# Alt+F4が押された
+			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
+				self.hide()
+				return
+			# 最小化設定が無効な場合、または他の終了方法の場合は通常通り終了
+			else:
+				#super().OnExit(event)
+				self.exit(event)
+				globalVars.app.tb.Destroy()
+				return
+
+	def hide(self):
+		self.parent.hFrame.Hide()
+		return
+
+	def show(self):
+		self.parent.hFrame.Show()
+		self.parent.hPanel.SetFocus()
+		return
+
 	def exit(self, event):
+		# 録音中かどうかを確認
+		from recorder import recorder_manager
+		active_recorders = recorder_manager.get_active_recorders()
+		
+		if active_recorders:
+			# 録音中の場合は確認ダイアログを表示
+			recording_count = len(active_recorders)
+			message = f"現在{recording_count}件の録音が進行中です。\nアプリケーションを終了しますか？\n\n録音を続行する場合は「キャンセル」を選択してください。"
+			
+			result = yesNoDialog(_("録音中の終了確認"), message)
+			if not result:
+				# キャンセルが選択された場合は終了しない
+				return
+		
 		try:
 			# 各ハンドラーのクリーンアップ
 			if hasattr(self.parent, 'recording_handler'):
@@ -175,8 +211,10 @@ class Events(BaseEvents):
 			self.log.info("Application cleanup completed")
 		except Exception as e:
 			self.log.error(f"Error during application cleanup: {e}")
-		
-		self.parent.hFrame.Close()
+
+		self.parent.hFrame.Close(True)
+		globalVars.app.tb.Destroy()
+		return
 
 	def option(self, event):
 		d = settingsDialog.Dialog()

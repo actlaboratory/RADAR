@@ -10,7 +10,7 @@ def getValueString(ref_id):
 
 dic={
 	"FILE_EXAMPLE":_("テストダイアログを閲覧")+"...",
-	"FILE_EXIT": _("終了"),
+	"EXIT": _("終了(&X)"),
 	"FILE_RELOAD":_("画面をリロード"),
 
 	"FUNCTION_PLAY_PLAY":_("再生"),
@@ -36,4 +36,7 @@ dic={
 
 	"HELP_UPDATE":_("最新バージョンを確認(&U)")+"...",
 	"HELP_VERSIONINFO":_("バージョン情報(&V)")+"...",
+
+	"SHOW":_("表示(&S)"),
+
 }

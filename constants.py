@@ -8,7 +8,7 @@ import os.path
 #アプリケーション基本情報
 APP_FULL_NAME = "RadikoPlayBack"#アプリケーションの完全な名前
 APP_NAME="RPB"#アプリケーションの名前
-APP_ICON = None
+APP_ICON = "app.ico"
 APP_VERSION="0.0.1"
 APP_LAST_RELEASE_DATE="9999-99-99"
 APP_COPYRIGHT_YEAR="20xx"
