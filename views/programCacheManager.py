@@ -1,0 +1,282 @@
+# -*- coding: utf-8 -*-
+# 番組表キャッシュ管理モジュール
+
+import sqlite3
+import os
+import datetime
+import threading
+from logging import getLogger
+import constants
+import globalVars
+from views import programmanager
+
+class ProgramCacheManager:
+    """番組表データのSQLite3キャッシュ管理クラス"""
+    
+    def __init__(self, db_path=None):
+        self.log = getLogger(f"{constants.LOG_PREFIX}.ProgramCacheManager")
+        self.db_path = db_path or constants.PROGRAM_CACHE_DB_NAME
+        self.lock = threading.Lock()
+        self.conn = None
+        self._init_database()
+    
+    def _init_database(self):
+        """データベースの初期化"""
+        try:
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self.conn.row_factory = sqlite3.Row  # 辞書形式でアクセス可能に
+            self._create_tables()
+            self._create_indexes()
+            self.log.info(f"Database initialized: {self.db_path}")
+        except sqlite3.Error as e:
+            self.log.error(f"Database initialization failed: {e}")
+            raise
+    
+    def _create_tables(self):
+        """テーブル作成"""
+        cursor = self.conn.cursor()
+        
+        # 番組データテーブル
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS programs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                station_id TEXT NOT NULL,
+                station_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                performer TEXT,
+                start_time DATETIME NOT NULL,
+                end_time DATETIME NOT NULL,
+                description TEXT,
+                date TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # キャッシュメタデータテーブル
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cache_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        self.conn.commit()
+    
+    def _create_indexes(self):
+        """検索用インデックス作成"""
+        cursor = self.conn.cursor()
+        
+        # 検索用インデックス
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_title ON programs(title)",
+            "CREATE INDEX IF NOT EXISTS idx_performer ON programs(performer)",
+            "CREATE INDEX IF NOT EXISTS idx_time_range ON programs(start_time, end_time)",
+            "CREATE INDEX IF NOT EXISTS idx_station_date ON programs(station_id, date)",
+            "CREATE INDEX IF NOT EXISTS idx_station_name ON programs(station_name)",
+            "CREATE INDEX IF NOT EXISTS idx_fulltext ON programs(title, performer, description)"
+        ]
+        
+        for index_sql in indexes:
+            cursor.execute(index_sql)
+        
+        self.conn.commit()
+    
+    def update_programs_data(self, programs_data, date):
+        """番組データの一括更新"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                
+                # 既存データを削除（指定日付のデータのみ）
+                cursor.execute("DELETE FROM programs WHERE date = ?", (date,))
+                
+                # 新しいデータを挿入
+                insert_data = []
+                for station_id, station_data in programs_data.items():
+                    station_name = station_data.get('name', '')
+                    for program in station_data.get('programs', []):
+                        insert_data.append((
+                            station_id,
+                            station_name,
+                            program.get('title', ''),
+                            program.get('performer', ''),
+                            program.get('start_time', ''),
+                            program.get('end_time', ''),
+                            program.get('description', ''),
+                            date
+                        ))
+                
+                cursor.executemany('''
+                    INSERT INTO programs 
+                    (station_id, station_name, title, performer, start_time, end_time, description, date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', insert_data)
+                
+                # メタデータを更新
+                cursor.execute('''
+                    INSERT OR REPLACE INTO cache_metadata (key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                ''', ('last_update', datetime.datetime.now().isoformat()))
+                
+                self.conn.commit()
+                self.log.info(f"Updated {len(insert_data)} programs for date {date}")
+                
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to update programs data: {e}")
+                self.conn.rollback()
+                raise
+    
+    def search_programs(self, search_criteria):
+        """番組検索実行"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                
+                # 検索条件の構築
+                where_conditions = []
+                params = []
+                
+                if search_criteria.get('title'):
+                    where_conditions.append("title LIKE ?")
+                    params.append(f"%{search_criteria['title']}%")
+                
+                if search_criteria.get('performer'):
+                    where_conditions.append("performer LIKE ?")
+                    params.append(f"%{search_criteria['performer']}%")
+                
+                if search_criteria.get('start_time'):
+                    where_conditions.append("start_time >= ?")
+                    params.append(search_criteria['start_time'])
+                
+                if search_criteria.get('end_time'):
+                    where_conditions.append("end_time <= ?")
+                    params.append(search_criteria['end_time'])
+                
+                if search_criteria.get('station_name'):
+                    where_conditions.append("station_name LIKE ?")
+                    params.append(f"%{search_criteria['station_name']}%")
+                
+                if search_criteria.get('date'):
+                    where_conditions.append("date = ?")
+                    params.append(search_criteria['date'])
+                
+                # 検索クエリの構築
+                where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+                limit = search_criteria.get('limit', 100)
+                
+                query = f'''
+                    SELECT station_id, station_name, title, performer, 
+                           start_time, end_time, description, date
+                    FROM programs 
+                    WHERE {where_clause}
+                    ORDER BY start_time
+                    LIMIT ?
+                '''
+                params.append(limit)
+                
+                cursor.execute(query, params)
+                results = cursor.fetchall()
+                
+                # 辞書形式に変換
+                programs = []
+                for row in results:
+                    programs.append({
+                        'station_id': row['station_id'],
+                        'station_name': row['station_name'],
+                        'title': row['title'],
+                        'performer': row['performer'],
+                        'start_time': row['start_time'],
+                        'end_time': row['end_time'],
+                        'description': row['description'],
+                        'date': row['date']
+                    })
+                
+                self.log.info(f"Search completed: {len(programs)} results found")
+                return programs
+                
+            except sqlite3.Error as e:
+                self.log.error(f"Search failed: {e}")
+                return []
+    
+    def get_program_count(self, date=None):
+        """キャッシュされた番組数を取得"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                if date:
+                    cursor.execute("SELECT COUNT(*) FROM programs WHERE date = ?", (date,))
+                else:
+                    cursor.execute("SELECT COUNT(*) FROM programs")
+                return cursor.fetchone()[0]
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to get program count: {e}")
+                return 0
+    
+    def get_last_update_time(self):
+        """最終更新時刻を取得"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT value FROM cache_metadata WHERE key = 'last_update'")
+                result = cursor.fetchone()
+                return result[0] if result else None
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to get last update time: {e}")
+                return None
+    
+    def cleanup_old_data(self, days=7):
+        """古いデータの削除"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cutoff_date = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime('%Y%m%d')
+                cursor.execute("DELETE FROM programs WHERE date < ?", (cutoff_date,))
+                deleted_count = cursor.rowcount
+                self.conn.commit()
+                self.log.info(f"Cleaned up {deleted_count} old program records")
+                return deleted_count
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to cleanup old data: {e}")
+                return 0
+    
+    def is_cache_valid(self, date, max_age_hours=1):
+        """キャッシュの有効性をチェック"""
+        try:
+            last_update = self.get_last_update_time()
+            if not last_update:
+                self.log.debug("No last update time found, cache invalid")
+                return False
+            
+            # 日付の形式をチェック
+            if len(last_update) < 8:
+                self.log.warning(f"Invalid last update format: {last_update}")
+                return False
+            
+            # 指定された日付のデータが存在するかチェック
+            program_count = self.get_program_count(date)
+            if program_count == 0:
+                self.log.debug(f"No programs found for date {date}, cache invalid")
+                return False
+            
+            last_update_time = datetime.datetime.fromisoformat(last_update)
+            age = datetime.datetime.now() - last_update_time
+            is_valid = age.total_seconds() < (max_age_hours * 3600)
+            
+            self.log.debug(f"Cache validity check: last_update={last_update}, age={age.total_seconds()/3600:.1f}h, valid={is_valid}")
+            return is_valid
+            
+        except Exception as e:
+            self.log.error(f"Failed to check cache validity: {e}")
+            return False
+    
+    def close(self):
+        """データベース接続を閉じる"""
+        if self.conn:
+            self.conn.close()
+            self.log.info("Database connection closed")
+    
+    def __del__(self):
+        """デストラクタ"""
+        self.close()

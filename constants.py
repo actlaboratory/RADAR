@@ -25,6 +25,7 @@ LOG_FILE_NAME="RPB.log"
 SETTING_FILE_NAME="settings.ini"
 KEYMAP_FILE_NAME="keymap.ini"
 FFMPEG_LOG_FILE = "ffmpeg_log.txt"
+PROGRAM_CACHE_DB_NAME = "program_cache.db"
 
 
 
