@@ -105,6 +105,18 @@ class RecordingHandler:
                 title = re.sub(r'[<>:"/\\|?*]', '_', title)  # 無効な文字を置換
                 title = title.strip()
 
+            # 重複録音チェック
+            if recorder_manager.is_duplicate_recording(self.events.selected, title):
+                self.log.warning(f"Duplicate recording detected: {self.parent.radio_manager.stid[self.events.selected]} - {title}")
+                # 既存の録音情報を取得
+                existing_info = recorder_manager.get_recording_info(self.events.selected, title)
+                if existing_info:
+                    start_time_str = datetime.datetime.fromtimestamp(existing_info["start_time"]).strftime("%H:%M")
+                    errorDialog(_(f"同じ番組の録音が既に開始されています。\n\n放送局: {self.parent.radio_manager.stid[self.events.selected]}\n番組: {title}\n開始時刻: {start_time_str}"))
+                else:
+                    errorDialog(_(f"同じ番組の録音が既に開始されています。\n\n放送局: {self.parent.radio_manager.stid[self.events.selected]}\n番組: {title}"))
+                return
+
             # ストリームURLの取得
             self.parent.radio_manager.get_streamUrl(self.events.selected, self.parent.progs)
             if not self.parent.radio_manager.m3u8:
@@ -144,7 +156,7 @@ class RecordingHandler:
                 except Exception as e:
                     self.log.error(f"Failed to send recording completion notification: {e}")
             
-            recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype, on_recording_complete)
+            recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype, on_recording_complete, self.events.selected, title)
             if recorder:
                 self.log.info(f"Recording started: {title}")
                 self._update_recording_menu_for_station(self.events.selected)

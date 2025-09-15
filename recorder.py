@@ -202,7 +202,7 @@ class RecorderManager:
         self.lock = threading.Lock()
         self.max_hours = MAX_RECORDING_HOURS
 
-    def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None):
+    def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None, station_id=None, program_title=None):
         """録音を開始"""
         try:
             def on_error(rec, error):
@@ -215,7 +215,10 @@ class RecorderManager:
                     "info": info,
                     "retry_count": 0,
                     "end_time": end_time,
-                    "on_complete": on_complete
+                    "on_complete": on_complete,
+                    "station_id": station_id,
+                    "program_title": program_title,
+                    "start_time": time.time()
                 })
             recorder.start()
             # 終了タイマー
@@ -347,6 +350,30 @@ class RecorderManager:
                     stopped_count += 1
                     self.logger.info(f"Stopped recording for station {station_id}: {rec_entry['info']}")
             return stopped_count
+
+    def is_duplicate_recording(self, station_id, program_title):
+        """同じ放送局・同じ番組の重複録音をチェック"""
+        with self.lock:
+            for rec_entry in self.recorders:
+                if (rec_entry["recorder"].is_recording() and 
+                    rec_entry.get("station_id") == station_id and 
+                    rec_entry.get("program_title") == program_title):
+                    return True
+            return False
+
+    def get_recording_info(self, station_id, program_title):
+        """指定された放送局・番組の録音情報を取得"""
+        with self.lock:
+            for rec_entry in self.recorders:
+                if (rec_entry["recorder"].is_recording() and 
+                    rec_entry.get("station_id") == station_id and 
+                    rec_entry.get("program_title") == program_title):
+                    return {
+                        "info": rec_entry["info"],
+                        "start_time": rec_entry.get("start_time"),
+                        "end_time": rec_entry["end_time"]
+                    }
+            return None
 
     def cleanup(self):
         """クリーンアップ"""
@@ -605,7 +632,9 @@ class ScheduleManager:
                     info, 
                     end_time, 
                     schedule.filetype,
-                    on_complete=on_recording_complete
+                    on_complete=on_recording_complete,
+                    station_id=schedule.station_id,
+                    program_title=schedule.program_title
                 )
                 
                 if recorder:
