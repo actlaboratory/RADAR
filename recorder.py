@@ -81,8 +81,10 @@ class Recorder:
                 "-vn", f"{self.output_path}.{self.filetype}",
                 "-y"
             ]
+            self.logger.debug(f"FFmpeg command: {' '.join(cmd)}")
             self.process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             self.recording = True
+            self.logger.info(f"FFmpeg process started with PID: {self.process.pid}")
             threading.Thread(target=self._monitor, daemon=True).start()
         except Exception as e:
             self.logger.error(f"Failed to start recording: {e}")
@@ -102,17 +104,18 @@ class Recorder:
                 
                 # プロセスを終了
                 self.process.terminate()
+                self.logger.info(f"Process termination signal sent for: {self.output_path}.{self.filetype}")
                 
                 # 終了を待つ
                 try:
                     self.process.wait(timeout=5)
-                    self.logger.debug("Process terminated gracefully")
+                    self.logger.info(f"Process terminated gracefully: {self.output_path}.{self.filetype}")
                 except subprocess.TimeoutExpired:
                     self.logger.warning("Terminate failed, killing process")
                     try:
                         self.process.kill()
                         self.process.wait(timeout=2)
-                        self.logger.debug("Process killed forcefully")
+                        self.logger.info(f"Process killed forcefully: {self.output_path}.{self.filetype}")
                     except subprocess.TimeoutExpired:
                         self.logger.error("Failed to kill process even after force kill")
                     except Exception as e:
@@ -124,21 +127,23 @@ class Recorder:
         # 状態をリセット
         self.recording = False
         self.process = None
-        self.logger.info(f"Recording stopped: {self.output_path}.{self.filetype}")
+        self.logger.info(f"Recording stopped and instance destroyed: {self.output_path}.{self.filetype}")
 
     def _monitor(self):
         """録音プロセスの監視"""
         try:
+            self.logger.info(f"Starting process monitoring for: {self.output_path}.{self.filetype}")
             while not self._stop_event.is_set():
                 if self.process.poll() is not None:
                     # プロセスが終了
                     if self._stop_event.is_set():
                         # 正常終了（stop()が呼ばれた場合）
-                        self.logger.debug("Recording process stopped normally")
+                        self.logger.info(f"Recording process stopped normally: {self.output_path}.{self.filetype}")
                         break
                     else:
                         # 異常終了
                         stderr = self.process.stderr.read().decode(errors="ignore") if self.process.stderr else ""
+                        self.logger.error(f"Recording process exited unexpectedly: {self.output_path}.{self.filetype}, stderr: {stderr}")
                         raise RecorderError(f"Recording process exited unexpectedly: {stderr}")
                 time.sleep(1)
         except Exception as e:
@@ -146,6 +151,7 @@ class Recorder:
             self._notify_error(e)
         finally:
             self.recording = False
+            self.logger.info(f"Process monitoring ended for: {self.output_path}.{self.filetype}")
 
     def _notify_error(self, error):
         """エラーを管理者に通知"""
@@ -231,9 +237,18 @@ class RecorderManager:
         recorder.stop()
         self.logger.info(f"Recorder stopped by schedule: {recorder.output_path}")
         
+        # レコーダーインスタンスをリストから削除
+        with self.lock:
+            self.recorders = [r for r in self.recorders if r["recorder"] != recorder]
+            self.logger.info(f"Recorder instance removed from manager: {recorder.output_path}")
+        
         # 録音完了コールバックを呼び出し
         if on_complete:
-            on_complete(recorder)
+            try:
+                on_complete(recorder)
+                self.logger.info(f"Recording completion callback executed successfully: {recorder.output_path}")
+            except Exception as e:
+                self.logger.error(f"Error in recording completion callback: {e}")
 
     def _handle_error(self, recorder, error, info, stream_url, output_path, end_time, filetype):
         """エラー処理とリトライ"""
@@ -260,17 +275,25 @@ class RecorderManager:
                 self.start_recording(stream_url, new_path, info, end_time, filetype, on_complete)
             else:
                 self.logger.error(f"Recording failed after {MAX_RETRY} attempts: {info}")
-                notification.notify(title="録音失敗", message=f"{info} の録音に失敗しました。", app_name="rpb", timeout=10)
+                try:
+                    notification.notify(title="録音失敗", message=f"{info} の録音に失敗しました。", app_name="rpb", timeout=10)
+                    self.logger.info(f"Recording failure notification sent successfully after max retries: {info}")
+                except Exception as e:
+                    self.logger.error(f"Failed to send recording failure notification after max retries: {e}")
 
     def stop_all(self):
         """全ての録音を停止"""
         with self.lock:
+            active_count = len(self.recorders)
+            self.logger.info(f"Stopping all {active_count} active recorders")
+            
             # 停止処理を並列で実行
             stop_threads = []
             for rec_entry in self.recorders:
                 def stop_recorder(rec):
                     try:
                         rec.stop()
+                        self.logger.info(f"Recorder stopped successfully: {rec_entry['info']}")
                     except Exception as e:
                         self.logger.error(f"Error stopping recorder: {e}")
                 
@@ -283,16 +306,17 @@ class RecorderManager:
                 thread.join(timeout=10)
             
             self.recorders.clear()
-        self.logger.info("All recorders stopped.")
+            self.logger.info(f"All {active_count} recorders stopped and instances cleared.")
 
     def stop_recorder(self, recorder):
         """指定された録音を停止"""
         with self.lock:
             for i, rec_entry in enumerate(self.recorders):
                 if rec_entry["recorder"] == recorder:
+                    self.logger.info(f"Stopping specific recorder: {rec_entry['info']}")
                     rec_entry["recorder"].stop()
                     del self.recorders[i]
-                    self.logger.info(f"Recorder stopped: {rec_entry['info']}")
+                    self.logger.info(f"Recorder stopped and removed from manager: {rec_entry['info']}")
                     break
 
     def get_active_recorders(self):
@@ -326,7 +350,9 @@ class RecorderManager:
 
     def cleanup(self):
         """クリーンアップ"""
+        self.logger.info("Starting RecorderManager cleanup")
         self.stop_all()
+        self.logger.info("RecorderManager cleanup completed")
 
 class RecordingSchedule:
     """録音予約"""
@@ -562,12 +588,16 @@ class ScheduleManager:
                 def on_recording_complete(recorder):
                     schedule.set_status(RECORDING_STATUS_COMPLETED)
                     self.save_schedules()
-                    notification.notify(
-                        title='録音完了',
-                        message=f'{schedule.program_title} の録音が完了しました。',
-                        app_name='rpb',
-                        timeout=10
-                    )
+                    try:
+                        notification.notify(
+                            title='録音完了',
+                            message=f'{schedule.program_title} の録音が完了しました。',
+                            app_name='rpb',
+                            timeout=10
+                        )
+                        self.logger.info(f"Recording completion notification sent successfully: {schedule.program_title}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to send recording completion notification: {e}")
                 
                 recorder = self.recorder_manager.start_recording(
                     stream_url, 
@@ -592,22 +622,30 @@ class ScheduleManager:
                     else:
                         message = f'{schedule.program_title} の録音を開始しました。（{schedule_count}件の録音中）'
                     
-                    notification.notify(
-                        title='録音開始',
-                        message=message,
-                        app_name='rpb',
-                        timeout=10
-                    )
+                    try:
+                        notification.notify(
+                            title='録音開始',
+                            message=message,
+                            app_name='rpb',
+                            timeout=10
+                        )
+                        self.logger.info(f"Recording start notification sent successfully: {schedule.program_title}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to send recording start notification: {e}")
                 else:
                     # 録音開始に失敗
                     schedule.set_status(RECORDING_STATUS_FAILED)
                     self.save_schedules()
-                    notification.notify(
-                        title='録音失敗',
-                        message=f'{schedule.program_title} の録音開始に失敗しました。',
-                        app_name='rpb',
-                        timeout=10
-                    )
+                    try:
+                        notification.notify(
+                            title='録音失敗',
+                            message=f'{schedule.program_title} の録音開始に失敗しました。',
+                            app_name='rpb',
+                            timeout=10
+                        )
+                        self.logger.info(f"Recording failure notification sent successfully: {schedule.program_title}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to send recording failure notification: {e}")
                 
             except Exception as e:
                 self.logger.error(f"Failed to execute schedule {schedule.id}: {e}")
@@ -618,19 +656,27 @@ class ScheduleManager:
                 
                 # 認証エラーの場合はユーザーに通知
                 if "403" in str(e) or "Forbidden" in str(e) or "access denied" in str(e):
-                    notification.notify(
-                        title='録音失敗',
-                        message=f'{schedule.program_title} の録音に失敗しました。認証エラーが発生しました。',
-                        app_name='rpb',
-                        timeout=10
-                    )
+                    try:
+                        notification.notify(
+                            title='録音失敗',
+                            message=f'{schedule.program_title} の録音に失敗しました。認証エラーが発生しました。',
+                            app_name='rpb',
+                            timeout=10
+                        )
+                        self.logger.info(f"Recording authentication error notification sent successfully: {schedule.program_title}")
+                    except Exception as notify_e:
+                        self.logger.error(f"Failed to send recording authentication error notification: {notify_e}")
                 else:
-                    notification.notify(
-                        title='録音失敗',
-                        message=f'{schedule.program_title} の録音に失敗しました。エラー: {str(e)[:100]}',
-                        app_name='rpb',
-                        timeout=10
-                    )
+                    try:
+                        notification.notify(
+                            title='録音失敗',
+                            message=f'{schedule.program_title} の録音に失敗しました。エラー: {str(e)[:100]}',
+                            app_name='rpb',
+                            timeout=10
+                        )
+                        self.logger.info(f"Recording error notification sent successfully: {schedule.program_title}")
+                    except Exception as notify_e:
+                        self.logger.error(f"Failed to send recording error notification: {notify_e}")
         
         # スレッドプールで実行
         self.executor.submit(execute_async)

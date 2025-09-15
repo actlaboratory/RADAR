@@ -133,24 +133,32 @@ class RecordingHandler:
             # 録音完了時のコールバック
             def on_recording_complete(recorder):
                 self._update_recording_menu_for_station(self.events.selected)
-                notification.notify(
-                    title='録音完了',
-                    message=f'{title} の録音が完了しました。',
-                    app_name='rpb',
-                    timeout=10
-                )
+                try:
+                    notification.notify(
+                        title='録音完了',
+                        message=f'{title} の録音が完了しました。',
+                        app_name='rpb',
+                        timeout=10
+                    )
+                    self.log.info(f"Recording completion notification sent successfully: {title}")
+                except Exception as e:
+                    self.log.error(f"Failed to send recording completion notification: {e}")
             
             recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype, on_recording_complete)
             if recorder:
                 self.log.info(f"Recording started: {title}")
                 self._update_recording_menu_for_station(self.events.selected)
                 # 録音開始時の通知
-                notification.notify(
-                    title='録音開始',
-                    message=f'{title} の録音を開始しました。',
-                    app_name='rpb',
-                    timeout=10
-                )
+                try:
+                    notification.notify(
+                        title='録音開始',
+                        message=f'{title} の録音を開始しました。',
+                        app_name='rpb',
+                        timeout=10
+                    )
+                    self.log.info(f"Recording start notification sent successfully: {title}")
+                except Exception as e:
+                    self.log.error(f"Failed to send recording start notification: {e}")
             else:
                 self.log.error("Recording failed to start")
                 errorDialog(_("録音の開始に失敗しました。"))
@@ -198,12 +206,16 @@ class RecordingHandler:
             
             if stopped_count > 0:
                 self.log.info(f"Stopped {stopped_count} recording(s) for station: {station_id}")
-                notification.notify(
-                    title='録音停止',
-                    message=f'{self.parent.radio_manager.stid.get(station_id, station_id)} の録音を停止しました。',
-                    app_name='rpb',
-                    timeout=10
-                )
+                try:
+                    notification.notify(
+                        title='録音停止',
+                        message=f'{self.parent.radio_manager.stid.get(station_id, station_id)} の録音を停止しました。',
+                        app_name='rpb',
+                        timeout=10
+                    )
+                    self.log.info(f"Recording stop notification sent successfully for station: {station_id}")
+                except Exception as e:
+                    self.log.error(f"Failed to send recording stop notification: {e}")
             else:
                 self.log.warning(f"No active recordings found for station: {station_id}")
             

@@ -140,12 +140,16 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             else:
                 message = f'録音がスケジュールされました。録音は、{self.stdt}に開始されます。（{total_schedules}件の録音予約中）'
             
-            notification.notify(
-                title='録音準備', 
-                message=message, 
-                app_name='rpb', 
-                timeout=10
-            )
+            try:
+                notification.notify(
+                    title='録音準備', 
+                    message=message, 
+                    app_name='rpb', 
+                    timeout=10
+                )
+                self.log.info(f"Recording schedule notification sent successfully: {program_title}")
+            except Exception as e:
+                self.log.error(f"Failed to send recording schedule notification: {e}")
             
             self.log.info(f"Recording scheduled successfully: {program_title}")
             # ダイアログを閉じてメイン画面に戻る
