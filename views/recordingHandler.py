@@ -163,6 +163,14 @@ class RecordingHandler:
             if recorder:
                 self.log.info(f"Recording started: {title}")
                 self._update_recording_menu_for_station(self.events.selected)
+                
+                # スクリーンリーダーで録音開始を通知
+                try:
+                    station_name = self.parent.radio_manager.stid.get(self.events.selected, self.events.selected)
+                    self.parent.app.say(f"録音開始: {station_name} {title}", interrupt=True)
+                except Exception as e:
+                    self.log.error(f"Failed to announce recording start: {e}")
+                
                 # 録音開始時の通知
                 try:
                     notification.notify(
@@ -221,6 +229,14 @@ class RecordingHandler:
             
             if stopped_count > 0:
                 self.log.info(f"Stopped {stopped_count} recording(s) for station: {station_id}")
+                
+                # スクリーンリーダーで録音停止を通知
+                try:
+                    station_name = self.parent.radio_manager.stid.get(station_id, station_id)
+                    self.parent.app.say(f"録音停止: {station_name}", interrupt=True)
+                except Exception as e:
+                    self.log.error(f"Failed to announce recording stop: {e}")
+                
                 try:
                     notification.notify(
                         title='録音停止',

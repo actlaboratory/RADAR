@@ -192,6 +192,13 @@ class RadioManager:
         self.player()
         self.update_program_info()
         self.events.playing = True
+        
+        # スクリーンリーダーで再生開始を通知
+        try:
+            station_name = self.stid.get(id, id)
+            self.parent.app.say(f"再生開始: {station_name}", interrupt=True)
+        except Exception as e:
+            self.log.error(f"Failed to announce playback start: {e}")
 
     def stop(self):
         """再生停止"""
@@ -201,6 +208,12 @@ class RadioManager:
         self.updateInfoTimer.Stop()
         self.log.debug("timer is stoped!")
         self.events.playing = False
+        
+        # スクリーンリーダーで再生停止を通知
+        try:
+            self.parent.app.say("再生停止", interrupt=True)
+        except Exception as e:
+            self.log.error(f"Failed to announce playback stop: {e}")
 
     def update_program_info(self):
         """番組情報更新タイマーを開始"""
