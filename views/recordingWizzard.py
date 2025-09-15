@@ -111,7 +111,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             from recorder import create_recording_dir
             station_dir = self.radioname.replace(" ", "_")
             dirs = create_recording_dir(station_dir, program_title)
-            output_path = os.path.join(dirs, f"{str(datetime.date.today()) + replace}")
+            
+            # タイムスタンプを追加してファイル名重複を回避
+            timestamp = self.stdt.strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(dirs, f"{timestamp}_{replace}")
             
             # 録音予約を作成
             schedule = RecordingSchedule(

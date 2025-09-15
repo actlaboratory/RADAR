@@ -129,7 +129,10 @@ class RecordingHandler:
             station_dir = self.parent.radio_manager.stid[self.events.selected].replace(" ", "_")
             from recorder import create_recording_dir
             dirs = create_recording_dir(station_dir, title)
-            file_path = f"{dirs}\{str(datetime.date.today())}_{replace}"
+            
+            # タイムスタンプを追加してファイル名重複を回避
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_path = f"{dirs}\{timestamp}_{replace}"
             
             # ファイルタイプを取得（現在のメニュー選択状態から）
             if self.parent.menu.hRecordingFileTypeMenu.IsChecked(10001):  # WAV
