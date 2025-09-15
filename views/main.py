@@ -434,12 +434,10 @@ class Events(BaseEvents):
 	def onProgramSearch(self, event):
 		"""番組検索ダイアログを表示"""
 		try:
-			if hasattr(self.parent, 'program_cache_controller'):
-				search_dialog = programSearchDialog.ProgramSearchDialog(self.parent.radio_manager, self.parent)
-				search_dialog.Initialize()
-				search_dialog.Show()
-			else:
-				errorDialog(_("番組検索機能が利用できません。"))
+			# globalVars.appを使用して完全に独立した設計
+			search_dialog = programSearchDialog.ProgramSearchDialog()
+			search_dialog.Initialize()
+			search_dialog.Show()
 		except Exception as e:
 			self.parent.log.error(f"Failed to open program search dialog: {e}")
 			errorDialog(_("番組検索ダイアログの表示に失敗しました。"))

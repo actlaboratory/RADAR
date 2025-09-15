@@ -15,18 +15,22 @@ from views.programDataCollector import ProgramDataCollector
 class ProgramSearchDialog(BaseDialog):
     """番組検索ダイアログ"""
     
-    def __init__(self, radio_manager=None, parent=None):
+    def __init__(self, radio_manager=None):
         super().__init__("ProgramSearchDialog")
-        self.radio_manager = radio_manager
-        self.parent = parent
+        # radio_managerは引数で受け取るか、globalVars.appから取得
+        try:
+            self.radio_manager = radio_manager or getattr(globalVars.app.hMainView, 'radio_manager', None)
+        except (AttributeError, NameError):
+            self.radio_manager = radio_manager
+        
         self.log = getLogger(f"{constants.LOG_PREFIX}.ProgramSearchDialog")
         
         # 検索エンジンの初期化
         self.cache_manager = ProgramCacheManager()
         self.search_engine = ProgramSearchEngine(self.cache_manager)
         self.data_collector = ProgramDataCollector(self.cache_manager)
-        if radio_manager:
-            self.data_collector.set_radio_manager(radio_manager)
+        if self.radio_manager:
+            self.data_collector.set_radio_manager(self.radio_manager)
         
         # 検索結果
         self.search_results = []
@@ -228,12 +232,15 @@ class ProgramSearchDialog(BaseDialog):
                     # 1週間分のデータが不完全な場合は強制更新
                     if not self.cache_manager.is_weekly_cache_complete():
                         self.log.info("Weekly cache is incomplete, forcing weekly data update")
-                        if hasattr(self.parent, 'program_cache_controller'):
-                            success = self.parent.program_cache_controller.ensure_weekly_data()
-                            if success:
-                                self.log.info("Weekly data update completed successfully")
-                            else:
-                                self.log.warning("Weekly data update failed")
+                        try:
+                            if hasattr(globalVars.app.hMainView, 'program_cache_controller'):
+                                success = globalVars.app.hMainView.program_cache_controller.ensure_weekly_data()
+                                if success:
+                                    self.log.info("Weekly data update completed successfully")
+                                else:
+                                    self.log.warning("Weekly data update failed")
+                        except (AttributeError, NameError) as e:
+                            self.log.warning(f"Failed to access program_cache_controller: {e}")
                 else:
                     self.log.warning("No database summary available")
             
@@ -531,9 +538,12 @@ class ProgramSearchDialog(BaseDialog):
         
         # 1週間分のデータを強制更新
         success = False
-        if hasattr(self.parent, 'program_cache_controller'):
-            self.log.info("Starting forced weekly data update")
-            success = self.parent.program_cache_controller.force_weekly_update()
+        try:
+            if hasattr(globalVars.app.hMainView, 'program_cache_controller'):
+                self.log.info("Starting forced weekly data update")
+                success = globalVars.app.hMainView.program_cache_controller.force_weekly_update()
+        except (AttributeError, NameError) as e:
+            self.log.warning(f"Failed to access program_cache_controller: {e}")
         
         # フォールバック: 今日のデータのみ収集
         if not success:

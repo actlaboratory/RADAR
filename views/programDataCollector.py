@@ -83,6 +83,77 @@ class ProgramDataCollector:
             self.log.error(f"Data collection failed: {e}")
             return False
     
+    def collect_weekly_data(self, start_date=None, force_refresh=False):
+        """1週間分のデータを効率的に収集"""
+        if not self.radio_manager:
+            self.log.error("RadioManager not set")
+            return False
+        
+        if start_date is None:
+            # 今日（0:00:00）を基準にする
+            today = datetime.datetime.now()
+            start_date = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # 1週間分の日付リストを生成
+        date_list = []
+        for i in range(7):
+            target_date = start_date + datetime.timedelta(days=i)
+            date_list.append(target_date.strftime('%Y%m%d'))
+        
+        self.log.info(f"Starting weekly data collection from {date_list[0]} to {date_list[-1]}")
+        
+        # 全放送局のIDを取得
+        if not self.radio_manager or not hasattr(self.radio_manager, 'stid') or not self.radio_manager.stid:
+            self.log.error("RadioManager or station list not available")
+            return False
+        
+        station_ids = list(self.radio_manager.stid.keys())
+        self.log.info(f"Collecting data for {len(station_ids)} stations across 7 days")
+        
+        success_count = 0
+        total_days = len(date_list)
+        
+        for date_str in date_list:
+            try:
+                self.log.info(f"Collecting data for date: {date_str}")
+                
+                # 各日付のデータを収集
+                collected_data = {}
+                day_success_count = 0
+                
+                for station_id in station_ids:
+                    try:
+                        station_data = self._collect_station_data(station_id, date_str)
+                        if station_data:
+                            collected_data[station_id] = station_data
+                            day_success_count += 1
+                        
+                        # API制限を考慮して少し待機
+                        time.sleep(0.05)  # 週間収集では少し短縮
+                        
+                    except Exception as e:
+                        self.log.warning(f"Failed to collect data for station {station_id} on {date_str}: {e}")
+                        continue
+                
+                # データをキャッシュに保存
+                if collected_data:
+                    self.cache_manager.update_programs_data(collected_data, date_str)
+                    self.log.info(f"Successfully collected data for {day_success_count}/{len(station_ids)} stations on {date_str}")
+                    success_count += 1
+                else:
+                    self.log.warning(f"No data collected for date {date_str}")
+                
+            except Exception as e:
+                self.log.error(f"Error collecting data for date {date_str}: {e}")
+                continue
+        
+        if success_count > 0:
+            self.log.info(f"Weekly data collection completed: {success_count}/{total_days} days successful")
+            return True
+        else:
+            self.log.error("Weekly data collection failed for all dates")
+            return False
+    
     def _collect_station_data(self, station_id, date):
         """単一放送局のデータを収集"""
         try:
