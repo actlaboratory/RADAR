@@ -6,8 +6,8 @@ import wx
 import os.path
 
 #アプリケーション基本情報
-APP_FULL_NAME = "RadikoPlayBack"#アプリケーションの完全な名前
-APP_NAME="RPB"#アプリケーションの名前
+APP_FULL_NAME = "Radiko Archive & Record"#アプリケーションの完全な名前
+APP_NAME="RADAR"#アプリケーションの名前
 APP_ICON = "app.ico"
 APP_VERSION="0.0.1"
 APP_LAST_RELEASE_DATE="9999-99-99"
@@ -21,7 +21,7 @@ SUPPORTING_LANGUAGE={"ja-JP": "日本語","en-US": "English"}
 FFMPEG_PATH = os.path.abspath("bin\\ffmpeg.exe")
 #各種ファイル名
 LOG_PREFIX="app"
-LOG_FILE_NAME="RPB.log"
+LOG_FILE_NAME="RADAR.log"
 SETTING_FILE_NAME="settings.ini"
 KEYMAP_FILE_NAME="keymap.ini"
 FFMPEG_LOG_FILE = "ffmpeg_log.txt"
@@ -42,7 +42,7 @@ FULL_CHECKED=wx.CHK_CHECKED
 BASE_PACKAGE_URL = None
 PACKAGE_CONTAIN_ITEMS = ()#パッケージに含めたいファイルやfolderがあれば指定
 NEED_HOOKS = ()#pyinstallerのhookを追加したい場合は指定
-STARTUP_FILE = "rpb.py"#起動用ファイルを指定
+STARTUP_FILE = "RADAR.py"#起動用ファイルを指定
 UPDATER_URL = "https://github.com/actlaboratory/updater/releases/download/1.0.0/updater.zip"
 
 # update情報
