@@ -26,12 +26,28 @@ class ProgramSearchDialog(BaseDialog):
         
         self.log = getLogger(f"{constants.LOG_PREFIX}.ProgramSearchDialog")
         
-        # 検索エンジンの初期化
-        self.cache_manager = ProgramCacheManager()
-        self.search_engine = ProgramSearchEngine(self.cache_manager)
-        self.data_collector = ProgramDataCollector(self.cache_manager)
-        if self.radio_manager:
-            self.data_collector.set_radio_manager(self.radio_manager)
+        # 起動時に初期化済みのキャッシュ/検索エンジンを優先的に利用
+        self.cache_manager = None
+        self.search_engine = None
+        self.data_collector = None
+        try:
+            controller = getattr(globalVars.app.hMainView, 'program_cache_controller', None)
+            if controller and getattr(controller, 'cache_manager', None) and getattr(controller, 'search_engine', None):
+                self.cache_manager = controller.cache_manager
+                self.search_engine = controller.search_engine
+                self.log.debug("Using shared cache/search engine from ProgramCacheController")
+        except Exception:
+            pass
+
+        # フォールバック（万一起動時の初期化が未実行/失敗している場合のみ）
+        if self.cache_manager is None:
+            self.cache_manager = ProgramCacheManager()
+        if self.search_engine is None:
+            self.search_engine = ProgramSearchEngine(self.cache_manager)
+
+        # データ収集器は必要時にのみ生成（更新フォールバック用）
+        # radio_manager がある場合は設定する
+        # 実際の生成は _perform_data_refresh のフォールバックで行う
         
         # 検索結果
         self.search_results = []
@@ -526,27 +542,27 @@ class ProgramSearchDialog(BaseDialog):
     
     def _perform_data_refresh(self):
         """データ更新の実際の処理"""
-        # キャッシュを無効化して強制更新
-        if hasattr(self, 'cache_manager'):
-            # キャッシュメタデータをクリア
-            cursor = self.cache_manager.conn.cursor()
-            cursor.execute("DELETE FROM cache_metadata WHERE key = 'last_update'")
-            self.cache_manager.conn.commit()
-            self.log.info("Cache metadata cleared for force refresh")
-        
-        # 1週間分のデータを強制更新
+        # 起動時コントローラに更新を委譲
         success = False
         try:
-            if hasattr(globalVars.app.hMainView, 'program_cache_controller'):
-                self.log.info("Starting forced weekly data update")
-                success = globalVars.app.hMainView.program_cache_controller.force_weekly_update()
-        except (AttributeError, NameError) as e:
-            self.log.warning(f"Failed to access program_cache_controller: {e}")
-        
-        # フォールバック: 今日のデータのみ収集
+            controller = getattr(globalVars.app.hMainView, 'program_cache_controller', None)
+            if controller and hasattr(controller, 'force_weekly_update'):
+                self.log.info("Requesting ProgramCacheController to force weekly update")
+                success = controller.force_weekly_update()
+        except Exception as e:
+            self.log.warning(f"Controller update failed: {e}")
+
+        # フォールバック: 最低限の当日データを収集（必要時のみ）
         if not success:
-            self.log.warning("Weekly update failed, falling back to today's data only")
-            success = self.data_collector.collect_all_stations_data(force_refresh=True)
+            try:
+                if self.data_collector is None:
+                    self.data_collector = ProgramDataCollector(self.cache_manager)
+                    if self.radio_manager:
+                        self.data_collector.set_radio_manager(self.radio_manager)
+                self.log.warning("Falling back to today's data collection")
+                success = self.data_collector.collect_all_stations_data(force_refresh=True)
+            except Exception as e:
+                self.log.error(f"Fallback data collection failed: {e}")
         
         if success:
             simpleDialog.dialog(_("完了"), _("データの更新が完了しました。"))

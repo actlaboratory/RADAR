@@ -124,8 +124,9 @@ class ProgramCacheController:
             
             # 放送局リストが初期化されているかチェック
             if not hasattr(self.radio_manager, 'stid') or not self.radio_manager.stid:
-                self.log.warning("Radio station list not initialized, skipping database update")
+                self.log.warning("Radio station list not initialized. Scheduling background update after area determination.")
                 self._initialize_services()
+                self._schedule_wait_and_update()
                 return
             
             self.log.info(f"Starting database update with {len(self.radio_manager.stid)} stations")
@@ -333,6 +334,43 @@ class ProgramCacheController:
             
         except Exception as e:
             self.log.error(f"Failed to schedule background update: {e}")
+
+    def _schedule_wait_and_update(self):
+        """放送局リストが利用可能になるまで待機してから週間更新を実行"""
+        try:
+            def wait_and_update():
+                try:
+                    self.log.info("Waiting for station list to be initialized...")
+                    for _ in range(60):  # 最大約60秒待機
+                        try:
+                            if hasattr(self.radio_manager, 'stid') and self.radio_manager.stid:
+                                break
+                        except Exception:
+                            pass
+                        import time
+                        time.sleep(1)
+                    if not getattr(self.radio_manager, 'stid', None):
+                        self.log.warning("Station list still not available. Aborting weekly update.")
+                        return
+                    # 収集器を用意
+                    if not self.data_collector:
+                        self.data_collector = ProgramDataCollector(self.cache_manager)
+                        self.data_collector.set_radio_manager(self.radio_manager)
+                    today = datetime.datetime.now()
+                    today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+                    self.log.info(f"Starting deferred weekly data collection from {today.strftime('%Y%m%d')}")
+                    ok = self.data_collector.collect_weekly_data(today, force_refresh=True)
+                    if ok:
+                        self.log.info("Deferred weekly database update completed successfully")
+                        self.last_update_date = self.startup_date
+                    else:
+                        self.log.warning("Deferred weekly database update failed")
+                except Exception as e:
+                    self.log.error(f"Deferred update failed: {e}")
+            t = threading.Thread(target=wait_and_update, daemon=True)
+            t.start()
+        except Exception as e:
+            self.log.error(f"Failed to schedule wait-and-update: {e}")
     
     def get_search_engine(self):
         """検索エンジンを取得"""

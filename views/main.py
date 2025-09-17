@@ -82,7 +82,7 @@ class MainView(BaseView):
 			errorDialog(_("outputディレクトリの作成に失敗しました。\nアプリケーションを続行しますが、録音機能が正常に動作しない可能性があります。"))
 
 	def exit_button(self):
-		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
+		self.exitbtn = self.creator.button(_("終了"), self.events.onExit)
 
 	def get_latest_info(self):
 		"""ctrl+f5によるリロード処理のときに呼ばれる"""
@@ -113,7 +113,7 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hFileMenu, {
 			"FILE_EXAMPLE": self.parent.events.example,
 			"FILE_RELOAD": self.parent.events.onReLoad,
-			"EXIT": self.parent.events.exit,
+			"EXIT": self.parent.events.onExit,
 		})
 
 		# 機能メニュー
@@ -188,7 +188,7 @@ class Events(BaseEvents):
 		d.Initialize()
 		r = d.Show()
 
-	def OnExit(self, event):
+	def onExit(self, event):
 		if event.CanVeto():
 			# Alt+F4が押された
 			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
