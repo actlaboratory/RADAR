@@ -59,8 +59,9 @@ class ProgramSearchDialog(BaseDialog):
         # ボタンエリア
         self.create_buttons()
         
-        # 初期データ収集と日付オプション設定
-        self.collect_initial_data()
+        # 初期表示高速化のため、重いデータ収集は実行しない
+        # 放送局と日付オプションのセットのみ行う
+        self.update_station_list()
         self.setup_date_options()
     
     def create_search_inputs(self):
