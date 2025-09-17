@@ -113,7 +113,7 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hFileMenu, {
 			"FILE_EXAMPLE": self.parent.events.example,
 			"FILE_RELOAD": self.parent.events.onReLoad,
-			"EXIT": self.parent.events.onExit,
+			"EXIT":self.parent.events.onExit,
 		})
 
 		# 機能メニュー
@@ -176,6 +176,7 @@ class Events(BaseEvents):
 	id = None
 	selected = None
 
+
 	def onUpdateProcess(self, event):
 		"""番組情報を定期的に更新"""
 		if self.playing and self.id:
@@ -189,17 +190,13 @@ class Events(BaseEvents):
 		r = d.Show()
 
 	def onExit(self, event):
-		if event.CanVeto():
-			# Alt+F4が押された
-			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
-				self.hide()
-				return
+		if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
+			self.hide()
+			return
+		else:
 			# 最小化設定が無効な場合、または他の終了方法の場合は通常通り終了
-			else:
-				#super().OnExit(event)
-				self.exit(event)
-				globalVars.app.tb.Destroy()
-				return
+			self.exit()
+			return
 
 	def hide(self):
 		self.parent.hFrame.Hide()
@@ -210,7 +207,7 @@ class Events(BaseEvents):
 		self.parent.hPanel.SetFocus()
 		return
 
-	def exit(self, event):
+	def exit(self):
 		# 録音中かどうかを確認
 		from recorder import recorder_manager
 		active_recorders = recorder_manager.get_active_recorders()
@@ -234,10 +231,9 @@ class Events(BaseEvents):
 			self.log.info("Application cleanup completed")
 		except Exception as e:
 			self.log.error(f"Error during application cleanup: {e}")
-
-		self.parent.hFrame.Close(True)
 		globalVars.app.tb.Destroy()
-		return
+		self.parent.hFrame.Close(True)
+
 
 	def option(self, event):
 		d = settingsDialog.Dialog()

@@ -5,6 +5,7 @@ import wx.adv
 import globalVars
 import constants
 from views.base import BaseMenu
+import menuItemsStore
 
 
 class TaskbarIcon(wx.adv.TaskBarIcon):
@@ -15,28 +16,16 @@ class TaskbarIcon(wx.adv.TaskBarIcon):
 		self.Bind(wx.adv.EVT_TASKBAR_LEFT_DCLICK, self.onDoubleClick)
 
 	def CreatePopupMenu(self):
+		bm = BaseMenu("mainView")
 		menu = wx.Menu()
-		
-		# 表示メニュー
-		show_item = menu.Append(wx.ID_ANY, _("表示(&S)"))
-		menu.Bind(wx.EVT_MENU, self.onShow, show_item)
-		
-		# 終了メニュー
-		exit_item = menu.Append(wx.ID_ANY, _("終了(&X)"))
-		menu.Bind(wx.EVT_MENU, self.onExit, exit_item)
-		
+		menu.Bind(wx.EVT_MENU, self.TbMenuSelect)
+		bm.RegisterMenuCommand(menu, [
+			"SHOW", "EXIT",
+		])
 		return menu
 
 	def onDoubleClick(self, event):
 		globalVars.app.hMainView.events.show()
-
-	def onShow(self, event):
-		"""表示メニューが選択されたときの処理"""
-		globalVars.app.hMainView.events.show()
-
-	def onExit(self, event):
-		"""終了メニューが選択されたときの処理"""
-		globalVars.app.hMainView.events.exit(event)
 
 	def setAlternateText(self, text=""):
 		"""タスクバーアイコンに表示するテキストを変更する。「アプリ名 - 指定したテキスト」の形になる。
@@ -47,3 +36,12 @@ class TaskbarIcon(wx.adv.TaskBarIcon):
 		if text != "":
 			text = " - " + text
 		self.SetIcon(self.icon, constants.APP_NAME + text)
+
+	def TbMenuSelect(self, event):
+		event = event.GetId()
+		if event == menuItemsStore.getRef("SHOW"):
+			self.onDoubleClick(event)
+			return
+		if event == menuItemsStore.getRef("EXIT"):
+			globalVars.app.hMainView.events.exit()
+			return
