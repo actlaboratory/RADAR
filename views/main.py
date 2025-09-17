@@ -26,6 +26,8 @@ from views import radioManager
 from views import recordingHandler
 from views import programInfoHandler
 from views import volumeHandler
+from views import programCacheController
+from views import programSearchDialog
 
 
 class MainView(BaseView):
@@ -55,8 +57,11 @@ class MainView(BaseView):
 		self.program_info_handler = programInfoHandler.ProgramInfoHandler(self)
 		self.volume_handler = volumeHandler.VolumeHandler(self)
 		
-		# エリア判定
+		# エリア判定（放送局リストの初期化）
 		self.radio_manager.areaDetermination(self.progs)
+		
+		# 番組キャッシュコントローラーの初期化（放送局リスト初期化後）
+		self.program_cache_controller = programCacheController.ProgramCacheController(self.radio_manager)
 		
 		# UIの設定
 		self.radio_manager.setup_radio_ui()
@@ -77,7 +82,7 @@ class MainView(BaseView):
 			errorDialog(_("outputディレクトリの作成に失敗しました。\nアプリケーションを続行しますが、録音機能が正常に動作しない可能性があります。"))
 
 	def exit_button(self):
-		self.exitbtn = self.creator.button(_("終了"), self.events.exit)
+		self.exitbtn = self.creator.button(_("終了"), self.events.onExit)
 
 	def get_latest_info(self):
 		"""ctrl+f5によるリロード処理のときに呼ばれる"""
@@ -108,7 +113,7 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hFileMenu, {
 			"FILE_EXAMPLE": self.parent.events.example,
 			"FILE_RELOAD": self.parent.events.onReLoad,
-			"EXIT": self.parent.events.exit,
+			"EXIT": self.parent.events.onExit,
 		})
 
 		# 機能メニュー
@@ -125,6 +130,7 @@ class Menu(BaseMenu):
 			"SHOW_PROGRAMLIST": self.parent.events.initializeInfoView,
 			"HIDE_PROGRAMINFO": self.parent.events.switching_programInfo,
 			"UPDATE_PROGRAMLIST": self.parent.events.onUpdateProgram,
+			"PROGRAM_SEARCH": self.parent.events.onProgramSearch,
 		})
 
 		# 録音メニュー
@@ -182,7 +188,7 @@ class Events(BaseEvents):
 		d.Initialize()
 		r = d.Show()
 
-	def OnExit(self, event):
+	def onExit(self, event):
 		if event.CanVeto():
 			# Alt+F4が押された
 			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
@@ -424,3 +430,10 @@ class Events(BaseEvents):
 		"""音量変更時の処理"""
 		if hasattr(self.parent, 'volume_handler'):
 			self.parent.volume_handler.onVolumeChanged(event)
+	
+	def onProgramSearch(self, event):
+		"""番組検索ダイアログを表示"""
+		# globalVars.appを使用して完全に独立した設計
+		search_dialog = programSearchDialog.ProgramSearchDialog()
+		search_dialog.Initialize()
+		search_dialog.Show()

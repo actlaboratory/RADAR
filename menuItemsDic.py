@@ -22,6 +22,7 @@ dic={
 	"SHOW_PROGRAMLIST":_("番組表の表示"),
 	"HIDE_PROGRAMINFO":_("番組情報を非表示"),
 	"UPDATE_PROGRAMLIST":_("放送局の一覧を再描画"),
+	"PROGRAM_SEARCH":_("番組検索(&F)")+"...",
 
 	"RECORDING_IMMEDIATELY":_("今すぐ録音(&r)"),
 	"RECORDING_SCHEDULE":_("予約録音(&s)"),

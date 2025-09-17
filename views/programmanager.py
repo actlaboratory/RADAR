@@ -36,30 +36,78 @@ class ProgramManager:
         return "http://radiko.jp/v3"
 
     def retrieveRadioListings(self, id, date):
-        year = date[:4]
-        lists = date.split(",")
-        if len(lists[1]) == 1:
-            lists[1] = f"0{lists[1]}"
-        if len(lists[2]) == 1:
-            lists[2] = f"0{lists[2]}"
-        formatted_date = f"{lists[0]}{lists[1]}{lists[2]}"
-        url = f"{self.getprogramlist()}/program/station/date/{formatted_date}/{id}.xml"
+        try:
+            # 日付の処理を修正
+            if isinstance(date, str):
+                if len(date) == 8:  # YYYYMMDD形式
+                    formatted_date = date
+                elif ',' in date:  # カンマ区切り形式
+                    lists = date.split(",")
+                    if len(lists) >= 3:
+                        year = lists[0]
+                        month = lists[1].zfill(2)
+                        day = lists[2].zfill(2)
+                        formatted_date = f"{year}{month}{day}"
+                    else:
+                        self.log.error(f"Invalid date format: {date}")
+                        self.root = None
+                        return
+                else:
+                    self.log.error(f"Unsupported date format: {date}")
+                    self.root = None
+                    return
+            else:
+                self.log.error(f"Date must be string, got: {type(date)}")
+                self.root = None
+                return
+            
+            url = f"{self.getprogramlist()}/program/station/date/{formatted_date}/{id}.xml"
+            self.log.debug(f"Requesting URL: {url}")
 
-        # XMLデータを取得
-        response = requests.get(url)
-        xml_data = response.content
-        # XMLを解析
-        self.root = ET.fromstring(xml_data)
+            # XMLデータを取得
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            xml_data = response.content
+            
+            # XMLを解析
+            self.root = ET.fromstring(xml_data)
+            self.log.debug(f"Successfully retrieved listings for station {id} on {formatted_date}")
+            
+        except requests.RequestException as e:
+            self.log.error(f"Failed to retrieve radio listings for station {id}: {e}")
+            self.root = None
+        except ET.ParseError as e:
+            self.log.error(f"Failed to parse XML for station {id}: {e}")
+            self.root = None
+        except Exception as e:
+            self.log.error(f"Unexpected error retrieving listings for station {id}: {e}")
+            import traceback
+            self.log.error(f"Traceback: {traceback.format_exc()}")
+            self.root = None
 
     def gettitle(self):
-        title_elements = self.root.findall(".//title")
-        titles = [title.text for title in title_elements]
-        return titles
+        try:
+            if not hasattr(self, 'root') or self.root is None:
+                self.log.warning("Root element not available")
+                return []
+            title_elements = self.root.findall(".//title")
+            titles = [title.text if title.text else '' for title in title_elements]
+            return titles
+        except Exception as e:
+            self.log.error(f"Failed to get titles: {e}")
+            return []
 
     def getpfm(self):
-        pfm_elements = self.root.findall(".//pfm")
-        names = [pfm.text for pfm in pfm_elements]
-        return names
+        try:
+            if not hasattr(self, 'root') or self.root is None:
+                self.log.warning("Root element not available")
+                return []
+            pfm_elements = self.root.findall(".//pfm")
+            names = [pfm.text if pfm.text else '' for pfm in pfm_elements]
+            return names
+        except Exception as e:
+            self.log.error(f"Failed to get performers: {e}")
+            return []
 
     def jpCode(self):
         """stationIdをキー、都道府県コードを値に持つ辞書を作成"""
@@ -251,16 +299,28 @@ class ProgramManager:
             return None
 
     def get_ftl(self):
-        results = []
-        prog_elements = self.root.findall(".//prog")
-        prog_ftl = [ftl.get("ftl") for ftl in prog_elements]
-        return prog_ftl
+        try:
+            if not hasattr(self, 'root') or self.root is None:
+                self.log.warning("Root element not available")
+                return []
+            prog_elements = self.root.findall(".//prog")
+            prog_ftl = [ftl.get("ftl") if ftl.get("ftl") else '' for ftl in prog_elements]
+            return prog_ftl
+        except Exception as e:
+            self.log.error(f"Failed to get start times: {e}")
+            return []
 
     def get_tol(self):
-        results = []
-        prog_elements = self.root.findall(".//prog")
-        prog_tol = [tol.get("tol") for tol in prog_elements]
-        return prog_tol
+        try:
+            if not hasattr(self, 'root') or self.root is None:
+                self.log.warning("Root element not available")
+                return []
+            prog_elements = self.root.findall(".//prog")
+            prog_tol = [tol.get("tol") if tol.get("tol") else '' for tol in prog_elements]
+            return prog_tol
+        except Exception as e:
+            self.log.error(f"Failed to get end times: {e}")
+            return []
 
     def get_onair_music(self, id):
         """オンエア中の曲情報を取得"""
@@ -292,6 +352,13 @@ class ProgramManager:
             return "曲情報取得エラー"
 
     def getDescriptions(self):
-        desc_elements = self.root.findall(".//desc")
-        descriptions = [description.text for description in desc_elements]
-        return descriptions
+        try:
+            if not hasattr(self, 'root') or self.root is None:
+                self.log.warning("Root element not available")
+                return []
+            desc_elements = self.root.findall(".//desc")
+            descriptions = [description.text if description.text else '' for description in desc_elements]
+            return descriptions
+        except Exception as e:
+            self.log.error(f"Failed to get descriptions: {e}")
+            return []
