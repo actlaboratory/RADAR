@@ -132,6 +132,7 @@ class ProgramSearchDialog(BaseDialog):
         self.result_list.AppendColumn(_("開始時間"))
         self.result_list.AppendColumn(_("終了時間"))
         self.result_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.onItemActivated)
+        self.result_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.onItemSelected)
         
         # 結果数表示
         self.result_count_label = wx.StaticText(self.panel, wx.ID_ANY, _("結果: 0件"))
@@ -402,6 +403,10 @@ class ProgramSearchDialog(BaseDialog):
             # 結果がない場合のメッセージ
             self.result_list.Append((_("検索結果がありません"), "", "", "", ""))
             self.result_count_label.SetLabel(_("結果: 0件"))
+            try:
+                globalVars.app.say(_("結果 0件"), interrupt=True)
+            except Exception:
+                pass
             return
         
         for program in self.search_results:
@@ -444,8 +449,35 @@ class ProgramSearchDialog(BaseDialog):
         
         if count > 0:
             self.result_list.Focus(0)
+            try:
+                # 初回選択を行って読み上げを発火
+                self.result_list.Select(0)
+                globalVars.app.say(_(f"結果 {count}件"), interrupt=True)
+            except Exception:
+                pass
             # 結果数をログ出力
             self.log.info(f"Displayed {count} search results")
+
+    def onItemSelected(self, event):
+        """リストの選択が変更された時の処理（読み上げ）"""
+        try:
+            index = event.GetIndex()
+            if index < 0:
+                return
+            # カラム: 0=放送局(含日付), 1=番組タイトル, 2=出演者, 3=開始時間, 4=終了時間
+            station = self.result_list.GetItemText(index, 0)
+            title = self.result_list.GetItemText(index, 1)
+            performer = self.result_list.GetItemText(index, 2)
+            start_time = self.result_list.GetItemText(index, 3)
+            end_time = self.result_list.GetItemText(index, 4)
+
+            # 読み上げテキスト（日本語区切り）
+            parts = [p for p in [station, title, performer, f"{start_time}から{end_time}"] if p]
+            speak_text = "、".join(parts)
+            if speak_text:
+                globalVars.app.say(speak_text, interrupt=True)
+        except Exception as e:
+            self.log.debug(f"onItemSelected speak failed: {e}")
     
     def onItemActivated(self, event):
         """リストアイテムがダブルクリックされた時の処理"""
