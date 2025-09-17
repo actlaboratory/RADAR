@@ -21,3 +21,4 @@ tests/
 .codegpt
 recording_schedules.json
 *.db
+*.dat

@@ -12,6 +12,7 @@ import views.ViewCreator
 from views.programCacheManager import ProgramCacheManager
 from views.programSearchEngine import ProgramSearchEngine
 from views.programDataCollector import ProgramDataCollector
+from searchHistoryManager import SearchHistoryManager
 
 class ProgramSearchDialog(BaseDialog):
     """番組検索ダイアログ"""
@@ -52,6 +53,10 @@ class ProgramSearchDialog(BaseDialog):
         # 検索結果
         self.search_results = []
         
+        # 検索履歴管理
+        self.history_manager = SearchHistoryManager()
+        self.history_enabled = False  # デフォルトは無効
+        
     def Initialize(self):
         """ダイアログの初期化"""
         self.log.debug("Initializing ProgramSearchDialog")
@@ -79,16 +84,22 @@ class ProgramSearchDialog(BaseDialog):
         # 放送局と日付オプションのセットのみ行う
         self.update_station_list()
         self.setup_date_options()
+        
+        # 履歴の初期状態を設定
+        self.setup_history_initial_state()
     
     def create_search_inputs(self):
         """検索条件入力エリアを作成"""
-        # 番組タイトル検索
-        self.title_input, title_label = self.creator.inputbox(_("番組タイトル"), style=wx.TE_PROCESS_ENTER)
-        self.title_input.Bind(wx.EVT_TEXT_ENTER, self.onSearch)
+        # 検索履歴を残すチェックボックス
+        self.history_checkbox = self.creator.checkbox(_("検索履歴を残す"), event=self.onHistoryCheckboxChanged)
         
-        # 出演者検索
-        self.performer_input, performer_label = self.creator.inputbox(_("出演者"), style=wx.TE_PROCESS_ENTER)
-        self.performer_input.Bind(wx.EVT_TEXT_ENTER, self.onSearch)
+        # 番組タイトル検索（コンボボックス）
+        self.title_combo, title_label = self.creator.combobox(_("番組タイトル"), [], event=self.onTitleComboChanged, style=wx.CB_DROPDOWN)
+        self.title_combo.Bind(wx.EVT_TEXT_ENTER, self.onSearch)
+        
+        # 出演者検索（コンボボックス）
+        self.performer_combo, performer_label = self.creator.combobox(_("出演者"), [], event=self.onPerformerComboChanged, style=wx.CB_DROPDOWN)
+        self.performer_combo.Bind(wx.EVT_TEXT_ENTER, self.onSearch)
         
         # 放送局選択
         self.station_combo, station_label = self.creator.combobox(_("放送局"), [])
@@ -127,18 +138,15 @@ class ProgramSearchDialog(BaseDialog):
         self.sizer.Add(time_sizer, 0, wx.EXPAND|wx.ALL, 5)
         
         # 検索ボタン
-        self.search_btn = wx.Button(self.panel, wx.ID_ANY, _("検索"))
-        self.search_btn.Bind(wx.EVT_BUTTON, self.onSearch)
+        self.search_btn = self.creator.button(_("検索"), event=self.onSearch)
         self.search_btn.SetDefault()
         
         # クリアボタン
-        self.clear_btn = wx.Button(self.panel, wx.ID_ANY, _("クリア"))
-        self.clear_btn.Bind(wx.EVT_BUTTON, self.onClear)
+        self.clear_btn = self.creator.button(_("クリア"), event=self.onClear)
         
-        button_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        button_sizer.Add(self.search_btn, 0, wx.ALL, 5)
-        button_sizer.Add(self.clear_btn, 0, wx.ALL, 5)
-        self.sizer.Add(button_sizer, 0, wx.ALIGN_CENTER)
+        # 履歴クリアボタン
+        self.history_clear_btn = self.creator.button(_("履歴クリア"), event=self.onHistoryClear)
+        self.history_clear_btn.Enable(False)  # デフォルトは無効
     
     def create_results_display(self):
         """検索結果表示エリアを作成"""
@@ -158,17 +166,10 @@ class ProgramSearchDialog(BaseDialog):
     def create_buttons(self):
         """ボタンエリアを作成"""
         # 閉じるボタン
-        self.close_btn = wx.Button(self.panel, wx.ID_CANCEL, _("閉じる"))
-        self.close_btn.Bind(wx.EVT_BUTTON, self.onClose)
+        self.close_btn = self.creator.cancelbutton(_("閉じる"), event=self.onClose)
         
         # データ更新ボタン
-        self.refresh_btn = wx.Button(self.panel, wx.ID_ANY, _("データ更新"))
-        self.refresh_btn.Bind(wx.EVT_BUTTON, self.onRefresh)
-        
-        button_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        button_sizer.Add(self.refresh_btn, 0, wx.ALL, 5)
-        button_sizer.Add(self.close_btn, 0, wx.ALL, 5)
-        self.sizer.Add(button_sizer, 0, wx.ALIGN_RIGHT)
+        self.refresh_btn = self.creator.button(_("データ更新"), event=self.onRefresh)
     
     def setup_date_options(self):
         """日付選択オプションを設定（データベースの実際の日付範囲を使用）"""
@@ -357,14 +358,20 @@ class ProgramSearchDialog(BaseDialog):
         criteria = {}
         
         # 番組タイトル
-        title = self.title_input.GetValue().strip()
+        title = self.title_combo.GetValue().strip()
         if title:
             criteria['title'] = title
+            # 履歴が有効な場合は履歴に追加
+            if self.history_enabled:
+                self.history_manager.add_title_history(title)
         
         # 出演者
-        performer = self.performer_input.GetValue().strip()
+        performer = self.performer_combo.GetValue().strip()
         if performer:
             criteria['performer'] = performer
+            # 履歴が有効な場合は履歴に追加
+            if self.history_enabled:
+                self.history_manager.add_performer_history(performer)
         
         # 放送局
         station_name = self.station_combo.GetValue().strip()
@@ -508,8 +515,8 @@ class ProgramSearchDialog(BaseDialog):
     
     def onClear(self, event):
         """検索条件をクリア"""
-        self.title_input.SetValue("")
-        self.performer_input.SetValue("")
+        self.title_combo.SetValue("")
+        self.performer_combo.SetValue("")
         self.station_combo.SetValue("")
         self.date_combo.SetSelection(0)  # 今日を選択
         
@@ -531,6 +538,66 @@ class ProgramSearchDialog(BaseDialog):
         """日付が変更された時の処理"""
         # 必要に応じて実装
         pass
+    
+    def onHistoryCheckboxChanged(self, event):
+        """検索履歴チェックボックスが変更された時の処理"""
+        self.history_enabled = self.history_checkbox.GetValue()
+        
+        if self.history_enabled:
+            # 履歴を有効にした場合、履歴をコンボボックスに読み込み
+            self.load_history_to_combos()
+            self.history_clear_btn.Enable(True)
+        else:
+            # 履歴を無効にした場合、コンボボックスをクリア
+            self.title_combo.Clear()
+            self.performer_combo.Clear()
+            self.history_clear_btn.Enable(False)
+        
+        self.log.debug(f"History enabled: {self.history_enabled}")
+    
+    def onTitleComboChanged(self, event):
+        """番組タイトルコンボボックスが変更された時の処理"""
+        pass
+    
+    def onPerformerComboChanged(self, event):
+        """出演者コンボボックスが変更された時の処理"""
+        pass
+    
+    def load_history_to_combos(self):
+        """履歴をコンボボックスに読み込み"""
+        if not self.history_enabled:
+            return
+        
+        try:
+            # 番組タイトル履歴を読み込み
+            title_history = self.history_manager.get_title_history()
+            self.title_combo.SetItems(title_history)
+            
+            # 出演者履歴を読み込み
+            performer_history = self.history_manager.get_performer_history()
+            self.performer_combo.SetItems(performer_history)
+            
+            self.log.debug(f"Loaded history: {len(title_history)} titles, {len(performer_history)} performers")
+        except Exception as e:
+            self.log.error(f"Failed to load history to combos: {e}")
+    
+    def onHistoryClear(self, event):
+        """検索履歴をクリア"""
+        try:
+            # 確認ダイアログを表示
+            result = simpleDialog.dialog(_("確認"), _("検索履歴をすべて削除しますか？"), simpleDialog.YES_NO)
+            if result == simpleDialog.YES:
+                self.history_manager.clear_history()
+                
+                # コンボボックスをクリア
+                self.title_combo.Clear()
+                self.performer_combo.Clear()
+                
+                simpleDialog.dialog(_("完了"), _("検索履歴を削除しました。"))
+                self.log.info("Search history cleared by user")
+        except Exception as e:
+            self.log.error(f"Failed to clear history: {e}")
+            simpleDialog.errorDialog(_("履歴の削除に失敗しました。"))
     
     def onRefresh(self, event):
         """データ更新"""
@@ -573,6 +640,36 @@ class ProgramSearchDialog(BaseDialog):
     def onClose(self, event):
         """ダイアログを閉じる"""
         self.Destroy()
+    
+    def setup_history_initial_state(self):
+        """履歴の初期状態を設定"""
+        try:
+            # 履歴が存在するかチェック
+            has_history = self.history_manager.has_history()
+            
+            if has_history:
+                # 履歴が存在する場合、チェックボックスを有効にする
+                self.history_checkbox.SetValue(True)
+                self.history_enabled = True
+                self.history_clear_btn.Enable(True)
+                
+                # 履歴をコンボボックスに読み込み
+                self.load_history_to_combos()
+                
+                self.log.info("History found, enabling history features")
+            else:
+                # 履歴が存在しない場合、チェックボックスは無効のまま
+                self.history_checkbox.SetValue(False)
+                self.history_enabled = False
+                self.history_clear_btn.Enable(False)
+                
+                self.log.info("No history found, history features disabled")
+        except Exception as e:
+            self.log.error(f"Failed to setup history initial state: {e}")
+            # エラーの場合は履歴機能を無効にする
+            self.history_checkbox.SetValue(False)
+            self.history_enabled = False
+            self.history_clear_btn.Enable(False)
     
     def cleanup(self):
         """リソースのクリーンアップ"""
