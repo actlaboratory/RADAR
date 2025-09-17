@@ -6,11 +6,13 @@ import globalVars
 import constants
 from views.base import BaseMenu
 import menuItemsStore
+from logging import getLogger
 
 
 class TaskbarIcon(wx.adv.TaskBarIcon):
 	def __init__(self):
 		super().__init__()
+		self.log = getLogger("%s.%s" % (constants.LOG_PREFIX, "taskbar"))
 		self.icon = wx.Icon(constants.APP_ICON)
 		self.SetIcon(self.icon, constants.APP_NAME)
 		self.Bind(wx.adv.EVT_TASKBAR_LEFT_DCLICK, self.onDoubleClick)
@@ -38,10 +40,12 @@ class TaskbarIcon(wx.adv.TaskBarIcon):
 		self.SetIcon(self.icon, constants.APP_NAME + text)
 
 	def TbMenuSelect(self, event):
-		event = event.GetId()
-		if event == menuItemsStore.getRef("SHOW"):
+		event_id = event.GetId()
+		if event_id == menuItemsStore.getRef("SHOW"):
+			self.log.info("selected:SHOW")
 			self.onDoubleClick(event)
 			return
-		if event == menuItemsStore.getRef("EXIT"):
+		if event_id == menuItemsStore.getRef("EXIT"):
+			self.log.info("selected:EXIT")
 			globalVars.app.hMainView.events.exit()
 			return

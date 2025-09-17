@@ -191,6 +191,7 @@ class Events(BaseEvents):
 
 	def onExit(self, event):
 		if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
+			self.log.info("Minimizing to taskbar...")
 			self.hide()
 			return
 		else:
@@ -200,14 +201,17 @@ class Events(BaseEvents):
 
 	def hide(self):
 		self.parent.hFrame.Hide()
+		self.log.info("Minimized to taskbar.")
 		return
 
 	def show(self):
 		self.parent.hFrame.Show()
 		self.parent.hPanel.SetFocus()
+		self.log.info("Window restored.")
 		return
 
 	def exit(self):
+		self.log.info("Attempting to terminate process...")
 		# 録音中かどうかを確認
 		from recorder import recorder_manager
 		active_recorders = recorder_manager.get_active_recorders()
@@ -232,6 +236,7 @@ class Events(BaseEvents):
 		except Exception as e:
 			self.log.error(f"Error during application cleanup: {e}")
 		globalVars.app.tb.Destroy()
+		self.log.info("Exiting...")
 		self.parent.hFrame.Close(True)
 
 
