@@ -585,8 +585,8 @@ class ProgramSearchDialog(BaseDialog):
         """検索履歴をクリア"""
         try:
             # 確認ダイアログを表示
-            result = simpleDialog.dialog(_("確認"), _("検索履歴をすべて削除しますか？"), simpleDialog.YES_NO)
-            if result == simpleDialog.YES:
+            result = simpleDialog.yesNoDialog(_("確認"), _("検索履歴をすべて削除しますか？"))
+            if result == wx.ID_YES:
                 self.history_manager.clear_history()
                 
                 # コンボボックスをクリア

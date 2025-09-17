@@ -433,11 +433,7 @@ class Events(BaseEvents):
 	
 	def onProgramSearch(self, event):
 		"""番組検索ダイアログを表示"""
-		try:
-			# globalVars.appを使用して完全に独立した設計
-			search_dialog = programSearchDialog.ProgramSearchDialog()
-			search_dialog.Initialize()
-			search_dialog.Show()
-		except Exception as e:
-			self.parent.log.error(f"Failed to open program search dialog: {e}")
-			errorDialog(_("番組検索ダイアログの表示に失敗しました。"))
+		# globalVars.appを使用して完全に独立した設計
+		search_dialog = programSearchDialog.ProgramSearchDialog()
+		search_dialog.Initialize()
+		search_dialog.Show()

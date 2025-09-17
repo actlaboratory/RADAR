@@ -4,6 +4,7 @@
 import os
 import datetime
 import threading
+import sqlite3
 from logging import getLogger
 import constants
 import globalVars
@@ -51,6 +52,12 @@ class ProgramCacheController:
     def _check_and_update_database(self):
         """データベースの存在チェックと更新（今日基準）"""
         try:
+            # データベースの整合性をチェック
+            if not self._validate_database_integrity():
+                self.log.warning("Database integrity check failed, recreating database")
+                self._create_fresh_database()
+                return
+            
             # キャッシュマネージャーを初期化
             self.cache_manager = ProgramCacheManager(self.db_path)
             
@@ -296,6 +303,68 @@ class ProgramCacheController:
             self.search_engine = None
             self.data_collector = None
     
+    def _validate_database_integrity(self):
+        """データベースの整合性を検証（削除・改変・接続失敗の検出）"""
+        try:
+            # データベースファイルの存在チェック
+            if not os.path.exists(self.db_path):
+                self.log.warning("Database file does not exist")
+                return False
+            
+            # ファイルサイズチェック（空ファイルや破損ファイルの検出）
+            file_size = os.path.getsize(self.db_path)
+            if file_size == 0:
+                self.log.warning("Database file is empty")
+                return False
+            
+            # SQLiteデータベースとして開けるかチェック
+            try:
+                test_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                cursor = test_conn.cursor()
+                
+                # 基本的なテーブル構造の存在チェック
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [row[0] for row in cursor.fetchall()]
+                
+                required_tables = ['programs', 'cache_metadata']
+                missing_tables = [table for table in required_tables if table not in tables]
+                
+                if missing_tables:
+                    self.log.warning(f"Missing required tables: {missing_tables}")
+                    test_conn.close()
+                    return False
+                
+                # テーブル構造の整合性チェック
+                cursor.execute("PRAGMA table_info(programs)")
+                programs_columns = [row[1] for row in cursor.fetchall()]
+                required_columns = ['station_id', 'station_name', 'title', 'performer', 'start_time', 'end_time', 'description', 'date']
+                missing_columns = [col for col in required_columns if col not in programs_columns]
+                
+                if missing_columns:
+                    self.log.warning(f"Missing required columns in programs table: {missing_columns}")
+                    test_conn.close()
+                    return False
+                
+                # データベースの整合性チェック
+                cursor.execute("PRAGMA integrity_check")
+                integrity_result = cursor.fetchone()
+                if integrity_result and integrity_result[0] != 'ok':
+                    self.log.warning(f"Database integrity check failed: {integrity_result[0]}")
+                    test_conn.close()
+                    return False
+                
+                test_conn.close()
+                self.log.info("Database integrity validation passed")
+                return True
+                
+            except sqlite3.Error as e:
+                self.log.warning(f"Database connection/validation failed: {e}")
+                return False
+                
+        except Exception as e:
+            self.log.warning(f"Database integrity check failed with exception: {e}")
+            return False
+
     def _create_empty_services(self):
         """空のサービスを作成（最後の手段）"""
         try:
