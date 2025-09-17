@@ -6,6 +6,7 @@ import wx
 import datetime
 from logging import getLogger
 import constants
+import simpleDialog
 from views.baseDialog import BaseDialog
 import views.ViewCreator
 from views.programCacheManager import ProgramCacheManager
@@ -17,7 +18,7 @@ class ProgramSearchDialog(BaseDialog):
     
     def __init__(self, radio_manager=None):
         super().__init__("ProgramSearchDialog")
-        # radio_managerは引数で受け取るか、globalVars.appから取得
+
         try:
             self.radio_manager = radio_manager or getattr(globalVars.app.hMainView, 'radio_manager', None)
         except (AttributeError, NameError):
@@ -132,7 +133,6 @@ class ProgramSearchDialog(BaseDialog):
         self.result_list.AppendColumn(_("開始時間"))
         self.result_list.AppendColumn(_("終了時間"))
         self.result_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.onItemActivated)
-        self.result_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.onItemSelected)
         
         # 結果数表示
         self.result_count_label = wx.StaticText(self.panel, wx.ID_ANY, _("結果: 0件"))
@@ -297,7 +297,11 @@ class ProgramSearchDialog(BaseDialog):
     
     def onSearch(self, event):
         """検索実行"""
-        self._safe_busy_cursor(self._perform_search)
+        try:
+            self._perform_search()
+        except Exception as e:
+            self.log.error(f"Operation failed: {e}")
+            simpleDialog.errorDialog(_("操作中にエラーが発生しました。"))
     
     def _perform_search(self):
         """検索の実際の処理"""
@@ -306,7 +310,7 @@ class ProgramSearchDialog(BaseDialog):
         
         # 検索条件が空の場合は警告
         if not search_criteria:
-            wx.MessageBox(_("検索条件を入力してください。"), _("警告"), wx.OK|wx.ICON_WARNING)
+            simpleDialog.dialog(_("警告"), _("検索条件を入力してください。"))
             return
         
         # デバッグ情報をログ出力
@@ -355,17 +359,13 @@ class ProgramSearchDialog(BaseDialog):
         if date_selection >= 0:
             date_text = self.date_combo.GetString(date_selection)
             self.log.debug(f"Selected date text: '{date_text}'")
-            
-            # 括弧内の日付値を抽出 (例: "2024-01-15 (20240115)" → "20240115")
+
             if '(' in date_text and ')' in date_text:
                 date_value = date_text.split('(')[1].split(')')[0]
                 criteria['date'] = date_value
-                self.log.debug(f"Extracted date value: '{date_value}'")
             else:
-                # フォールバック: 括弧がない場合はそのまま使用
                 criteria['date'] = date_text
-                self.log.debug(f"Using date text as is: '{date_text}'")
-        
+
         # 時間範囲（スピンコントロールから取得）
         start_hour = self.start_hour_spin.GetValue()
         start_minute = self.start_minute_spin.GetValue()
@@ -387,7 +387,7 @@ class ProgramSearchDialog(BaseDialog):
             end_time_str = criteria['end_time']
             if start_time_str >= end_time_str:
                 # 開始時間が終了時間より遅い場合は警告
-                wx.MessageBox(_("開始時間は終了時間より早く設定してください。"), _("警告"), wx.OK|wx.ICON_WARNING)
+                simpleDialog.dialog(_("警告"), _("開始時間は終了時間より早く設定してください。"))
                 return {}
         
         # 時間範囲検索のフラグを設定
@@ -450,34 +450,13 @@ class ProgramSearchDialog(BaseDialog):
         if count > 0:
             self.result_list.Focus(0)
             try:
-                # 初回選択を行って読み上げを発火
                 self.result_list.Select(0)
                 globalVars.app.say(_(f"結果 {count}件"), interrupt=True)
             except Exception:
                 pass
             # 結果数をログ出力
             self.log.info(f"Displayed {count} search results")
-
-    def onItemSelected(self, event):
-        """リストの選択が変更された時の処理（読み上げ）"""
-        try:
-            index = event.GetIndex()
-            if index < 0:
-                return
-            # カラム: 0=放送局(含日付), 1=番組タイトル, 2=出演者, 3=開始時間, 4=終了時間
-            station = self.result_list.GetItemText(index, 0)
-            title = self.result_list.GetItemText(index, 1)
-            performer = self.result_list.GetItemText(index, 2)
-            start_time = self.result_list.GetItemText(index, 3)
-            end_time = self.result_list.GetItemText(index, 4)
-
-            # 読み上げテキスト（日本語区切り）
-            parts = [p for p in [station, title, performer, f"{start_time}から{end_time}"] if p]
-            speak_text = "、".join(parts)
-            if speak_text:
-                globalVars.app.say(speak_text, interrupt=True)
-        except Exception as e:
-            self.log.debug(f"onItemSelected speak failed: {e}")
+        
     
     def onItemActivated(self, event):
         """リストアイテムがダブルクリックされた時の処理"""
@@ -508,7 +487,7 @@ class ProgramSearchDialog(BaseDialog):
             
         except Exception as e:
             self.log.error(f"Failed to show program detail: {e}")
-            wx.MessageBox(_("番組詳細の表示に失敗しました。"), _("エラー"), wx.OK|wx.ICON_ERROR)
+            simpleDialog.errorDialog(_("番組詳細の表示に失敗しました。"))
     
     def onClear(self, event):
         """検索条件をクリア"""
@@ -538,25 +517,11 @@ class ProgramSearchDialog(BaseDialog):
     
     def onRefresh(self, event):
         """データ更新"""
-        self._safe_busy_cursor(self._perform_data_refresh)
-    
-    def _safe_busy_cursor(self, func):
-        """安全なBusyCursorの実行"""
-        busy_cursor_active = False
         try:
-            wx.BusyCursor()
-            busy_cursor_active = True
-            func()
+            self._perform_data_refresh()
         except Exception as e:
             self.log.error(f"Operation failed: {e}")
-            wx.MessageBox(_("操作中にエラーが発生しました。"), _("エラー"), wx.OK|wx.ICON_ERROR)
-        finally:
-            if busy_cursor_active:
-                try:
-                    wx.EndBusyCursor()
-                except wx._core.wxAssertionError:
-                    # アサーションエラーが発生した場合は無視
-                    self.log.warning("wxEndBusyCursor assertion error ignored")
+            simpleDialog.errorDialog(_("操作中にエラーが発生しました。"))
     
     def _perform_data_refresh(self):
         """データ更新の実際の処理"""
@@ -583,10 +548,10 @@ class ProgramSearchDialog(BaseDialog):
             success = self.data_collector.collect_all_stations_data(force_refresh=True)
         
         if success:
-            wx.MessageBox(_("データの更新が完了しました。"), _("完了"), wx.OK|wx.ICON_INFORMATION)
+            simpleDialog.dialog(_("完了"), _("データの更新が完了しました。"))
             self.update_station_list()
         else:
-            wx.MessageBox(_("データの更新に失敗しました。"), _("エラー"), wx.OK|wx.ICON_ERROR)
+            simpleDialog.errorDialog(_("データの更新に失敗しました。"))
     
     def onClose(self, event):
         """ダイアログを閉じる"""
