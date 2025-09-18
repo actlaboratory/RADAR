@@ -97,24 +97,26 @@ class RecordingHandler:
             title = self.parent.progs.getNowProgram(self.events.selected)
             if not title:
                 self.log.warning("Failed to get program title, using fallback")
-                # 番組タイトルが取得できない場合は、放送局名と時刻を使用
                 current_time = datetime.datetime.now().strftime("%H%M")
                 title = f"番組不明_{current_time}"
             else:
                 # 番組タイトルをファイル名に適した形式に変換
-                title = re.sub(r'[<>:"/\\|?*]', '_', title)  # 無効な文字を置換
+                title = re.sub(r'[<>:"/\\|?*]', '_', title)
                 title = title.strip()
 
             # 重複録音チェック
             if recorder_manager.is_duplicate_recording(self.events.selected, title):
                 self.log.warning(f"Duplicate recording detected: {self.parent.radio_manager.stid[self.events.selected]} - {title}")
-                # 既存の録音情報を取得
+                station_name = self.parent.radio_manager.stid[self.events.selected]
                 existing_info = recorder_manager.get_recording_info(self.events.selected, title)
+                
                 if existing_info:
                     start_time_str = datetime.datetime.fromtimestamp(existing_info["start_time"]).strftime("%H:%M")
-                    errorDialog(_(f"同じ番組の録音が既に開始されています。\n\n放送局: {self.parent.radio_manager.stid[self.events.selected]}\n番組: {title}\n開始時刻: {start_time_str}"))
+                    error_message = f"同じ番組の録音が既に開始されています。\n\n放送局: {station_name}\n番組: {title}\n開始時刻: {start_time_str}"
                 else:
-                    errorDialog(_(f"同じ番組の録音が既に開始されています。\n\n放送局: {self.parent.radio_manager.stid[self.events.selected]}\n番組: {title}"))
+                    error_message = f"同じ番組の録音が既に開始されています。\n\n放送局: {station_name}\n番組: {title}"
+                
+                errorDialog(_(error_message))
                 return
 
             # ストリームURLの取得

@@ -52,49 +52,16 @@ class ProgramCacheController:
     def _check_and_update_database(self):
         """データベースの存在チェックと更新（今日基準）"""
         try:
-            # データベースの整合性をチェック
             if not self._validate_database_integrity():
                 self.log.warning("Database integrity check failed, recreating database")
                 self._create_fresh_database()
                 return
             
-            # キャッシュマネージャーを初期化
             self.cache_manager = ProgramCacheManager(self.db_path)
+            self._set_last_update_date()
             
-            # 最終更新日を取得
-            last_update_str = self.cache_manager.get_last_update_time()
-            if last_update_str and len(last_update_str) >= 8:
-                self.last_update_date = last_update_str[:8]  # YYYYMMDD部分のみ
-                self.log.info(f"Last update date: {self.last_update_date}")
-            else:
-                self.last_update_date = None
-                self.log.info("No previous update date found")
-            
-            # 今日の日付を基準にした日付を計算
-            today = datetime.datetime.now()
-            today_date = today.strftime('%Y%m%d')
-            
-            # 1週間分のキャッシュが完全かチェック
-            is_weekly_complete = self.cache_manager.is_weekly_cache_complete()
-            
-            # 更新が必要な条件をチェック
-            needs_update = (
-                self.last_update_date is None or  # 初回起動
-                self.last_update_date != today_date or  # 基準日が変わった
-                not is_weekly_complete  # 週間データが不完全
-            )
-            
-            if needs_update:
-                reason = []
-                if self.last_update_date is None:
-                    reason.append("初回起動")
-                if self.last_update_date != today_date:
-                    reason.append(f"基準日変更 ({self.last_update_date} → {today_date})")
-                if not is_weekly_complete:
-                    reason.append("週間データ不完全")
-                
-                self.log.info(f"Database update needed: {', '.join(reason)}")
-                self._update_database()
+            if self._needs_database_update():
+                self._perform_database_update()
             else:
                 self.log.info("Weekly cache is complete, using existing database")
                 self._initialize_services()
@@ -102,6 +69,43 @@ class ProgramCacheController:
         except Exception as e:
             self.log.error(f"Failed to check database: {e}")
             self._handle_database_error(e)
+    
+    def _set_last_update_date(self):
+        """最終更新日を設定"""
+        last_update_str = self.cache_manager.get_last_update_time()
+        if last_update_str and len(last_update_str) >= 8:
+            self.last_update_date = last_update_str[:8]
+            self.log.info(f"Last update date: {self.last_update_date}")
+        else:
+            self.last_update_date = None
+            self.log.info("No previous update date found")
+    
+    def _needs_database_update(self):
+        """データベース更新が必要かチェック"""
+        today_date = datetime.datetime.now().strftime('%Y%m%d')
+        is_weekly_complete = self.cache_manager.is_weekly_cache_complete()
+        
+        return (
+            self.last_update_date is None or
+            self.last_update_date != today_date or
+            not is_weekly_complete
+        )
+    
+    def _perform_database_update(self):
+        """データベース更新を実行"""
+        today_date = datetime.datetime.now().strftime('%Y%m%d')
+        is_weekly_complete = self.cache_manager.is_weekly_cache_complete()
+        
+        reasons = []
+        if self.last_update_date is None:
+            reasons.append("初回起動")
+        if self.last_update_date != today_date:
+            reasons.append(f"基準日変更 ({self.last_update_date} → {today_date})")
+        if not is_weekly_complete:
+            reasons.append("週間データ不完全")
+        
+        self.log.info(f"Database update needed: {', '.join(reasons)}")
+        self._update_database()
     
     def _create_fresh_database(self):
         """新しいデータベースを作成"""

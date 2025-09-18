@@ -50,28 +50,23 @@ class ProgramInfoHandler:
     def show_program_info(self, station_id):
         """番組情報を表示"""
         program_title = self.parent.progs.getNowProgram(station_id)
-        self.program_title = program_title
         program_pfm = self.parent.progs.getnowProgramPfm(station_id)
-        if station_id in self.parent.radio_manager.stid:
-            result = self.parent.radio_manager.stid[station_id]
-            self.result = result
+        station_name = self.parent.radio_manager.stid.get(station_id, station_id)
 
         # リストビューにアペンド
-        self.nplist.Append(("放送局", self.result), )
-        self.nplist.Append(("番組名", program_title), )
-        self.nplist.Append(("出演者", program_pfm), )
+        self.nplist.Append(("放送局", station_name))
+        self.nplist.Append(("番組名", program_title))
+        self.nplist.Append(("出演者", program_pfm))
 
     def show_onair_music(self, station_id):
         """オンエア曲情報を表示"""
-        # オンエア曲情報を取得してくる
         try:
             onair_music = self.parent.progs.get_onair_music(station_id)
             if onair_music and onair_music != "曲情報なし":
-                # リストビューにアペンド
-                self.nplist.Append(("オンエア曲", onair_music), )
+                self.nplist.Append(("オンエア曲", onair_music))
         except Exception as e:
             self.log.warning(f"Failed to get online music: {e}")
-            self.nplist.Append(("オンエア曲", "曲情報取得エラー"), )
+            self.nplist.Append(("オンエア曲", "曲情報取得エラー"))
 
     def initializeInfoView(self, station_id):
         """番組一覧表示"""

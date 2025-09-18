@@ -16,47 +16,29 @@ class ProgramSearchEngine:
     
     def search_by_title(self, query, limit=100, date=None):
         """番組タイトルで検索"""
-        search_criteria = {
-            'title': query,
-            'limit': limit
-        }
-        if date:
-            search_criteria['date'] = date
-        
-        return self.cache_manager.search_programs(search_criteria)
+        return self._search_with_criteria({'title': query, 'limit': limit, 'date': date})
     
     def search_by_performer(self, query, limit=100, date=None):
         """出演者で検索"""
-        search_criteria = {
-            'performer': query,
-            'limit': limit
-        }
-        if date:
-            search_criteria['date'] = date
-        
-        return self.cache_manager.search_programs(search_criteria)
+        return self._search_with_criteria({'performer': query, 'limit': limit, 'date': date})
     
     def search_by_time_range(self, start_time, end_time, limit=100, date=None):
         """時間範囲で検索"""
-        search_criteria = {
-            'start_time': start_time,
-            'end_time': end_time,
-            'limit': limit
-        }
-        if date:
-            search_criteria['date'] = date
-        
-        return self.cache_manager.search_programs(search_criteria)
+        return self._search_with_criteria({
+            'start_time': start_time, 
+            'end_time': end_time, 
+            'limit': limit, 
+            'date': date
+        })
     
     def search_by_station(self, station_name, limit=100, date=None):
         """放送局で検索"""
-        search_criteria = {
-            'station_name': station_name,
-            'limit': limit
-        }
-        if date:
-            search_criteria['date'] = date
-        
+        return self._search_with_criteria({'station_name': station_name, 'limit': limit, 'date': date})
+    
+    def _search_with_criteria(self, criteria):
+        """検索条件で検索を実行"""
+        # Noneの値を除去
+        search_criteria = {k: v for k, v in criteria.items() if v is not None}
         return self.cache_manager.search_programs(search_criteria)
     
     def search_combined(self, title=None, performer=None, station_name=None, 
