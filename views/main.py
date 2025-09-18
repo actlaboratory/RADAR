@@ -476,10 +476,10 @@ class Events(BaseEvents):
 		"""音量変更時の処理"""
 		if hasattr(self.parent, 'volume_handler'):
 			self.parent.volume_handler.onVolumeChanged(event)
-	
+
 	def onProgramSearch(self, event):
 		"""番組検索ダイアログを表示"""
-		# globalVars.appを使用して完全に独立した設計
+
 		search_dialog = programSearchDialog.ProgramSearchDialog()
 		search_dialog.Initialize()
 		search_dialog.Show()
