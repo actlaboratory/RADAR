@@ -46,13 +46,28 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 self.log.error("No date selected")
                 return
                 
-            # 日付文字列を安全にパース
+            # 日付文字列を安全にパース（ロケールに依存しない方法）
             try:
-                selected_date = datetime.datetime.strptime(date_str.replace("/", "-"), "%Y-%m-%d")
-            except ValueError as e:
+                # 日付文字列を正規化（月日を2桁に統一）
+                parts = date_str.split("/")
+                if len(parts) == 3:
+                    year, month, day = parts
+                    # 数値に変換して検証
+                    year_int = int(year)
+                    month_int = int(month)
+                    day_int = int(day)
+                    # 日付の妥当性をチェック
+                    if not (1 <= month_int <= 12):
+                        raise ValueError(f"Invalid month: {month_int}")
+                    if not (1 <= day_int <= 31):
+                        raise ValueError(f"Invalid day: {day_int}")
+                    # datetimeオブジェクトを直接作成（ロケールに依存しない）
+                    selected_date = datetime.date(year_int, month_int, day_int)
+                else:
+                    raise ValueError(f"Invalid date format: {date_str}")
+            except (ValueError, TypeError) as e:
                 self.log.error(f"Date parsing error: {e}, date_str: {date_str}")
-                simpleDialog.errorDialog(f"日付の解析に失敗しました: {date_str}")
-                return
+                raise ValueError(f"日付の解析に失敗しました: {date_str} (詳細: {e})")
                 
             current = datetime.datetime.now()
             
@@ -66,25 +81,41 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             if int(end_time[:2]) >= 24:
                 end_time = f"0{int(end_time[:2])-24}:{end_time[3:]}"
             
-            # 日時オブジェクトを作成
+            # 日時オブジェクトを作成（ロケールに依存しない方法）
             try:
-                start_time_dt = datetime.datetime.strptime(start_time, "%H:%M")
-                end_time_dt = datetime.datetime.strptime(end_time, "%H:%M")
-            except ValueError as e:
+                # 時間文字列を解析
+                start_parts = start_time.split(":")
+                end_parts = end_time.split(":")
+                
+                if len(start_parts) != 2 or len(end_parts) != 2:
+                    raise ValueError("Invalid time format")
+                
+                start_hour = int(start_parts[0])
+                start_minute = int(start_parts[1])
+                end_hour = int(end_parts[0])
+                end_minute = int(end_parts[1])
+                
+                # 時間の妥当性をチェック
+                if not (0 <= start_hour <= 23) or not (0 <= start_minute <= 59):
+                    raise ValueError(f"Invalid start time: {start_time}")
+                if not (0 <= end_hour <= 23) or not (0 <= end_minute <= 59):
+                    raise ValueError(f"Invalid end time: {end_time}")
+                
+                # datetime.timeオブジェクトを直接作成
+                start_time_dt = datetime.time(start_hour, start_minute)
+                end_time_dt = datetime.time(end_hour, end_minute)
+                
+                # datetime.datetimeオブジェクトに変換
+                start_time_dt = datetime.datetime.combine(selected_date, start_time_dt)
+                end_time_dt = datetime.datetime.combine(selected_date, end_time_dt)
+                
+            except (ValueError, TypeError) as e:
                 self.log.error(f"Time parsing error: {e}, start_time: {start_time}, end_time: {end_time}")
-                simpleDialog.errorDialog(f"時間の解析に失敗しました: {start_time} - {end_time}")
-                return
+                raise ValueError(f"時間の解析に失敗しました: {start_time} - {end_time} (詳細: {e})")
             
-            self.stdt = start_time_dt.replace(
-                year=selected_date.year, 
-                month=selected_date.month, 
-                day=selected_date.day
-            )
-            self.endt = end_time_dt.replace(
-                year=selected_date.year, 
-                month=selected_date.month, 
-                day=selected_date.day
-            )
+            # 日時オブジェクトを設定
+            self.stdt = start_time_dt
+            self.endt = end_time_dt
             
             # 日付の調整（深夜番組の場合）
             if self.stdt.time() < datetime.time(4, 59, 59):
