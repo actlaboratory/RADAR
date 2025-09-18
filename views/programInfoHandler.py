@@ -33,11 +33,11 @@ class ProgramInfoHandler:
 
     def get_latest_info(self):
         """ctrl+f5によるリロード処理のときに呼ばれる"""
-        if hasattr(self.events, 'id') and self.events.id:
+        if hasattr(self.events, 'current_playing_station_id') and self.events.current_playing_station_id:
             self.nplist.clear()
-            self.show_program_info(self.events.id)
-            self.show_onair_music(self.events.id)
-            self.show_description(self.events.id)
+            self.show_program_info(self.events.current_playing_station_id)
+            self.show_onair_music(self.events.current_playing_station_id)
+            self.show_description(self.events.current_playing_station_id)
 
     def show_description(self, station_id):
         """番組の説明を表示"""
@@ -60,13 +60,19 @@ class ProgramInfoHandler:
 
     def show_onair_music(self, station_id):
         """オンエア曲情報を表示"""
+        onair_music = self._get_onair_music_safely(station_id)
+        if onair_music and onair_music != "曲情報なし":
+            self.nplist.Append(("オンエア曲", onair_music))
+        elif onair_music is None:
+            self.nplist.Append(("オンエア曲", "曲情報取得エラー"))
+
+    def _get_onair_music_safely(self, station_id):
+        """オンエア曲情報を安全に取得"""
         try:
-            onair_music = self.parent.progs.get_onair_music(station_id)
-            if onair_music and onair_music != "曲情報なし":
-                self.nplist.Append(("オンエア曲", onair_music))
+            return self.parent.progs.get_onair_music(station_id)
         except Exception as e:
             self.log.warning(f"Failed to get online music: {e}")
-            self.nplist.Append(("オンエア曲", "曲情報取得エラー"))
+            return None
 
     def initializeInfoView(self, station_id):
         """番組一覧表示"""

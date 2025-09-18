@@ -71,15 +71,24 @@ class MainView(BaseView):
 	def _ensure_output_directory(self):
 		"""outputディレクトリの存在をチェックし、存在しない場合は作成する"""
 		output_dir = "output"
-		try:
-			if not os.path.exists(output_dir):
-				os.makedirs(output_dir)
-				self.log.info(f"Created output directory: {output_dir}")
+		if not os.path.exists(output_dir):
+			# ディレクトリが存在しない場合のみ作成を試行
+			if not self._create_directory_safely(output_dir):
+				self.log.error("Failed to create output directory")
+				errorDialog(_("outputディレクトリの作成に失敗しました。\nアプリケーションを続行しますが、録音機能が正常に動作しない可能性があります。"))
 			else:
-				self.log.debug(f"Output directory already exists: {output_dir}")
-		except Exception as e:
-			self.log.error(f"Failed to create output directory: {e}")
-			errorDialog(_("outputディレクトリの作成に失敗しました。\nアプリケーションを続行しますが、録音機能が正常に動作しない可能性があります。"))
+				self.log.info(f"Created output directory: {output_dir}")
+		else:
+			self.log.debug(f"Output directory already exists: {output_dir}")
+
+	def _create_directory_safely(self, directory_path):
+		"""ディレクトリを安全に作成"""
+		try:
+			os.makedirs(directory_path)
+			return True
+		except (OSError, PermissionError) as e:
+			self.log.error(f"Failed to create directory {directory_path}: {e}")
+			return False
 
 	def exit_button(self):
 		self.exitbtn = self.creator.button(_("終了"), self.events.onExit)
@@ -111,7 +120,6 @@ class Menu(BaseMenu):
 
 		# ファイルメニュー
 		self.RegisterMenuCommand(self.hFileMenu, {
-			"FILE_EXAMPLE": self.parent.events.example,
 			"FILE_RELOAD": self.parent.events.onReLoad,
 			"EXIT":self.parent.events.onExit,
 		})
@@ -174,21 +182,16 @@ class Events(BaseEvents):
 	playing = False
 	mute_status = False
 	displaying = True  # 番組情報表示中
-	id = None
-	selected = None
+	current_playing_station_id = None  # 現在再生中の放送局ID
+	current_selected_station_id = None  # 現在選択されている放送局ID
 
 
 	def onUpdateProcess(self, event):
 		"""番組情報を定期的に更新"""
-		if self.playing and self.id:
+		if self.playing and self.current_playing_station_id:
 			# 現在再生中の放送局の番組情報を更新
 			if hasattr(self.parent, 'program_info_handler'):
 				self.parent.program_info_handler.get_latest_info()
-
-	def example(self, event):
-		d = sample.Dialog()
-		d.Initialize()
-		r = d.Show()
 
 	def onExit(self, event):
 		if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
@@ -227,15 +230,26 @@ class Events(BaseEvents):
 				# キャンセルが選択された場合は終了しない
 				return
 		
-		try:
-			# 各ハンドラーのクリーンアップ
-			if hasattr(self.parent, 'recording_handler'):
+		# 各ハンドラーのクリーンアップ
+		self._cleanup_recording_handler()
+		self._cleanup_radio_manager()
+		self.log.info("Application cleanup completed")
+
+	def _cleanup_recording_handler(self):
+		"""録音ハンドラーのクリーンアップ"""
+		if hasattr(self.parent, 'recording_handler'):
+			try:
 				self.parent.recording_handler.cleanup()
-			if hasattr(self.parent, 'radio_manager'):
+			except Exception as e:
+				self.log.error(f"Error during recording handler cleanup: {e}")
+
+	def _cleanup_radio_manager(self):
+		"""ラジオマネージャーのクリーンアップ"""
+		if hasattr(self.parent, 'radio_manager'):
+			try:
 				self.parent.radio_manager.exit()
-			self.log.info("Application cleanup completed")
-		except Exception as e:
-			self.log.error(f"Error during application cleanup: {e}")
+			except Exception as e:
+				self.log.error(f"Error during radio manager cleanup: {e}")
 		globalVars.app.tb.Destroy()
 		self.log.info("Exiting...")
 		self.parent.hFrame.Close(True)
@@ -303,51 +317,81 @@ class Events(BaseEvents):
 	def onRadioActivated(self, event):
 		if not hasattr(self.parent, 'radio_manager'):
 			return
-		self.id = self.parent.radio_manager.tree.GetItemData(self.parent.radio_manager.tree.GetFocusedItem())  # stationIDが出る
-		if self.id == None:
+		
+		self.current_playing_station_id = self.parent.radio_manager.tree.GetItemData(
+			self.parent.radio_manager.tree.GetFocusedItem()
+		)
+		if self.current_playing_station_id is None:
 			return
-		self.parent.log.info("activated" + self.id)
+		
+		self.parent.log.info("activated" + self.current_playing_station_id)
+		self._handle_playback_toggle()
+		self._update_program_info_display()
+
+	def _handle_playback_toggle(self):
+		"""再生/停止の切り替え処理"""
+		if not self.playing:
+			if not self._start_playback():
+				return
+		else:
+			self._stop_playback()
+
+	def _start_playback(self):
+		"""再生開始処理"""
 		try:
-			if not self.playing:
-				self.parent.radio_manager.play(self.id, self.parent.progs)
-			else:
-				self.parent.radio_manager.stop()
+			self.parent.radio_manager.play(self.current_playing_station_id, self.parent.progs)
+			return True
 		except urllib.request.HTTPError as error:
 			errorDialog(_("再生に失敗しました。聴取可能な都道府県内であることをご確認ください。\nこの症状が引き続き発生する場合は、放送局一覧を再描画してからお試しください。"))
 			self.parent.log.error("Playback failure!" + str(error))
+			return False
+
+	def _stop_playback(self):
+		"""再生停止処理"""
+		self.parent.radio_manager.stop()
+
+	def _update_program_info_display(self):
+		"""番組情報表示の更新"""
+		if not hasattr(self.parent, 'program_info_handler'):
 			return
+		
+		handler = self.parent.program_info_handler
+		handler.nplist.Enable()
+		handler.nplist.clear()
+		self.show_program_info()
+		self.show_onair_music()
+		self.show_description()
 
-		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.nplist.Enable()
-			self.parent.program_info_handler.nplist.clear()
-			self.show_program_info()
-			self.show_onair_music()
-
-			# メニュー項目の表示
-			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
-
-			# 番組の説明
-			self.show_description()
+		# メニュー項目の表示
+		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
 
 	def show_description(self):
 		"""番組の説明を表示"""
 		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_description(self.id)
+			self.parent.program_info_handler.show_description(self.current_playing_station_id)
 
 	def show_program_info(self):
 		"""番組情報を表示"""
 		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_program_info(self.id)
+			self.parent.program_info_handler.show_program_info(self.current_playing_station_id)
 
 	def show_onair_music(self):
 		"""オンエア曲情報を表示"""
 		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_onair_music(self.id)
+			self.parent.program_info_handler.show_onair_music(self.current_playing_station_id)
 
 	def onRadioSelected(self, event):
-		if hasattr(self.parent, 'radio_manager'):
-			self.selected = self.parent.radio_manager.tree.GetItemData(self.parent.radio_manager.tree.GetFocusedItem())
-		if self.selected == None:
+		if not hasattr(self.parent, 'radio_manager'):
+			return
+		
+		self.current_selected_station_id = self.parent.radio_manager.tree.GetItemData(
+			self.parent.radio_manager.tree.GetFocusedItem()
+		)
+		self._update_menu_for_selected_station()
+
+	def _update_menu_for_selected_station(self):
+		"""選択された放送局に応じてメニューを更新"""
+		if self.current_selected_station_id is None:
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_PROGRAMLIST"), False)
 			self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("RECORDING_IMMEDIATELY"), False)
 			return
@@ -356,12 +400,12 @@ class Events(BaseEvents):
 		
 		# 選択した放送局の録音状態をチェックしてメニューを更新
 		if hasattr(self.parent, 'recording_handler'):
-			self.parent.recording_handler._update_recording_menu_for_station(self.selected)
+			self.parent.recording_handler._update_recording_menu_for_station(self.current_selected_station_id)
 
 	def initializeInfoView(self, event):
 		"""番組一覧表示"""
 		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.initializeInfoView(self.selected)
+			self.parent.program_info_handler.initializeInfoView(self.current_selected_station_id)
 
 	def onReLoad(self, event):
 		"""リロードを処理する"""

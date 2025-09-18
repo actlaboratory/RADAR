@@ -34,14 +34,12 @@ class RecordingHandler:
 
     def _init_recording_settings(self):
         """録音設定を初期化"""
-        try:
-            menu_id = self.app.config.getint("recording", "menu_id")
-            check_menu = self.app.config.getboolean("recording", "check_menu")
-        except:
-            # 設定が存在しない場合はデフォルト値を使用
-            menu_id = 10000  # MP3
-            check_menu = True
-            # 設定を保存
+        # 設定値の取得（存在しない場合はデフォルト値を使用）
+        menu_id = self.app.config.getint("recording", "menu_id", 10000)  # MP3
+        check_menu = self.app.config.getboolean("recording", "check_menu", True)
+        
+        # 設定を保存（デフォルト値の場合）
+        if not self.app.config.has_section("recording"):
             self.app.config["recording"]["menu_id"] = menu_id
             self.app.config["recording"]["check_menu"] = check_menu
         
@@ -51,12 +49,20 @@ class RecordingHandler:
 
     def _start_schedule_monitoring(self):
         """録音スケジュール監視を開始"""
+        if self._initialize_schedule_manager():
+            self.log.info("Recording schedule monitoring started")
+        else:
+            self.log.error("Failed to start schedule monitoring")
+
+    def _initialize_schedule_manager(self):
+        """スケジュールマネージャーの初期化"""
         try:
             from recorder import schedule_manager
             schedule_manager.start_monitoring()
-            self.log.info("Recording schedule monitoring started")
+            return True
         except Exception as e:
-            self.log.error(f"Failed to start schedule monitoring: {e}")
+            self.log.error(f"Failed to initialize schedule manager: {e}")
+            return False
 
     def onRecordMenuSelect(self, event):
         """録音品質メニューの動作"""
@@ -78,23 +84,23 @@ class RecordingHandler:
 
     def record_immediately(self, event):
         """録音の開始/停止を処理するメソッド"""
-        if self.events.selected is None:
+        if self.events.current_selected_station_id is None:
             self.log.debug("No station selected for recording")
             return
 
         # 選択した放送局の録音状態をチェック
         from recorder import recorder_manager
-        is_station_recording = self._is_station_recording(self.events.selected)
+        is_station_recording = self._is_station_recording(self.events.current_selected_station_id)
         
         # 録音中の場合は停止処理
         if is_station_recording:
-            self._stop_station_recording(self.events.selected)
+            self._stop_station_recording(self.events.current_selected_station_id)
             return
 
         # 録音開始処理
         try:
             # 現在の番組情報を取得
-            title = self.parent.progs.getNowProgram(self.events.selected)
+            title = self.parent.progs.getNowProgram(self.events.current_selected_station_id)
             if not title:
                 self.log.warning("Failed to get program title, using fallback")
                 current_time = datetime.datetime.now().strftime("%H%M")
@@ -105,10 +111,10 @@ class RecordingHandler:
                 title = title.strip()
 
             # 重複録音チェック
-            if recorder_manager.is_duplicate_recording(self.events.selected, title):
-                self.log.warning(f"Duplicate recording detected: {self.parent.radio_manager.stid[self.events.selected]} - {title}")
-                station_name = self.parent.radio_manager.stid[self.events.selected]
-                existing_info = recorder_manager.get_recording_info(self.events.selected, title)
+            if recorder_manager.is_duplicate_recording(self.events.current_selected_station_id, title):
+                self.log.warning(f"Duplicate recording detected: {self.parent.radio_manager.stid[self.events.current_selected_station_id]} - {title}")
+                station_name = self.parent.radio_manager.stid[self.events.current_selected_station_id]
+                existing_info = recorder_manager.get_recording_info(self.events.current_selected_station_id, title)
                 
                 if existing_info:
                     start_time_str = datetime.datetime.fromtimestamp(existing_info["start_time"]).strftime("%H:%M")
@@ -120,7 +126,7 @@ class RecordingHandler:
                 return
 
             # ストリームURLの取得
-            self.parent.radio_manager.get_streamUrl(self.events.selected, self.parent.progs)
+            self.parent.radio_manager.get_streamUrl(self.events.current_selected_station_id, self.parent.progs)
             if not self.parent.radio_manager.m3u8:
                 self.log.error("Failed to get stream URL")
                 errorDialog(_("ストリームURLの取得に失敗しました。"))
@@ -128,7 +134,7 @@ class RecordingHandler:
 
             # ファイル名とディレクトリの準備
             replace = title.replace(" ", "-")
-            station_dir = self.parent.radio_manager.stid[self.events.selected].replace(" ", "_")
+            station_dir = self.parent.radio_manager.stid[self.events.current_selected_station_id].replace(" ", "_")
             from recorder import create_recording_dir
             dirs = create_recording_dir(station_dir, title)
             
@@ -145,11 +151,11 @@ class RecordingHandler:
             
             stream_url = self.parent.radio_manager.m3u8
             end_time = time.time() + (8 * 3600)  # 8時間後
-            info = f"{self.parent.radio_manager.stid[self.events.selected]} {title}"
+            info = f"{self.parent.radio_manager.stid[self.events.current_selected_station_id]} {title}"
             
             # 録音完了時のコールバック
             def on_recording_complete(recorder):
-                self._update_recording_menu_for_station(self.events.selected)
+                self._update_recording_menu_for_station(self.events.current_selected_station_id)
                 try:
                     notification.notify(
                         title='録音完了',
@@ -161,14 +167,14 @@ class RecordingHandler:
                 except Exception as e:
                     self.log.error(f"Failed to send recording completion notification: {e}")
             
-            recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype, on_recording_complete, self.events.selected, title)
+            recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype, on_recording_complete, self.events.current_selected_station_id, title)
             if recorder:
                 self.log.info(f"Recording started: {title}")
-                self._update_recording_menu_for_station(self.events.selected)
+                self._update_recording_menu_for_station(self.events.current_selected_station_id)
                 
                 # スクリーンリーダーで録音開始を通知
                 try:
-                    station_name = self.parent.radio_manager.stid.get(self.events.selected, self.events.selected)
+                    station_name = self.parent.radio_manager.stid.get(self.events.current_selected_station_id, self.events.current_selected_station_id)
                     self.parent.app.say(f"録音開始: {station_name} {title}", interrupt=True)
                 except Exception as e:
                     self.log.error(f"Failed to announce recording start: {e}")
@@ -191,14 +197,14 @@ class RecordingHandler:
         except Exception as e:
             self.log.error(f"Error during recording start: {e}")
             errorDialog(_("録音の開始中にエラーが発生しました。"))
-            self._update_recording_menu_for_station(self.events.selected)
+            self._update_recording_menu_for_station(self.events.current_selected_station_id)
 
     def check_recording_status(self, event):
         """録音状態をチェックしてUIを更新"""
         try:
             # 現在選択されている放送局がある場合、その放送局の録音状態をチェック
-            if self.events.selected:
-                self._update_recording_menu_for_station(self.events.selected)
+            if self.events.current_selected_station_id:
+                self._update_recording_menu_for_station(self.events.current_selected_station_id)
             
             # 予約録音の状態をチェックしてメニュー項目を更新
             self._update_schedule_menu_status()
@@ -280,7 +286,7 @@ class RecordingHandler:
         """録音予約ウィザードを表示"""
         try:
             # 常に新規作成ウィザードを表示
-            rw = recordingWizzard.RecordingWizzard(self.events.selected, self.parent.radio_manager.stid[self.events.selected])
+            rw = recordingWizzard.RecordingWizzard(self.events.current_selected_station_id, self.parent.radio_manager.stid[self.events.current_selected_station_id])
             rw.Show()
                 
         except Exception as e:
