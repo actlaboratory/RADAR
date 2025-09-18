@@ -8,7 +8,7 @@ import locale
 import winsound
 import region_dic
 import re
-import xml.etree.ElementTree as ET
+import lxml.etree as ET
 import socket
 import subprocess
 import constants
@@ -134,7 +134,7 @@ class RadioManager:
 
         try:
             # XMLのパース
-            parsed = ET.fromstring(result)
+            parsed = ET.fromstring(result.encode('utf-8'))
             
             for r in parsed:
                 for station in r:
@@ -159,7 +159,6 @@ class RadioManager:
 
         except Exception as e:
             self.log.error(f"An unexpected error occurred: {str(e)}")
-            errorDialog(_("予期せぬエラーが発生しました。\n詳細はログをご確認ください。この問題が引き続き発生する場合は開発者までお問い合わせください。"))
             return
 
         # イベントバインドとツリーの設定

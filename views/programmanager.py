@@ -1,8 +1,7 @@
 #programmanager
 
-import xml.etree.ElementTree as ET
 import re
-import lxml.etree
+import lxml.etree as ET
 from logging import getLogger
 import requests
 import constants
@@ -139,7 +138,7 @@ class ProgramManager:
                 return self._getNowProgramByArea(id)
                 
             try:
-                root = lxml.etree.parse(url)
+                root = ET.parse(url)
                 results = root.xpath(".//station")
                 progs = root.xpath(".//progs")
             except Exception as e:
@@ -193,7 +192,7 @@ class ProgramManager:
                 return None
                 
             try:
-                root = lxml.etree.parse(url)
+                root = ET.parse(url)
                 results = root.xpath(".//station")
                 progs = root.xpath(".//progs")
             except Exception as e:
@@ -329,7 +328,7 @@ class ProgramManager:
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             
-            root = lxml.etree.parse(url)
+            root = ET.parse(url)
             items = root.xpath(".//item")
             
             if items and len(items) > 0:
