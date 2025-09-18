@@ -26,7 +26,9 @@ class ChangeDeviceDialog(BaseDialog):
 		self.deviceList.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.closeDialog)
 		self.deviceList.InsertItem(0, _("規定のデバイス"))
 		deviceList = list(getDeviceList())
+		print(deviceList)
 		del deviceList[deviceList.index("No sound")]
+		del deviceList[deviceList.index("Default")]
 		for i in deviceList:
 			self.deviceList.Append([i])
 		current = globalVars.app.config["livePlay"]["device"]
