@@ -8,7 +8,7 @@ import tcutil
 import time
 import locale
 import os
-
+import win32com.client
 
 import constants
 import globalVars
@@ -151,6 +151,7 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hOptionMenu, {
 			"OPTION_OPTION": self.parent.events.option,
 			"OPTION_KEY_CONFIG": self.parent.events.keyConfig,
+			"OPTION_STARTUP": self.parent.events.registerStartup,
 		})
 
 		# ヘルプメニュー
@@ -438,3 +439,26 @@ class Events(BaseEvents):
 		search_dialog = programSearchDialog.ProgramSearchDialog()
 		search_dialog.Initialize()
 		search_dialog.Show()
+
+	def registerStartup(self, event):
+		"""Windows起動時の自動起動を設定/解除する"""
+		target = os.path.join(
+			os.environ["appdata"],
+			"Microsoft",
+			"Windows",
+			"Start Menu",
+			"Programs",
+			"Startup",
+			"%s.lnk" % constants.APP_NAME
+		)
+		if os.path.exists(target):
+			d = yesNoDialog(_("確認"), _("Windows起動時の自動起動はすでに設定されています。設定を解除しますか？"))
+			if d == wx.ID_YES:
+				os.remove(target)
+				dialog(_("完了"), _("Windows起動時の自動起動を無効化しました。"))
+			return
+		ws = win32com.client.Dispatch("wscript.shell")
+		shortCut = ws.CreateShortcut(target)
+		shortCut.TargetPath = globalVars.app.getAppPath()
+		shortCut.Save()
+		dialog(_("完了"), _("Windows起動時の自動起動を設定しました。"))
