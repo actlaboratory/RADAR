@@ -170,8 +170,8 @@ class Menu(BaseMenu):
 
 		# メニューバーの生成
 		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F))"))
-		self.hMenuBar.Append(self.hFunctionMenu, _("機能(&F)"))
-		self.hMenuBar.Append(self.hProgramListMenu, _("番組(&p)"))
+		self.hMenuBar.Append(self.hFunctionMenu, _("再生(&P)"))
+		self.hMenuBar.Append(self.hProgramListMenu, _("番組(&A)"))
 		self.hMenuBar.Append(self.hRecordingMenu, _("録音(&r)"))
 		self.hMenuBar.Append(self.hOptionMenu, _("オプション(&O)"))
 		self.hMenuBar.Append(self.hHelpMenu, _("ヘルプ(&H)"))
