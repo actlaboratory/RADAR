@@ -23,7 +23,7 @@ class ProgramInfoHandler:
         self.nplist, nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
         self.nplist.AppendColumn(_("現在再生中"))
         self.nplist.AppendColumn(_(""))
-        self.nplist.Disable()
+
 
     def description(self):
         """番組の説明の表示部分を作る"""
@@ -86,9 +86,15 @@ class ProgramInfoHandler:
         """番組情報の表示/非表示を切り替え"""
         if self.events.displaying:
             self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示&P"))
-            self.nplist.Disable()
+            self.nplist.Destroy()
+            self.DSCBOX.Disable()
             self.events.displaying = False
         else:
             self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示&H"))
-            self.nplist.Enable()
+            self.SHOW_NOW_PROGRAMLIST()
+            if hasattr(self.events, 'current_playing_station_id') and self.events.current_playing_station_id:
+                self.show_program_info(self.events.current_playing_station_id)
+                self.show_onair_music(self.events.current_playing_station_id)
+                self.DSCBOX.Enable()
             self.events.displaying = True
+            
