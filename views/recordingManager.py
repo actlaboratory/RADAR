@@ -8,7 +8,7 @@ from logging import getLogger
 from views.baseDialog import *
 import views.ViewCreator
 from recorder import recorder_manager
-from plyer import notification
+from notification_util import notify as notification_notify
 
 class RecordingManagerDialog(BaseDialog):
     """録音管理ダイアログ"""
@@ -117,7 +117,7 @@ class RecordingManagerDialog(BaseDialog):
                 self.recorder_manager.stop_recorder(recorder)
                 
                 # 通知
-                notification.notify(
+                notification_notify(
                     title='録音停止',
                     message=f'{info} の録音を停止しました。',
                     app_name='rpb',
@@ -148,7 +148,7 @@ class RecordingManagerDialog(BaseDialog):
                 self.recorder_manager.stop_all()
                 
                 # 通知
-                notification.notify(
+                notification_notify(
                     title='録音停止',
                     message='全ての録音を停止しました。',
                     app_name='rpb',

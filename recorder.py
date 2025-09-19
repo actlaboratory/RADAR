@@ -9,7 +9,7 @@ import atexit
 import signal
 import locale
 import re
-from plyer import notification
+from notification_util import notify as notification_notify
 from logging import getLogger
 from views import token
 import threading
@@ -82,7 +82,22 @@ class Recorder:
                 "-y"
             ]
             self.logger.debug(f"FFmpeg command: {' '.join(cmd)}")
-            self.process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            # Windows環境でffmpegプロンプトを非表示にする
+            startupinfo = None
+            if os.name == 'nt':  # Windows
+                import subprocess
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            
+            self.process = subprocess.Popen(
+                cmd, 
+                stdin=subprocess.PIPE, 
+                stdout=subprocess.DEVNULL, 
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
             self.recording = True
             self.logger.info(f"FFmpeg process started with PID: {self.process.pid}")
             threading.Thread(target=self._monitor, daemon=True).start()
@@ -279,7 +294,7 @@ class RecorderManager:
             else:
                 self.logger.error(f"Recording failed after {MAX_RETRY} attempts: {info}")
                 try:
-                    notification.notify(title="録音失敗", message=f"{info} の録音に失敗しました。", app_name="rpb", timeout=10)
+                    notification_notify(title="録音失敗", message=f"{info} の録音に失敗しました。", app_name="rpb", timeout=10)
                     self.logger.info(f"Recording failure notification sent successfully after max retries: {info}")
                 except Exception as e:
                     self.logger.error(f"Failed to send recording failure notification after max retries: {e}")
@@ -616,7 +631,7 @@ class ScheduleManager:
                     schedule.set_status(RECORDING_STATUS_COMPLETED)
                     self.save_schedules()
                     try:
-                        notification.notify(
+                        notification_notify(
                             title='録音完了',
                             message=f'{schedule.program_title} の録音が完了しました。',
                             app_name='rpb',
@@ -652,7 +667,7 @@ class ScheduleManager:
                         message = f'{schedule.program_title} の録音を開始しました。（{schedule_count}件の録音中）'
                     
                     try:
-                        notification.notify(
+                        notification_notify(
                             title='録音開始',
                             message=message,
                             app_name='rpb',
@@ -666,7 +681,7 @@ class ScheduleManager:
                     schedule.set_status(RECORDING_STATUS_FAILED)
                     self.save_schedules()
                     try:
-                        notification.notify(
+                        notification_notify(
                             title='録音失敗',
                             message=f'{schedule.program_title} の録音開始に失敗しました。',
                             app_name='rpb',
@@ -686,7 +701,7 @@ class ScheduleManager:
                 # 認証エラーの場合はユーザーに通知
                 if "403" in str(e) or "Forbidden" in str(e) or "access denied" in str(e):
                     try:
-                        notification.notify(
+                        notification_notify(
                             title='録音失敗',
                             message=f'{schedule.program_title} の録音に失敗しました。認証エラーが発生しました。',
                             app_name='rpb',
@@ -697,7 +712,7 @@ class ScheduleManager:
                         self.logger.error(f"Failed to send recording authentication error notification: {notify_e}")
                 else:
                     try:
-                        notification.notify(
+                        notification_notify(
                             title='録音失敗',
                             message=f'{schedule.program_title} の録音に失敗しました。エラー: {str(e)[:100]}',
                             app_name='rpb',

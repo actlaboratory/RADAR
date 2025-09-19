@@ -5,7 +5,7 @@ import wx
 import time
 import datetime
 import re
-from plyer import notification
+from notification_util import notify as notification_notify
 from simpleDialog import *
 from views import recordingWizzard
 from views import scheduledRecordingManager
@@ -157,7 +157,7 @@ class RecordingHandler:
             def on_recording_complete(recorder):
                 self._update_recording_menu_for_station(self.events.current_selected_station_id)
                 try:
-                    notification.notify(
+                    notification_notify(
                         title='録音完了',
                         message=f'{title} の録音が完了しました。',
                         app_name='rpb',
@@ -181,7 +181,7 @@ class RecordingHandler:
                 
                 # 録音開始時の通知
                 try:
-                    notification.notify(
+                    notification_notify(
                         title='録音開始',
                         message=f'{title} の録音を開始しました。',
                         app_name='rpb',
@@ -246,7 +246,7 @@ class RecordingHandler:
                     self.log.error(f"Failed to announce recording stop: {e}")
                 
                 try:
-                    notification.notify(
+                    notification_notify(
                         title='録音停止',
                         message=f'{self.parent.radio_manager.stid.get(station_id, station_id)} の録音を停止しました。',
                         app_name='rpb',

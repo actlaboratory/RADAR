@@ -3,7 +3,7 @@ import time
 import datetime
 import locale
 from logging import getLogger
-from plyer import notification
+from notification_util import notify as notification_notify
 import globalVars
 import simpleDialog
 from views import showRadioProgramScheduleListBase
@@ -175,7 +175,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 message = f'録音がスケジュールされました。録音は、{self.stdt}に開始されます。（{total_schedules}件の録音予約中）'
             
             try:
-                notification.notify(
+                notification_notify(
                     title='録音準備', 
                     message=message, 
                     app_name='rpb', 
