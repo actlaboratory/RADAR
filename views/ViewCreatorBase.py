@@ -566,6 +566,9 @@ class ViewCreatorBase():
 	def GetSizer(self):
 		return self.sizer
 
+	def GetMode(self):
+		return self.mode
+
 	def _addDescriptionText(self,text,textLayout,sizerFlag=0, proportion=0,margin=0):
 		if textLayout not in (None,wx.HORIZONTAL,wx.VERTICAL,wx.DEFAULT):
 			raise ValueError("textLayout must be (None,wx.HORIZONTAL,wx.VIRTICAL,wx.DEFAULT)")
