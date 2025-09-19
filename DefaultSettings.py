@@ -30,13 +30,11 @@ class DefaultSettings:
 			"server": "",
 			"port": 8080
 		}
-		config["recording"] = {
+		config["record"] = {
 			"menu_id": "10000",  # MP3をデフォルトに
 			"check_menu": "True",
+			"createStationSubDir": True,	  # 番組ごとにサブフォルダを作成
 			"output_directory": "OUTPUT"  # 録音ファイルの出力先フォルダ
-		}
-		config["record"] = {
-			"createStationSubDir": True  # 番組ごとにサブフォルダを作成
 		}
 		return config
 

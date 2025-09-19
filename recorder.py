@@ -840,7 +840,7 @@ def get_output_directory():
     try:
         # globalVarsから設定を取得
         if hasattr(globalVars, 'app') and hasattr(globalVars.app, 'config'):
-            output_dir = globalVars.app.config.getstring("recording", "output_directory", "OUTPUT")
+            output_dir = globalVars.app.config.getstring("record", "output_directory", "OUTPUT")
             
             # 相対パスの場合は絶対パスに変換
             if not os.path.isabs(output_dir):
@@ -886,7 +886,7 @@ def get_file_type_from_config():
     filetypes = ["mp3", "wav"]
     try:
         config = ConfigManager.ConfigManager()
-        menu_id = config.getint("recording", "menu_id")
+        menu_id = config.getint("record", "menu_id")
         if menu_id == 10000:  # MP3
             return "mp3"
         elif menu_id == 10001:  # WAV

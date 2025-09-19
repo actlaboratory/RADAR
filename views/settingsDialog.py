@@ -115,7 +115,7 @@ class Dialog(BaseDialog):
 
 		# record
 		self._setValue(self.createstationsubdir, "record", "createStationSubDir", configType.BOOL, True)
-		self._setValue(self.output_directory, "recording", "output_directory", configType.STRING, "OUTPUT")
+		self._setValue(self.output_directory, "record", "output_directory", configType.STRING, "OUTPUT")
 		
 		# network
 		self._setValue(self.update, "general", "update", configType.BOOL)

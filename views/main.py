@@ -15,6 +15,8 @@ import globalVars
 import update
 import menuItemsStore
 import urllib
+from recorder import recorder_manager
+from recorder import schedule_manager
 from .base import *
 from simpleDialog import *
 from views import globalKeyConfig
@@ -217,22 +219,36 @@ class Events(BaseEvents):
 	def exit(self):
 		self.log.info("Attempting to terminate process...")
 		# 録音中かどうかを確認
-		from recorder import recorder_manager
 		active_recorders = recorder_manager.get_active_recorders()
 		
 		if active_recorders:
 			# 録音中の場合は確認ダイアログを表示
 			recording_count = len(active_recorders)
-			message = f"現在{recording_count}件の録音が進行中です。\nアプリケーションを終了しますか？\n\n録音を続行する場合は「キャンセル」を選択してください。"
+			message = f"現在{recording_count}件の録音が進行中です。\nアプリケーションを終了しますか？\n\n録音を続行する場合は「いいえ」を選択してください。"
 			
 			result = yesNoDialog(_("録音中の終了確認"), message)
-			if not result:
-				# キャンセルが選択された場合は終了しない
+			if result == wx.ID_NO:
+				# いいえが選択された場合は終了しない
+				return
+		
+		# スケジュールデータの存在確認
+		if self._has_schedule_data():
+			# スケジュールデータが存在する場合は確認ダイアログを表示
+			schedule_count = len(schedule_manager.schedules)
+			message = f"録音予約が{schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
+			
+			result = yesNoDialog(_("予約データ削除の確認"), message)
+			if result == wx.ID_NO:
+				# いいえが選択された場合は終了しない
 				return
 		
 		# 各ハンドラーのクリーンアップ
 		self._cleanup_recording_handler()
 		self._cleanup_radio_manager()
+		
+		# スケジュール録音データの完全削除
+		self._cleanup_schedule_data()
+		
 		self.log.info("Application cleanup completed")
 
 	def _cleanup_recording_handler(self):
@@ -253,6 +269,52 @@ class Events(BaseEvents):
 		globalVars.app.tb.Destroy()
 		self.log.info("Exiting...")
 		self.parent.hFrame.Close(True)
+
+	def _has_schedule_data(self):
+		"""スケジュールデータの存在確認"""
+		try:
+			
+			# メモリ上のスケジュールデータを確認
+			if schedule_manager.schedules:
+				return True
+			
+			# JSONファイルの存在確認
+			schedule_file = schedule_manager.schedule_file
+			if os.path.exists(schedule_file):
+				# ファイルが空でないか確認
+				if os.path.getsize(schedule_file) > 0:
+					return True
+			
+			return False
+			
+		except Exception as e:
+			self.log.error(f"Error checking schedule data: {e}")
+			return False
+
+	def _cleanup_schedule_data(self):
+		"""スケジュール録音データの完全削除"""
+		try:
+			
+			# スケジュールファイルの存在確認
+			schedule_file = schedule_manager.schedule_file
+			if os.path.exists(schedule_file):
+				# スケジュールファイルを削除
+				os.remove(schedule_file)
+				self.log.info(f"Schedule file deleted: {schedule_file}")
+			
+			# スケジュールマネージャーのクリーンアップ
+			schedule_manager.cleanup()
+			
+			# スケジュールデータを完全にクリア
+			with schedule_manager.lock:
+				removed_count = len(schedule_manager.schedules)
+				schedule_manager.schedules.clear()
+				self.log.info(f"All schedule data cleared: {removed_count} schedules removed")
+			
+			self.log.info("Schedule data cleanup completed")
+			
+		except Exception as e:
+			self.log.error(f"Error during schedule data cleanup: {e}")
 
 
 	def option(self, event):

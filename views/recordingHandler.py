@@ -35,13 +35,13 @@ class RecordingHandler:
     def _init_recording_settings(self):
         """録音設定を初期化"""
         # 設定値の取得（存在しない場合はデフォルト値を使用）
-        menu_id = self.app.config.getint("recording", "menu_id", 10000)  # MP3
-        check_menu = self.app.config.getboolean("recording", "check_menu", True)
+        menu_id = self.app.config.getint("record", "menu_id", 10000)  # MP3
+        check_menu = self.app.config.getboolean("record", "check_menu", True)
         
         # 設定を保存（デフォルト値の場合）
-        if not self.app.config.has_section("recording"):
-            self.app.config["recording"]["menu_id"] = menu_id
-            self.app.config["recording"]["check_menu"] = check_menu
+        if not self.app.config.has_section("record"):
+            self.app.config["record"]["menu_id"] = menu_id
+            self.app.config["record"]["check_menu"] = check_menu
         
         self.parent.menu.hRecordingFileTypeMenu.Check(menu_id, check_menu)
         self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), False)
@@ -75,8 +75,8 @@ class RecordingHandler:
             self.parent.menu.hRecordingFileTypeMenu.Check(10000, False)  # MP3をオフ
         
         # 設定を保存
-        self.parent.app.config["recording"]["menu_id"] = selected
-        self.parent.app.config["recording"]["check_menu"] = self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected)
+        self.parent.app.config["record"]["menu_id"] = selected
+        self.parent.app.config["record"]["check_menu"] = self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected)
         
         # デバッグログ
         filetype = "mp3" if selected == 10000 else "wav"

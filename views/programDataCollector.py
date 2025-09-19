@@ -33,7 +33,10 @@ class ProgramDataCollector:
             return False
         
         if date is None:
-            date = datetime.datetime.now().strftime('%Y%m%d')
+            # ラジオの日付ルールに従った日付を取得
+            from tcutil import CalendarUtil
+            calendar_util = CalendarUtil()
+            date = calendar_util.get_radio_date()
         
         # キャッシュの有効性をチェック
         if not force_refresh and self.cache_manager.is_cache_valid(date):
@@ -271,9 +274,11 @@ class ProgramDataCollector:
         """バックグラウンド収集ループ"""
         while self.is_collecting:
             try:
-                # 今日と明日のデータを収集
-                today = datetime.datetime.now().strftime('%Y%m%d')
-                tomorrow = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime('%Y%m%d')
+                # ラジオの日付ルールに従った日付を取得
+                from tcutil import CalendarUtil
+                calendar_util = CalendarUtil()
+                today = calendar_util.get_radio_date()
+                tomorrow = (datetime.datetime.strptime(today, '%Y%m%d') + datetime.timedelta(days=1)).strftime('%Y%m%d')
                 
                 self.log.debug(f"Collecting data for today: {today}, tomorrow: {tomorrow}")
                 

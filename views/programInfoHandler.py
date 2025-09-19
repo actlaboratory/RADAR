@@ -23,7 +23,7 @@ class ProgramInfoHandler:
         self.nplist, nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
         self.nplist.AppendColumn(_("現在再生中"))
         self.nplist.AppendColumn(_(""))
-
+        self.nplist.Disable()
 
     def description(self):
         """番組の説明の表示部分を作る"""
@@ -49,6 +49,7 @@ class ProgramInfoHandler:
 
     def show_program_info(self, station_id):
         """番組情報を表示"""
+        self.nplist.Enable()
         program_title = self.parent.progs.getNowProgram(station_id)
         program_pfm = self.parent.progs.getnowProgramPfm(station_id)
         station_name = self.parent.radio_manager.stid.get(station_id, station_id)
@@ -61,7 +62,6 @@ class ProgramInfoHandler:
     def show_onair_music(self, station_id):
         """オンエア曲情報を表示"""
         onair_music = self._get_onair_music_safely(station_id)
-        print(onair_music)
         if onair_music:
             self.nplist.Append(("オンエア曲", onair_music))
         else:

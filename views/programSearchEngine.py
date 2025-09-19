@@ -146,7 +146,11 @@ class ProgramSearchEngine:
         """現在放送中の番組を検索"""
         now = datetime.datetime.now()
         current_time = now.strftime('%H:%M:%S')
-        today = now.strftime('%Y%m%d')
+        
+        # ラジオの日付ルールに従った日付を取得
+        from tcutil import CalendarUtil
+        calendar_util = CalendarUtil()
+        today = calendar_util.get_radio_date()
         
         search_criteria = {
             'start_time': f"00:00:00",
@@ -171,7 +175,11 @@ class ProgramSearchEngine:
         now = datetime.datetime.now()
         current_time = now.strftime('%H:%M:%S')
         future_time = (now + datetime.timedelta(hours=hours)).strftime('%H:%M:%S')
-        today = now.strftime('%Y%m%d')
+        
+        # ラジオの日付ルールに従った日付を取得
+        from tcutil import CalendarUtil
+        calendar_util = CalendarUtil()
+        today = calendar_util.get_radio_date()
         
         search_criteria = {
             'start_time': current_time,
