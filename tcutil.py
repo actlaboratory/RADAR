@@ -42,11 +42,21 @@ class CalendarUtil:
         self.dateData = getCalendar.Calendar()
 
     def getDateValue(self):
-        """日付データを取得"""
+        """日付データを取得（ラジオの日付ルール: 翌朝5時までを今日として扱う）"""
         current = datetime.datetime.now()
-        year = current.year
+        
+        # ラジオの日付ルール: 翌朝5時までを今日として扱う
+        # 現在時刻が5時未満の場合は、前日の日付を使用
+        if current.hour < 5:
+            # 5時未満の場合は前日の日付を基準とする
+            base_date = current.date() - datetime.timedelta(days=1)
+        else:
+            # 5時以降の場合は当日の日付を基準とする
+            base_date = current.date()
+        
+        year = base_date.year
         calendar = self.dateData.generate_calendar(year)
-        start_date = datetime.date(year, current.month, current.day)
+        start_date = base_date
         week_data = self.dateData.get_week_dates(start_date)
 
         results = []
@@ -68,6 +78,21 @@ class CalendarUtil:
         if "-" in date:
             result = date.replace("-", "")
             return result
+
+    def get_radio_date(self):
+        """ラジオの日付ルールに従った日付を取得（翌朝5時までを今日として扱う）"""
+        current = datetime.datetime.now()
+        
+        # ラジオの日付ルール: 翌朝5時までを今日として扱う
+        # 現在時刻が5時未満の場合は、前日の日付を使用
+        if current.hour < 5:
+            # 5時未満の場合は前日の日付を基準とする
+            base_date = current.date() - datetime.timedelta(days=1)
+        else:
+            # 5時以降の場合は当日の日付を基準とする
+            base_date = current.date()
+        
+        return base_date.strftime('%Y%m%d')
 
     def format_now(self):
         now = datetime.datetime.now()
