@@ -45,7 +45,7 @@ class ProgramInfoHandler:
             self.DSCBOX.Enable()
             self.DSCBOX.SetValue(self.parent.progs.getNowProgramDsc(station_id))
         else:
-            self.DSCBOX.SetValue("説明無し")
+            self.DSCBOX.SetValue("")
 
     def show_program_info(self, station_id):
         """番組情報を表示"""
@@ -87,14 +87,16 @@ class ProgramInfoHandler:
         if self.events.displaying:
             self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示&P"))
             self.nplist.Destroy()
-            self.DSCBOX.Disable()
+            self.DSCBOX.Destroy()
             self.events.displaying = False
         else:
             self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示&H"))
+            self.description()
             self.SHOW_NOW_PROGRAMLIST()
             if hasattr(self.events, 'current_playing_station_id') and self.events.current_playing_station_id:
+
+                self.show_description(self.events.current_playing_station_id)
                 self.show_program_info(self.events.current_playing_station_id)
                 self.show_onair_music(self.events.current_playing_station_id)
-                self.DSCBOX.Enable()
             self.events.displaying = True
             
