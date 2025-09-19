@@ -15,6 +15,8 @@ import globalVars
 import update
 import menuItemsStore
 import urllib
+from recorder import recorder_manager
+from recorder import schedule_manager
 from .base import *
 from simpleDialog import *
 from views import globalKeyConfig
@@ -217,7 +219,6 @@ class Events(BaseEvents):
 	def exit(self):
 		self.log.info("Attempting to terminate process...")
 		# 録音中かどうかを確認
-		from recorder import recorder_manager
 		active_recorders = recorder_manager.get_active_recorders()
 		
 		if active_recorders:
@@ -233,7 +234,6 @@ class Events(BaseEvents):
 		# スケジュールデータの存在確認
 		if self._has_schedule_data():
 			# スケジュールデータが存在する場合は確認ダイアログを表示
-			from recorder import schedule_manager
 			schedule_count = len(schedule_manager.schedules)
 			message = f"録音予約が{schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
 			
@@ -273,7 +273,6 @@ class Events(BaseEvents):
 	def _has_schedule_data(self):
 		"""スケジュールデータの存在確認"""
 		try:
-			from recorder import schedule_manager
 			
 			# メモリ上のスケジュールデータを確認
 			if schedule_manager.schedules:
@@ -295,7 +294,6 @@ class Events(BaseEvents):
 	def _cleanup_schedule_data(self):
 		"""スケジュール録音データの完全削除"""
 		try:
-			from recorder import schedule_manager
 			
 			# スケジュールファイルの存在確認
 			schedule_file = schedule_manager.schedule_file
