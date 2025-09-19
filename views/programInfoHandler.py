@@ -61,13 +61,14 @@ class ProgramInfoHandler:
     def show_onair_music(self, station_id):
         """オンエア曲情報を表示"""
         onair_music = self._get_onair_music_safely(station_id)
-        if onair_music and onair_music != "曲情報なし":
+        print(onair_music)
+        if onair_music:
             self.nplist.Append(("オンエア曲", onair_music))
-        elif onair_music is None:
-            self.nplist.Append(("オンエア曲", "曲情報取得エラー"))
+        else:
+            self.nplist.Append(("オンエア曲", ""))
 
     def _get_onair_music_safely(self, station_id):
-        """オンエア曲情報を安全に取得"""
+        """オンエア曲情報を取得"""
         try:
             return self.parent.progs.get_onair_music(station_id)
         except Exception as e:

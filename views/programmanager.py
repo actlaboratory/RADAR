@@ -239,7 +239,7 @@ class ProgramManager:
                         self.log.warning(f"Failed to extract performer for station {id}: {e}")
                         continue
             
-            # 見つからない場合は従来の方法で検索
+            # 見つからない場合は別の方法で検索
             pfm_dic = {}
             for result, pfm in zip(self.results, self.progs):
                 try:
@@ -253,7 +253,7 @@ class ProgramManager:
             if id in pfm_dic:
                 return pfm_dic[id]
             else:
-                return None
+                return ""
         except Exception as e:
             self.log.error(f"Unexpected error in getnowProgramPfm: {e}")
             return None
@@ -323,32 +323,24 @@ class ProgramManager:
 
     def get_onair_music(self, id):
         """オンエア中の曲情報を取得"""
-        try:
-            url = f'http://radiko.jp/v3/feed/pc/noa/{id}.xml'
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            
-            root = ET.parse(url)
-            items = root.xpath(".//item")
-            
-            if items and len(items) > 0:
-                title = items[0].get("title", "")
-                artist = items[0].get("artist", "")
-                if title and artist:
-                    music = f"{artist} - {title}"
-                elif title:
-                    music = title
-                else:
-                    music = "曲情報なし"
+        url = f'http://radiko.jp/v3/feed/pc/noa/{id}.xml'
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        
+        root = ET.parse(url)
+        items = root.xpath(".//item")
+        
+        if items and len(items) > 0:
+            title = items[0].get("title", "")
+            artist = items[0].get("artist", "")
+            if title and artist:
+                return f"{artist} - {title}"
+            elif title:
+                return title
             else:
-                music = "曲情報なし"
-                
-            self.log.debug(f"Online music for {id}: {music}")
-            return music
-            
-        except Exception as e:
-            self.log.warning(f"Failed to get online music for {id}: {e}")
-            return "曲情報取得エラー"
+                return ""
+        else:
+            return ""
 
     def getDescriptions(self):
         try:
