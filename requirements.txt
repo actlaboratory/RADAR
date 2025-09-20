@@ -1,9 +1,8 @@
-﻿wxpython==4.2.1
+﻿wxpython==4.2.2
 pywin32
 winpaths
-pyinstaller>=4
+pyinstaller==6.3.0
 pyperclip
-Plyer
 requests
 https://github.com/actlaboratory/proxyUtil/archive/0.2.4.zip
 https://github.com/actlaboratory/diff_archiver/archive/v1.0.1.zip

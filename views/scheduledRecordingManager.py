@@ -6,7 +6,7 @@ import views.ViewCreator
 from recorder import schedule_manager, RECORDING_STATUS_SCHEDULED, RECORDING_STATUS_RECORDING, RECORDING_STATUS_COMPLETED, RECORDING_STATUS_CANCELLED, RECORDING_STATUS_FAILED
 
 class ScheduledRecordingManager(BaseDialog):
-    """予約録音管理ダイアログ"""
+    """スケジュール録音一覧ダイアログ"""
     def __init__(self):
         super().__init__("ScheduledRecordingManager")
         self.log = getLogger("scheduled_recording_manager")
@@ -14,7 +14,7 @@ class ScheduledRecordingManager(BaseDialog):
 
     def Initialize(self):
         self.log.debug("created")
-        super().Initialize(globalVars.app.hMainView.hFrame, _("予約録音管理"))
+        super().Initialize(globalVars.app.hMainView.hFrame, _("スケジュール録音一覧"))
         self.InstallControls()
         self.load_schedules()
         return True
@@ -24,7 +24,7 @@ class ScheduledRecordingManager(BaseDialog):
         self.creator = views.ViewCreator.ViewCreator(self.viewMode, self.panel, self.sizer, wx.VERTICAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
         
         # 予約一覧リスト
-        self.lst, programlist = self.creator.virtualListCtrl(_("予約録音一覧"))
+        self.lst, programlist = self.creator.virtualListCtrl(_("スケジュール録音一覧"))
         self.lst.AppendColumn(_("番組タイトル"))
         self.lst.AppendColumn(_("放送局"))
         self.lst.AppendColumn(_("開始時間"))
@@ -43,7 +43,9 @@ class ScheduledRecordingManager(BaseDialog):
     def load_schedules(self):
         """予約一覧を読み込み"""
         try:
-            self.schedules = schedule_manager.get_schedules()
+            all_schedules = schedule_manager.get_schedules()
+            # 完了済みのスケジュールを除外
+            self.schedules = [s for s in all_schedules if s.status != RECORDING_STATUS_COMPLETED]
             self.update_list()
         except Exception as e:
             self.log.error(f"Failed to load schedules: {e}")

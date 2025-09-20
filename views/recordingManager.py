@@ -7,8 +7,8 @@ import datetime
 from logging import getLogger
 from views.baseDialog import *
 import views.ViewCreator
-from recorder import recorder_manager
-from plyer import notification
+from recorder import recorder_manager, RECORDING_STATUS_COMPLETED
+from notification_util import notify as notification_notify
 
 class RecordingManagerDialog(BaseDialog):
     """録音管理ダイアログ"""
@@ -38,13 +38,24 @@ class RecordingManagerDialog(BaseDialog):
         """コントロールを配置"""
         self.creator = views.ViewCreator.ViewCreator(self.viewMode, self.panel, self.sizer, wx.VERTICAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
         
-        # 録音一覧リスト
+        # 現在の録音一覧
+        self.creator.staticText(_("現在の録音一覧"))
         self.lst, programlist = self.creator.virtualListCtrl(_("現在の録音一覧"))
         self.lst.AppendColumn(_("放送局"))
         self.lst.AppendColumn(_("番組名"))
         self.lst.AppendColumn(_("開始時刻"))
         self.lst.AppendColumn(_("ファイル名"))
         self.lst.AppendColumn(_("状態"))
+        
+        # 完了した録音一覧
+        self.creator.staticText(_("完了した録音"))
+        self.completed_lst, completed_programlist = self.creator.virtualListCtrl(_("完了した録音"))
+        self.completed_lst.AppendColumn(_("放送局"))
+        self.completed_lst.AppendColumn(_("番組名"))
+        self.completed_lst.AppendColumn(_("開始時刻"))
+        self.completed_lst.AppendColumn(_("終了時刻"))
+        self.completed_lst.AppendColumn(_("ファイル名"))
+        self.completed_lst.AppendColumn(_("状態"))
         
         # ボタン
         self.refresh_btn = self.creator.button(_("更新(&R)"), self.onRefresh)
@@ -58,6 +69,7 @@ class RecordingManagerDialog(BaseDialog):
         try:
             self.active_recorders = self.recorder_manager.get_active_recorders()
             self.update_list()
+            self.load_completed_recordings()
         except Exception as e:
             self.log.error(f"Failed to load recordings: {e}")
 
@@ -86,6 +98,36 @@ class RecordingManagerDialog(BaseDialog):
                 start_time,
                 file_name,
                 status
+            ))
+
+    def load_completed_recordings(self):
+        """完了した録音一覧を読み込み"""
+        try:
+            from recorder import schedule_manager
+            schedules = schedule_manager.get_schedules()
+            completed_schedules = [s for s in schedules if s.status == RECORDING_STATUS_COMPLETED]
+            self.update_completed_list(completed_schedules)
+        except Exception as e:
+            self.log.error(f"Failed to load completed recordings: {e}")
+
+    def update_completed_list(self, completed_schedules):
+        """完了した録音リストを更新"""
+        self.completed_lst.clear()
+        for schedule in completed_schedules:
+            start_time_str = schedule.start_time.strftime("%Y-%m-%d %H:%M")
+            end_time_str = schedule.end_time.strftime("%Y-%m-%d %H:%M")
+            
+            # ファイル名を取得
+            file_name = f"{schedule.output_path}.{schedule.filetype}"
+            file_name = file_name.split('\\')[-1]  # パスからファイル名のみ抽出
+            
+            self.completed_lst.Append((
+                schedule.station_name,
+                schedule.program_title,
+                start_time_str,
+                end_time_str,
+                file_name,
+                _("完了")
             ))
 
     def onRefresh(self, event):
@@ -117,7 +159,7 @@ class RecordingManagerDialog(BaseDialog):
                 self.recorder_manager.stop_recorder(recorder)
                 
                 # 通知
-                notification.notify(
+                notification_notify(
                     title='録音停止',
                     message=f'{info} の録音を停止しました。',
                     app_name='rpb',
@@ -148,7 +190,7 @@ class RecordingManagerDialog(BaseDialog):
                 self.recorder_manager.stop_all()
                 
                 # 通知
-                notification.notify(
+                notification_notify(
                     title='録音停止',
                     message='全ての録音を停止しました。',
                     app_name='rpb',

@@ -40,7 +40,7 @@ FULL_CHECKED=wx.CHK_CHECKED
 
 #build関連定数
 BASE_PACKAGE_URL = None
-PACKAGE_CONTAIN_ITEMS = ()#パッケージに含めたいファイルやfolderがあれば指定
+PACKAGE_CONTAIN_ITEMS = ("bin","radar.ico")#パッケージに含めたいファイルやfolderがあれば指定
 NEED_HOOKS = ()#pyinstallerのhookを追加したい場合は指定
 STARTUP_FILE = "RADAR.py"#起動用ファイルを指定
 UPDATER_URL = "https://github.com/actlabo   atory/updater/releases/download/1.0.0/updater.zip"
