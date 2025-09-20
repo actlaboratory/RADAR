@@ -294,7 +294,7 @@ class RecordingHandler:
             errorDialog(_("録音予約の処理に失敗しました。"))
 
     def manage_schedules(self, event):
-        """予約録音管理ダイアログを表示"""
+        """スケジュール録音一覧ダイアログを表示"""
         try:
             dialog = scheduledRecordingManager.ScheduledRecordingManager()
             dialog.Initialize()
@@ -302,7 +302,7 @@ class RecordingHandler:
             
         except Exception as e:
             self.log.error(f"Error in manage_schedules: {e}")
-            errorDialog(f"予約録音管理の表示に失敗しました: {e}")
+            errorDialog(f"スケジュール録音一覧の表示に失敗しました: {e}")
 
     def manage_recordings(self, event):
         """録音管理ダイアログを表示"""

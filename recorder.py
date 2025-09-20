@@ -524,7 +524,17 @@ class ScheduleManager:
             # すべてのスケジュールを削除
             removed_count = len(self.schedules)
             self.schedules.clear()
-            self.save_schedules()
+            
+            # JSONファイルを削除
+            try:
+                if os.path.exists(self.schedule_file):
+                    os.remove(self.schedule_file)
+                    self.logger.info(f"Deleted schedule file: {self.schedule_file}")
+            except Exception as e:
+                self.logger.error(f"Failed to delete schedule file: {e}")
+                # ファイル削除に失敗した場合は空のファイルを保存
+                self.save_schedules()
+            
             self.logger.info(f"Cleared all schedules: {removed_count} schedules removed")
             return removed_count
 
