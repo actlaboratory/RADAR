@@ -24,6 +24,7 @@ class ShowSchedule(BaseDialog):
         self.pfmlst = []
         self.stlst = []
         self.enlst = []
+        self.lst = None
 
     def Initialize(self):
         self.log.debug("created")
@@ -34,29 +35,29 @@ class ShowSchedule(BaseDialog):
     def InstallControls(self):
         """いろんなウィジェットを設置する"""
         self.creator=views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.sizer,wx.VERTICAL,20,style=wx.EXPAND|wx.ALL,margin=20)
-        self.lst,programlist = self.creator.virtualListCtrl(_("番組一覧"))
-        self.lst.AppendColumn(_("タイトル"))
-        self.lst.AppendColumn(_("出演者"))
-        self.lst.AppendColumn(_("開始時間"))
-        self.lst.AppendColumn(_("終了時間"))
-        self.lst.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.show_detail)
         self.calendarSelector()
+
+        self.lst,programlist = self.creator.virtualListCtrl(_("番組一覧"), size=(800,400), sizerFlag=wx.ALL|wx.EXPAND)
+        self.lst.AppendColumn(_("タイトル"), 0, 380)
+        self.lst.AppendColumn(_("出演者"), 0, 200)
+        self.lst.AppendColumn(_("開始時間"),0,100)
+        self.lst.AppendColumn(_("終了時間"),0,100)
+        self.lst.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.show_detail)
         self.lst.Focus(0)
+        self.lst.SetFocus()
+
         self.cls = self.creator.closebutton(_("閉じる(&C)"), self.onCloseBtn)
         self.cls.SetDefault()
-        return
+
+        self.show_programlist()
 
     def calendarSelector(self):
         """日時指定用コンボボックスを作成し、内容を設定"""
-        self.cmb,label = self.creator.combobox(_("日付指定"), self.clutl.getDateValue())
+        self.cmb,label = self.creator.combobox(_("日付指定"), self.clutl.getDateValue(), textLayout=wx.HORIZONTAL)
         self.cmb.SetSelection(0)
         self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
-        # 初期状態を反映するために明示的にイベントを発生させる
-        event = wx.CommandEvent(wx.EVT_COMBOBOX.typeId, self.cmb.GetId())
-        event.SetInt(0)
-        self.cmb.ProcessEvent(event)
 
-    def show_programlist(self, event):
+    def show_programlist(self, event=None):
         self.lst.clear()
         self.dsclst.clear()
         self.tilst.clear()
