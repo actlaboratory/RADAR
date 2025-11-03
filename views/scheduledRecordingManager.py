@@ -24,20 +24,26 @@ class ScheduledRecordingManager(BaseDialog):
         self.creator = views.ViewCreator.ViewCreator(self.viewMode, self.panel, self.sizer, wx.VERTICAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
         
         # 予約一覧リスト
-        self.lst, programlist = self.creator.virtualListCtrl(_("スケジュール録音一覧"))
-        self.lst.AppendColumn(_("番組タイトル"))
-        self.lst.AppendColumn(_("放送局"))
-        self.lst.AppendColumn(_("開始時間"))
-        self.lst.AppendColumn(_("終了時間"))
-        self.lst.AppendColumn(_("ステータス"))
-        self.lst.AppendColumn(_("出力パス"))
+        self.lst, programlist = self.creator.virtualListCtrl(_("スケジュール録音一覧"), size=(800,400))
+        self.lst.AppendColumn(_("番組タイトル"),0,280)
+        self.lst.AppendColumn(_("放送局"),0,200)
+        self.lst.AppendColumn(_("開始時間"),0,100)
+        self.lst.AppendColumn(_("終了時間"),0,100)
+        self.lst.AppendColumn(_("ステータス"),0,100)
+        self.lst.AppendColumn(_("出力パス"),0,500)
         
         # ボタン
-        self.refresh_btn = self.creator.button(_("更新(&R)"), self.onRefresh)
-        self.cancel_btn = self.creator.button(_("キャンセル(&C)"), self.onCancel)
-        self.remove_btn = self.creator.button(_("削除(&D)"), self.onRemove)
-        self.clear_all_btn = self.creator.button(_("すべて削除(&A)"), self.onClearAll)
-        self.close_btn = self.creator.closebutton(_("閉じる(&X)"), self.onClose)
+        horizontalCreator = views.ViewCreator.ViewCreator(self.viewMode, self.creator.GetPanel(), self.creator.GetSizer(), wx.HORIZONTAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
+        self.refresh_btn = horizontalCreator.button(_("更新(&R)"), self.onRefresh)
+        horizontalCreator.AddSpace(-1)
+        self.cancel_btn = horizontalCreator.button(_("キャンセル(&C)"), self.onCancel)
+        horizontalCreator.AddSpace(-1)
+        self.remove_btn = horizontalCreator.button(_("削除(&D)"), self.onRemove)
+
+        horizontalCreator = views.ViewCreator.ViewCreator(self.viewMode, self.creator.GetPanel(), self.creator.GetSizer(), wx.HORIZONTAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
+        self.clear_all_btn = horizontalCreator.button(_("すべて削除(&A)"), self.onClearAll)
+        horizontalCreator.AddSpace(-1)
+        self.close_btn = horizontalCreator.closebutton(_("閉じる(&X)"), self.onClose, sizerFlag=wx.ALIGN_RIGHT)
         self.close_btn.SetDefault()
 
     def load_schedules(self):
