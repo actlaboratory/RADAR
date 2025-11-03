@@ -39,29 +39,31 @@ class RecordingManagerDialog(BaseDialog):
         self.creator = views.ViewCreator.ViewCreator(self.viewMode, self.panel, self.sizer, wx.VERTICAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
         
         # 現在の録音一覧
-        self.creator.staticText(_("現在の録音一覧"))
-        self.lst, programlist = self.creator.virtualListCtrl(_("現在の録音一覧"))
-        self.lst.AppendColumn(_("放送局"))
-        self.lst.AppendColumn(_("番組名"))
-        self.lst.AppendColumn(_("開始時刻"))
-        self.lst.AppendColumn(_("ファイル名"))
-        self.lst.AppendColumn(_("状態"))
+        self.lst, programlist = self.creator.virtualListCtrl(_("現在の録音一覧"), size=(800,400))
+        self.lst.AppendColumn(_("放送局"),0,200)
+        self.lst.AppendColumn(_("番組名"),0,330)
+        self.lst.AppendColumn(_("開始時刻"),0,100)
+        self.lst.AppendColumn(_("状態"),0,150)
+        self.lst.AppendColumn(_("ファイル名"),0,550)
+
         
         # 完了した録音一覧
-        self.creator.staticText(_("完了した録音"))
-        self.completed_lst, completed_programlist = self.creator.virtualListCtrl(_("完了した録音"))
-        self.completed_lst.AppendColumn(_("放送局"))
-        self.completed_lst.AppendColumn(_("番組名"))
-        self.completed_lst.AppendColumn(_("開始時刻"))
-        self.completed_lst.AppendColumn(_("終了時刻"))
-        self.completed_lst.AppendColumn(_("ファイル名"))
-        self.completed_lst.AppendColumn(_("状態"))
+        self.completed_lst, completed_programlist = self.creator.virtualListCtrl(_("完了した録音"), size=(800,400))
+        self.completed_lst.AppendColumn(_("放送局"),0,200)
+        self.completed_lst.AppendColumn(_("番組名"),0,330)
+        self.completed_lst.AppendColumn(_("開始時刻"),0,100)
+        self.completed_lst.AppendColumn(_("終了時刻"),0,150)
+        self.completed_lst.AppendColumn(_("ファイル名"),0,500)
+
         
         # ボタン
-        self.refresh_btn = self.creator.button(_("更新(&R)"), self.onRefresh)
-        self.stop_btn = self.creator.button(_("選択した録音を停止(&S)"), self.onStop)
-        self.stop_all_btn = self.creator.button(_("全て停止(&A)"), self.onStopAll)
-        self.close_btn = self.creator.closebutton(_("閉じる(&X)"), self.onClose)
+        horizontalCreator = views.ViewCreator.ViewCreator(self.viewMode, self.creator.GetPanel(), self.creator.GetSizer(), wx.HORIZONTAL, 20, style=wx.EXPAND|wx.BOTTOM|wx.TOP, margin=20)
+        self.refresh_btn = horizontalCreator.button(_("更新(&R)"), self.onRefresh)
+        horizontalCreator.AddSpace(-1)
+        self.stop_btn = horizontalCreator.button(_("選択した録音を停止(&S)"), self.onStop)
+        horizontalCreator.AddSpace(-1)
+        self.stop_all_btn = horizontalCreator.button(_("全て停止(&A)"), self.onStopAll)
+        self.close_btn = self.creator.closebutton(_("閉じる(&X)"), self.onClose, sizerFlag=wx.ALIGN_RIGHT)
         self.close_btn.SetDefault()
 
     def load_recordings(self):
@@ -96,8 +98,8 @@ class RecordingManagerDialog(BaseDialog):
                 station_name,
                 program_title,
                 start_time,
+                status,
                 file_name,
-                status
             ))
 
     def load_completed_recordings(self):
@@ -127,7 +129,6 @@ class RecordingManagerDialog(BaseDialog):
                 start_time_str,
                 end_time_str,
                 file_name,
-                _("完了")
             ))
 
     def onRefresh(self, event):
