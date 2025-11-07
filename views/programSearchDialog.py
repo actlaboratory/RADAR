@@ -90,87 +90,82 @@ class ProgramSearchDialog(BaseDialog):
     
     def create_search_inputs(self):
         """検索条件入力エリアを作成"""
-        # 検索履歴を残すチェックボックス
-        self.history_checkbox = self.creator.checkbox(_("検索履歴を残す"), event=self.onHistoryCheckboxChanged)
-        
+
+        creator = views.ViewCreator.ViewCreator(self.viewMode, self.panel, self.creator.GetSizer(), views.ViewCreator.GridBagSizer,style=wx.ALL|wx.EXPAND,proportion=1,margin=20)
+
         # 番組タイトル検索（コンボボックス）
-        self.title_combo, title_label = self.creator.combobox(_("番組タイトル"), [], event=self.onTitleComboChanged, style=wx.CB_DROPDOWN)
+        self.title_combo, title_label = creator.combobox(_("番組タイトル"), [], event=self.onTitleComboChanged, style=wx.CB_DROPDOWN, sizerFlag=wx.ALL|wx.ALIGN_CENTER_VERTICAL|wx.EXPAND)
         self.title_combo.Bind(wx.EVT_TEXT_ENTER, self.onSearch)
-        
+
         # 出演者検索（コンボボックス）
-        self.performer_combo, performer_label = self.creator.combobox(_("出演者"), [], event=self.onPerformerComboChanged, style=wx.CB_DROPDOWN)
+        self.performer_combo, performer_label = creator.combobox(_("出演者"), [], event=self.onPerformerComboChanged, style=wx.CB_DROPDOWN, sizerFlag=wx.ALL|wx.ALIGN_CENTER_VERTICAL|wx.EXPAND)
         self.performer_combo.Bind(wx.EVT_TEXT_ENTER, self.onSearch)
         
         # 放送局選択
-        self.station_combo, station_label = self.creator.combobox(_("放送局"), [])
+        self.station_combo, station_label = creator.combobox(_("放送局"), [])
         self.station_combo.Bind(wx.EVT_COMBOBOX, self.onStationChanged)
         
-        # 日付選択（コンボボックス）
-        self.date_combo, date_label = self.creator.combobox(_("日付"), [])
+        # 開始日時（コンボボックス・スピンコントロール）
+        creator.staticText(_("開始日時"))
+        date_creator = views.ViewCreator.ViewCreator(
+            self.viewMode, self.panel, creator.GetSizer(),
+            wx.HORIZONTAL, 20, style=wx.EXPAND|wx.ALL, margin=20
+        )
+
+        self.date_combo, date_label = date_creator.combobox(_("日付"), [], textLayout=None)
         self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
-        
-        # 時間範囲選択（スピンコントロール）
-        time_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        
-        # 開始時間
-        start_time_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        start_label = wx.StaticText(self.panel, wx.ID_ANY, _("開始時間"))
-        self.start_hour_spin = wx.SpinCtrl(self.panel, wx.ID_ANY, value="0", min=0, max=23, size=(60, -1))
-        self.start_minute_spin = wx.SpinCtrl(self.panel, wx.ID_ANY, value="0", min=0, max=59, size=(60, -1))
-        start_time_sizer.Add(start_label, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
-        start_time_sizer.Add(self.start_hour_spin, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
-        start_time_sizer.Add(wx.StaticText(self.panel, wx.ID_ANY, ":"), 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
-        start_time_sizer.Add(self.start_minute_spin, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
-        
+
+        self.start_hour_spin = date_creator.spinCtrl(_("開始時間（時）"), min=0, max=23, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        date_creator.staticText(":")
+        self.start_minute_spin = date_creator.spinCtrl(_("開始時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+
         # 終了時間
-        end_time_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        end_label = wx.StaticText(self.panel, wx.ID_ANY, _("終了時間"))
-        self.end_hour_spin = wx.SpinCtrl(self.panel, wx.ID_ANY, value="23", min=0, max=23, size=(60, -1))
-        self.end_minute_spin = wx.SpinCtrl(self.panel, wx.ID_ANY, value="59", min=0, max=59, size=(60, -1))
-        end_time_sizer.Add(end_label, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
-        end_time_sizer.Add(self.end_hour_spin, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
-        end_time_sizer.Add(wx.StaticText(self.panel, wx.ID_ANY, ":"), 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
-        end_time_sizer.Add(self.end_minute_spin, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
-        
-        time_sizer.Add(start_time_sizer, 0, wx.ALL, 5)
-        time_sizer.Add(end_time_sizer, 0, wx.ALL, 5)
-        
-        self.sizer.Add(time_sizer, 0, wx.EXPAND|wx.ALL, 5)
-        
-        # 検索ボタン
-        self.search_btn = self.creator.button(_("検索"), event=self.onSearch)
-        self.search_btn.SetDefault()
-        
-        # クリアボタン
-        self.clear_btn = self.creator.button(_("クリア"), event=self.onClear)
-        
-        # 履歴クリアボタン
-        self.history_clear_btn = self.creator.button(_("履歴クリア"), event=self.onHistoryClear)
-        self.history_clear_btn.Enable(False)  # デフォルトは無効
-    
+        creator.staticText(_("終了時間"))
+        date_creator = views.ViewCreator.ViewCreator(            self.viewMode, self.panel, creator.GetSizer(),wx.HORIZONTAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
+        self.start_hour_spin = date_creator.spinCtrl(_("終了時間（時）"), min=0, max=23, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        date_creator.staticText(":")
+        self.start_minute_spin = date_creator.spinCtrl(_("終了時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+
+        # 検索・クリアボタン
+        button_area_creator = views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.creator.GetSizer(),wx.HORIZONTAL,style=wx.ALIGN_RIGHT)
+        self.search_btn = button_area_creator.okbutton(_("検索"), event=self.onSearch)
+        self.clear_btn = button_area_creator.button(_("クリア"), event=self.onClear)
+
     def create_results_display(self):
         """検索結果表示エリアを作成"""
         # 結果リスト
-        self.result_list, result_label = self.creator.virtualListCtrl(_("検索結果"))
+        self.result_list, self.result_count_label = self.creator.virtualListCtrl(_("検索結果"), size=(700,300))
         self.result_list.AppendColumn(_("放送局"))
         self.result_list.AppendColumn(_("番組タイトル"))
         self.result_list.AppendColumn(_("出演者"))
         self.result_list.AppendColumn(_("開始時間"))
         self.result_list.AppendColumn(_("終了時間"))
         self.result_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.onItemActivated)
-        
-        # 結果数表示
-        self.result_count_label = wx.StaticText(self.panel, wx.ID_ANY, _("結果: 0件"))
-        self.sizer.Add(self.result_count_label, 0, wx.ALL, 5)
-    
+
     def create_buttons(self):
         """ボタンエリアを作成"""
-        # 閉じるボタン
-        self.close_btn = self.creator.cancelbutton(_("閉じる"), event=self.onClose)
-        
+        # 履歴管理
+        button_area_creator = views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.creator.GetSizer(),wx.HORIZONTAL, style=wx.EXPAND)
+        # 検索履歴を残すチェックボックス
+        self.history_checkbox = button_area_creator.checkbox(_("検索履歴を残す"), event=self.onHistoryCheckboxChanged)
+
+        # 見た目の調整
+        button_area_creator.AddSpace(-1)
+
+        # 履歴クリアボタン
+        self.history_clear_btn = button_area_creator.button(_("履歴クリア"), event=self.onHistoryClear)
+        self.history_clear_btn.Enable(False)  # デフォルトは無効
+
+        button_area_creator = views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.creator.GetSizer(),wx.HORIZONTAL, style=wx.EXPAND)
         # データ更新ボタン
-        self.refresh_btn = self.creator.button(_("データ更新"), event=self.onRefresh)
-    
+        self.refresh_btn = button_area_creator.button(_("データ更新"), event=self.onRefresh)
+
+        # 見た目の調整
+        button_area_creator.AddSpace(-1)
+
+        # 閉じるボタン
+        self.close_btn = button_area_creator.cancelbutton(_("閉じる"), event=self.onClose)
+
     def setup_date_options(self):
         """日付選択オプションを設定（データベースの実際の日付範囲を使用）"""
         try:
@@ -426,7 +421,7 @@ class ProgramSearchDialog(BaseDialog):
         if not self.search_results:
             # 結果がない場合のメッセージ
             self.result_list.Append((_("検索結果がありません"), "", "", "", ""))
-            self.result_count_label.SetLabel(_("結果: 0件"))
+            self.result_count_label.SetLabel(_("検索結果: 0件"))
             try:
                 globalVars.app.say(_("結果 0件"), interrupt=True)
             except Exception:
@@ -469,7 +464,7 @@ class ProgramSearchDialog(BaseDialog):
         
         # 結果数を更新
         count = len(self.search_results)
-        self.result_count_label.SetLabel(_(f"結果: {count}件"))
+        self.result_count_label.SetLabel(_(f"検索結果: {count}件"))
         
         if count > 0:
             self.result_list.Focus(0)
@@ -527,7 +522,7 @@ class ProgramSearchDialog(BaseDialog):
         self.end_minute_spin.SetValue(59)
         
         self.result_list.clear()
-        self.result_count_label.SetLabel(_("結果: 0件"))
+        self.result_count_label.SetLabel(_("検索結果: 0件"))
     
     def onStationChanged(self, event):
         """放送局が変更された時の処理"""

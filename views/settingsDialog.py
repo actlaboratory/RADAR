@@ -73,6 +73,7 @@ class Dialog(BaseDialog):
 		self.logLevel,dummy = creator.combobox(_("ログ記録レベル(&L)"),list(self.logLevelSelection.values()))
 		self.reader, static = creator.combobox(_("出力先(&O)"), list(self.readerSelection.values()))
 		self.minimizeonexit = creator.checkbox(_("終了時にタスクトレイに最小化(&M)"))
+		creator.GetSizer().SetItemSpan(self.minimizeonexit.GetParent(),2)
 
 		# view
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,views.ViewCreator.GridBagSizer,label=_("表示/言語"),style=wx.ALL,margin=20)
@@ -87,7 +88,7 @@ class Dialog(BaseDialog):
 		# 録音出力先フォルダ選択（録音タブ内に追加）
 		self.output_directory, static = creator.inputbox(_("録音ファイルの出力先フォルダ(&O)"))
 		self.output_directory.hideScrollBar(wx.HORIZONTAL)
-		self.browse_button = creator.button(_("参照(&B)"), self.onBrowseOutputFolder)
+		self.browse_button = creator.button(_("参照(&B)"), self.onBrowseOutputFolder, sizerFlag=wx.ALIGN_RIGHT)
 
 		# network
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("ネットワーク"),style=wx.ALL,margin=20)
