@@ -122,9 +122,9 @@ class ProgramSearchDialog(BaseDialog):
         # 終了時間
         creator.staticText(_("終了時間"))
         date_creator = views.ViewCreator.ViewCreator(            self.viewMode, self.panel, creator.GetSizer(),wx.HORIZONTAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
-        self.end_hour_spin, _label = date_creator.spinCtrl(_("終了時間（時）"), min=0, max=23, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.end_hour_spin, _label = date_creator.spinCtrl(_("終了時間（時）"), min=0, max=23, defaultValue=23, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
-        self.end_minute_spin, _label = date_creator.spinCtrl(_("終了時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.end_minute_spin, _label = date_creator.spinCtrl(_("終了時間（分）"), min=0, max=59, defaultValue=59, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
 
         # 検索・クリアボタン
         button_area_creator = views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.creator.GetSizer(),wx.HORIZONTAL,style=wx.ALIGN_RIGHT)
@@ -190,6 +190,8 @@ class ProgramSearchDialog(BaseDialog):
             
             # 日付オプションを作成
             date_options = []
+            # 最初に「指定なし（全日付）」を追加
+            date_options.append(_("指定なし（全日付）"))
             current_date = start_date
             while current_date <= end_date:
                 # エンコーディングエラーを避けるため、英語形式で表示
@@ -204,7 +206,7 @@ class ProgramSearchDialog(BaseDialog):
                 current_date += datetime.timedelta(days=1)
             
             self.date_combo.SetItems(date_options)
-            self.date_combo.SetSelection(0)  # 最初の日付を選択
+            self.date_combo.SetSelection(0)  # 「指定なし（全日付）」を選択
             
             self.log.info(f"Date options set: {len(date_options)} dates from {date_options[0]} to {date_options[-1]}")
             
@@ -217,13 +219,15 @@ class ProgramSearchDialog(BaseDialog):
             # フォールバック: シンプルな日付形式
             try:
                 date_options = []
+                # 最初に「指定なし（全日付）」を追加
+                date_options.append(_("指定なし（全日付）"))
                 start_date = datetime.datetime.now()
                 for i in range(7):
                     target_date = start_date + datetime.timedelta(days=i)
                     date_value = target_date.strftime('%Y%m%d')
                     date_options.append(f"{date_value}")
                 self.date_combo.SetItems(date_options)
-                self.date_combo.SetSelection(0)
+                self.date_combo.SetSelection(0)  # 「指定なし（全日付）」を選択
                 self.log.info(f"Fallback date options set: {date_options}")
             except Exception as e2:
                 self.log.error(f"Fallback date setup also failed: {e2}")
@@ -300,10 +304,12 @@ class ProgramSearchDialog(BaseDialog):
                 stations = self.data_collector.get_station_list()
             
             station_names = [name for _, name in stations]
+            # 最初に「指定なし」を追加
+            station_names.insert(0, _("指定なし"))
             self.station_combo.SetItems(station_names)
             
             if station_names:
-                self.station_combo.SetSelection(0)
+                self.station_combo.SetSelection(0)  # 「指定なし」を選択
                 
         except Exception as e:
             self.log.error(f"Failed to update station list: {e}")
@@ -370,7 +376,8 @@ class ProgramSearchDialog(BaseDialog):
         
         # 放送局
         station_name = self.station_combo.GetValue().strip()
-        if station_name:
+        # 「指定なし」が選択されている場合は検索条件に含めない
+        if station_name and station_name != _("指定なし"):
             criteria['station_name'] = station_name
         
         # 日付（コンボボックスから取得）
@@ -379,11 +386,13 @@ class ProgramSearchDialog(BaseDialog):
             date_text = self.date_combo.GetString(date_selection)
             self.log.debug(f"Selected date text: '{date_text}'")
 
-            if '(' in date_text and ')' in date_text:
-                date_value = date_text.split('(')[1].split(')')[0]
-                criteria['date'] = date_value
-            else:
-                criteria['date'] = date_text
+            # 「指定なし（全日付）」が選択されている場合は日付条件を追加しない
+            if date_text != _("指定なし（全日付）"):
+                if '(' in date_text and ')' in date_text:
+                    date_value = date_text.split('(')[1].split(')')[0]
+                    criteria['date'] = date_value
+                else:
+                    criteria['date'] = date_text
 
         # 時間範囲（スピンコントロールから取得）
         start_hour = self.start_hour_spin.GetValue()
@@ -512,8 +521,8 @@ class ProgramSearchDialog(BaseDialog):
         """検索条件をクリア"""
         self.title_combo.SetValue("")
         self.performer_combo.SetValue("")
-        self.station_combo.SetValue("")
-        self.date_combo.SetSelection(0)  # 今日を選択
+        self.station_combo.SetSelection(0)  # 「指定なし」を選択
+        self.date_combo.SetSelection(0)  # 「指定なし（全日付）」を選択
         
         # スピンコントロールをリセット
         self.start_hour_spin.SetValue(0)
