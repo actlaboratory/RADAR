@@ -115,16 +115,16 @@ class ProgramSearchDialog(BaseDialog):
         self.date_combo, date_label = date_creator.combobox(_("日付"), [], textLayout=None)
         self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
 
-        self.start_hour_spin = date_creator.spinCtrl(_("開始時間（時）"), min=0, max=23, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.start_hour_spin, _label = date_creator.spinCtrl(_("開始時間（時）"), min=0, max=23, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
-        self.start_minute_spin = date_creator.spinCtrl(_("開始時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.start_minute_spin, _label = date_creator.spinCtrl(_("開始時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
 
         # 終了時間
         creator.staticText(_("終了時間"))
         date_creator = views.ViewCreator.ViewCreator(            self.viewMode, self.panel, creator.GetSizer(),wx.HORIZONTAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
-        self.start_hour_spin = date_creator.spinCtrl(_("終了時間（時）"), min=0, max=23, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.end_hour_spin, _label = date_creator.spinCtrl(_("終了時間（時）"), min=0, max=23, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
-        self.start_minute_spin = date_creator.spinCtrl(_("終了時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.end_minute_spin, _label = date_creator.spinCtrl(_("終了時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
 
         # 検索・クリアボタン
         button_area_creator = views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.creator.GetSizer(),wx.HORIZONTAL,style=wx.ALIGN_RIGHT)
