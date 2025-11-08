@@ -235,12 +235,14 @@ class Events(BaseEvents):
 		if self._has_schedule_data():
 			# スケジュールデータが存在する場合は確認ダイアログを表示
 			schedule_count = len(schedule_manager.schedules)
-			message = f"録音予約が{schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
-			
-			result = yesNoDialog(_("予約データ削除の確認"), message)
-			if result == wx.ID_NO:
-				# いいえが選択された場合は終了しない
-				return
+			# 0件の場合は確認ダイアログを表示しない
+			if schedule_count > 0:
+				message = f"録音予約が{schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
+				
+				result = yesNoDialog(_("予約データ削除の確認"), message)
+				if result == wx.ID_NO:
+					# いいえが選択された場合は終了しない
+					return
 		
 		# 各ハンドラーのクリーンアップ
 		self._cleanup_recording_handler()
