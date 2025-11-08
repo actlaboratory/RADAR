@@ -68,7 +68,6 @@ class MainView(BaseView):
 		# UIの設定
 		self.radio_manager.setup_radio_ui()
 		self.program_info_handler.setup_program_info_ui()
-		self.exit_button()
 
 	def _ensure_output_directory(self):
 		"""outputディレクトリの存在をチェックし、存在しない場合は作成する"""
@@ -91,9 +90,6 @@ class MainView(BaseView):
 		except (OSError, PermissionError) as e:
 			self.log.error(f"Failed to create directory {directory_path}: {e}")
 			return False
-
-	def exit_button(self):
-		self.exitbtn = self.creator.button(_("終了"), self.events.onExit)
 
 	def get_latest_info(self):
 		"""ctrl+f5によるリロード処理のときに呼ばれる"""
