@@ -415,6 +415,10 @@ class Events(BaseEvents):
 		if not hasattr(self.parent, 'program_info_handler'):
 			return
 		
+		# 番組情報が非表示の場合は何もしない
+		if not self.displaying:
+			return
+		
 		handler = self.parent.program_info_handler
 		handler.nplist.Enable()
 		handler.nplist.clear()

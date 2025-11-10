@@ -33,6 +33,10 @@ class ProgramInfoHandler:
 
     def get_latest_info(self):
         """ctrl+f5によるリロード処理のときに呼ばれる"""
+        # 番組情報が非表示の場合は何もしない
+        if not self.events.displaying:
+            return
+        
         if hasattr(self.events, 'current_playing_station_id') and self.events.current_playing_station_id:
             self.nplist.clear()
             self.show_program_info(self.events.current_playing_station_id)
@@ -41,6 +45,10 @@ class ProgramInfoHandler:
 
     def show_description(self, station_id):
         """番組の説明を表示"""
+        # 番組情報が非表示の場合は何もしない
+        if not self.events.displaying:
+            return
+        
         if self.parent.progs.getNowProgramDsc(station_id):
             self.DSCBOX.Enable()
             self.DSCBOX.SetValue(self.parent.progs.getNowProgramDsc(station_id))
@@ -49,6 +57,10 @@ class ProgramInfoHandler:
 
     def show_program_info(self, station_id):
         """番組情報を表示"""
+        # 番組情報が非表示の場合は何もしない
+        if not self.events.displaying:
+            return
+        
         self.nplist.Enable()
         program_title = self.parent.progs.getNowProgram(station_id)
         program_pfm = self.parent.progs.getnowProgramPfm(station_id)
@@ -61,6 +73,10 @@ class ProgramInfoHandler:
 
     def show_onair_music(self, station_id):
         """オンエア曲情報を表示"""
+        # 番組情報が非表示の場合は何もしない
+        if not self.events.displaying:
+            return
+        
         onair_music = self._get_onair_music_safely(station_id)
         if onair_music:
             self.nplist.Append(("オンエア曲", onair_music))
