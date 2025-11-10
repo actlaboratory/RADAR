@@ -20,15 +20,15 @@ class ProgramInfoHandler:
 
     def SHOW_NOW_PROGRAMLIST(self):
         """現在再生中の番組リストを作成"""
-        self.nplist, nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"))
-        self.nplist.AppendColumn(_("現在再生中"))
-        self.nplist.AppendColumn(_(""))
+        self.nplist, self.nowprograminfo = self.creator.virtualListCtrl(_("現在再生中の番組"), size=(450,160), style=wx.LC_SINGLE_SEL|wx.LC_REPORT|wx.LC_NO_HEADER | wx.BORDER_RAISED, sizerFlag=wx.ALL|wx.EXPAND)
+        self.nplist.AppendColumn(_(""),0,180)
+        self.nplist.AppendColumn(_(""),0,1500)
         self.nplist.Disable()
 
     def description(self):
         """番組の説明の表示部分を作る"""
         # 番組の説明の表示部分をつくる
-        self.DSCBOX, label = self.creator.inputbox(_("説明"), style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_PROCESS_ENTER)  # 読み取り専用のテキストボックス
+        self.DSCBOX, self.dscboxLabel = self.creator.inputbox(_("説明"), style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_PROCESS_ENTER)  # 読み取り専用のテキストボックス
         self.DSCBOX.Disable()  # 初期状態は無効
 
     def get_latest_info(self):
@@ -86,9 +86,12 @@ class ProgramInfoHandler:
         """番組情報の表示/非表示を切り替え"""
         if self.events.displaying:
             self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示&P"))
+            self.nowprograminfo.Destroy()
             self.nplist.Destroy()
+            self.dscboxLabel.Destroy()
             self.DSCBOX.Destroy()
             self.events.displaying = False
+            self.creator.GetSizer().Layout()
         else:
             self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示&H"))
             self.description()
@@ -98,5 +101,6 @@ class ProgramInfoHandler:
                 self.show_description(self.events.current_playing_station_id)
                 self.show_program_info(self.events.current_playing_station_id)
                 self.show_onair_music(self.events.current_playing_station_id)
+            self.creator.GetSizer().Layout()
             self.events.displaying = True
             

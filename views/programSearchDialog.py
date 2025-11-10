@@ -134,12 +134,12 @@ class ProgramSearchDialog(BaseDialog):
     def create_results_display(self):
         """検索結果表示エリアを作成"""
         # 結果リスト
-        self.result_list, self.result_count_label = self.creator.virtualListCtrl(_("検索結果"), size=(700,300))
-        self.result_list.AppendColumn(_("放送局"))
-        self.result_list.AppendColumn(_("番組タイトル"))
-        self.result_list.AppendColumn(_("出演者"))
-        self.result_list.AppendColumn(_("開始時間"))
-        self.result_list.AppendColumn(_("終了時間"))
+        self.result_list, self.result_count_label = self.creator.virtualListCtrl(_("検索結果"), size=(700,300), sizerFlag=wx.ALL|wx.EXPAND)
+        self.result_list.AppendColumn(_("放送局"),0,300)
+        self.result_list.AppendColumn(_("番組タイトル"),0,200)
+        self.result_list.AppendColumn(_("出演者"),0,100)
+        self.result_list.AppendColumn(_("開始"),0,120)
+        self.result_list.AppendColumn(_("終了"),0,120)
         self.result_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.onItemActivated)
 
     def create_buttons(self):
@@ -453,8 +453,8 @@ class ProgramSearchDialog(BaseDialog):
             self.log.debug(f"Program date: '{date}' (type: {type(date)})")
             
             if date and len(date) == 8:
-                # YYYYMMDD形式をYYYY/MM/DD形式に変換
-                formatted_date = f"{date[:4]}/{date[4:6]}/{date[6:8]}"
+                # YYYYMMDD形式をMM/DD形式に変換
+                formatted_date = f"{date[4:6]}/{date[6:8]}"
             else:
                 formatted_date = date
             

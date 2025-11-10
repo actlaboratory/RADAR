@@ -53,8 +53,8 @@ class RadioManager:
 
 
     def AreaTreeCtrl(self):
-        """放送エリアのツリーコントロールを作成"""
-        self.tree, broadcaster = self.creator.treeCtrl(_("放送エリア"))
+        """放送局のツリーコントロールを作成"""
+        self.tree, broadcaster = self.creator.treeCtrl(_("放送局"), size=(450,200), proportion=1)
 
     def setupradio(self):
         """ステーションidを取得後、ツリービューに描画"""
