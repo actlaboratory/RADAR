@@ -6,6 +6,7 @@ defaultKeymap={}
 
 defaultKeymap["mainView"]={
 	"FILE_RELOAD":"ctrl+R/F5",
+	"HIDE":"",
 	"EXIT":"alt+f4",
 
 	"OPTION_OPTION":"",

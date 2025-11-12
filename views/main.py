@@ -128,8 +128,12 @@ class Menu(BaseMenu):
 		# ファイルメニュー
 		self.RegisterMenuCommand(self.hFileMenu, {
 			"FILE_RELOAD": self.parent.events.onReLoad,
-			"EXIT":self.parent.events.onExit,
+			"HIDE": self.parent.events.onHide,
+			"EXIT":self.parent.events.exit,
 		})
+		
+		# メニューが開かれたときに設定に応じてHIDEメニューを無効化
+		self.hFileMenu.Bind(wx.EVT_MENU_OPEN, self.OnMenuOpen)
 
 		# 機能メニュー
 		self.RegisterMenuCommand(self.hFunctionMenu, {
@@ -182,6 +186,14 @@ class Menu(BaseMenu):
 		self.hMenuBar.Append(self.hOptionMenu, _("オプション(&O)"))
 		self.hMenuBar.Append(self.hHelpMenu, _("ヘルプ(&H)"))
 		target.SetMenuBar(self.hMenuBar)
+	
+	def OnMenuOpen(self, event):
+		"""メニューが開かれたときに設定に応じてHIDEメニューを無効化"""
+		# タスクトレイへの最小化が有効な場合、HIDEメニューを無効化
+		if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
+			self.EnableMenu("HIDE", False)
+		else:
+			self.EnableMenu("HIDE", True)
 
 
 class Events(BaseEvents):
@@ -199,15 +211,9 @@ class Events(BaseEvents):
 			if hasattr(self.parent, 'program_info_handler'):
 				self.parent.program_info_handler.get_latest_info()
 
-	def onExit(self, event):
-		if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
-			self.log.info("Minimizing to taskbar...")
-			self.hide()
-			return
-		else:
-			# 最小化設定が無効な場合、または他の終了方法の場合は通常通り終了
-			self.exit()
-			return
+	def onHide(self, event):
+		"""最小化メニューが選択されたときの処理"""
+		self.hide()
 
 	def hide(self):
 		self.parent.hFrame.Hide()
@@ -219,6 +225,22 @@ class Events(BaseEvents):
 		self.parent.hPanel.SetFocus()
 		self.log.info("Window restored.")
 		return
+	
+	def OnExit(self, event):
+		"""Alt+F4などでウィンドウを閉じようとしたときの処理"""
+		if event.CanVeto():
+			# Alt+F4が押された
+			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
+				event.Veto()
+				self.hide()
+			else:
+				# 最小化設定が無効な場合は通常通り終了
+				super().OnExit(event)
+				globalVars.app.tb.Destroy()
+		else:
+			# その他の終了イベント
+			super().OnExit(event)
+			globalVars.app.tb.Destroy()
 
 	def exit(self):
 		self.log.info("Attempting to terminate process...")
