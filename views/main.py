@@ -47,6 +47,9 @@ class MainView(BaseView):
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
 
+		# 番組情報の表示/非表示設定を読み込む
+		self.events.displaying = self.app.config.getboolean(self.identifier, "displayProgramInfo", True)
+
 		# outputディレクトリの存在チェックと作成
 		self._ensure_output_directory()
 
@@ -67,7 +70,13 @@ class MainView(BaseView):
 		
 		# UIの設定
 		self.radio_manager.setup_radio_ui()
-		self.program_info_handler.setup_program_info_ui()
+		# 番組情報の表示設定に応じてUIを初期化
+		if self.events.displaying:
+			self.program_info_handler.setup_program_info_ui()
+		else:
+			# 非表示の場合はメニューラベルのみ設定
+			if hasattr(self, 'menu'):
+				self.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示(&P)"))
 
 	def _ensure_output_directory(self):
 		"""outputディレクトリの存在をチェックし、存在しない場合は作成する"""

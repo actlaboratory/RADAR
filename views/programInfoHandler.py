@@ -118,4 +118,9 @@ class ProgramInfoHandler:
                 self.show_onair_music(self.events.current_playing_station_id)
             self.creator.GetSizer().Layout()
             self.events.displaying = True
+        
+        # 設定をiniファイルに保存
+        import globalVars
+        globalVars.app.config[self.parent.identifier]["displayProgramInfo"] = self.events.displaying
+        globalVars.app.config.write()
             
