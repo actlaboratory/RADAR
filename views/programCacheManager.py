@@ -161,6 +161,14 @@ class ProgramCacheManager:
                 if search_criteria.get('date'):
                     where_conditions.append("date = ?")
                     params.append(search_criteria['date'])
+                else:
+                    # 日付が指定されていない場合、現在の日付以降の番組のみを検索
+                    # ラジオの日付ルールに従った日付を取得
+                    from tcutil import CalendarUtil
+                    calendar_util = CalendarUtil()
+                    today = calendar_util.get_radio_date()
+                    where_conditions.append("date >= ?")
+                    params.append(today)
                 
                 # 検索クエリの構築
                 where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
@@ -171,7 +179,7 @@ class ProgramCacheManager:
                            start_time, end_time, description, date
                     FROM programs 
                     WHERE {where_clause}
-                    ORDER BY start_time
+                    ORDER BY date, start_time
                     LIMIT ?
                 '''
                 params.append(limit)
@@ -193,12 +201,72 @@ class ProgramCacheManager:
                         'date': row['date']
                     })
                 
+                # 過去の番組を除外（日付と時間を組み合わせて現在時刻と比較）
+                programs = self._filter_past_programs(programs)
+                
                 self.log.info(f"Search completed: {len(programs)} results found")
                 return programs
                 
             except sqlite3.Error as e:
                 self.log.error(f"Search failed: {e}")
                 return []
+    
+    def _filter_past_programs(self, programs):
+        """過去の番組を除外"""
+        import datetime
+        
+        if not programs:
+            return programs
+        
+        current = datetime.datetime.now()
+        
+        filtered_programs = []
+        for program in programs:
+            try:
+                date_str = program.get('date', '')
+                start_time_str = program.get('start_time', '')
+                
+                if not date_str or not start_time_str:
+                    # 日付または時間が不明な場合は除外
+                    continue
+                
+                # 日付をパース
+                if len(date_str) == 8:
+                    year = int(date_str[:4])
+                    month = int(date_str[4:6])
+                    day = int(date_str[6:8])
+                    program_date = datetime.date(year, month, day)
+                else:
+                    continue
+                
+                # 時間をパース（HH:MM:SS形式またはHH:MM形式）
+                start_parts = start_time_str.split(':')
+                if len(start_parts) >= 2:
+                    start_hour = int(start_parts[0])
+                    start_minute = int(start_parts[1])
+                else:
+                    continue
+                
+                # datetimeオブジェクトを作成
+                program_datetime = datetime.datetime.combine(
+                    program_date,
+                    datetime.time(start_hour, start_minute)
+                )
+                
+                # 深夜番組の処理（開始時間が4:59以前の場合は翌日として扱う）
+                if program_datetime.time() < datetime.time(4, 59, 59):
+                    program_datetime += datetime.timedelta(days=1)
+                
+                # 現在時刻より後の番組のみを含める
+                if program_datetime >= current:
+                    filtered_programs.append(program)
+                    
+            except (ValueError, TypeError) as e:
+                # パースエラーの場合は除外
+                self.log.debug(f"Failed to parse program date/time, excluding: {e}")
+                continue
+        
+        return filtered_programs
     
     def get_program_count(self, date=None):
         """キャッシュされた番組数を取得"""
