@@ -92,6 +92,13 @@ class ProgramSearchEngine:
             if search_criteria.get('date'):
                 where_conditions.append("date = ?")
                 params.append(search_criteria['date'])
+            else:
+                # 日付が指定されていない場合、現在の日付以降の番組のみを検索
+                from tcutil import CalendarUtil
+                calendar_util = CalendarUtil()
+                today = calendar_util.get_radio_date()
+                where_conditions.append("date >= ?")
+                params.append(today)
             
             # 時間範囲の重複検索ロジック
             start_time = search_criteria.get('start_time')
@@ -134,6 +141,9 @@ class ProgramSearchEngine:
                     'description': row['description'],
                     'date': row['date']
                 })
+            
+            # 過去の番組を除外
+            programs = self.cache_manager._filter_past_programs(programs)
             
             self.log.info(f"Time range search completed: {len(programs)} results found")
             return programs
