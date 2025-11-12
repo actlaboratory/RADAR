@@ -4,6 +4,7 @@
 import globalVars
 import wx
 import datetime
+import os
 from logging import getLogger
 import constants
 import simpleDialog
@@ -13,6 +14,8 @@ from views.programCacheManager import ProgramCacheManager
 from views.programSearchEngine import ProgramSearchEngine
 from views.programDataCollector import ProgramDataCollector
 from searchHistoryManager import SearchHistoryManager
+from recorder import schedule_manager, RecordingSchedule
+from notification_util import notify as notification_notify
 
 class ProgramSearchDialog(BaseDialog):
     """番組検索ダイアログ"""
@@ -157,6 +160,13 @@ class ProgramSearchDialog(BaseDialog):
         self.history_clear_btn.Enable(False)  # デフォルトは無効
 
         button_area_creator = views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.creator.GetSizer(),wx.HORIZONTAL, style=wx.EXPAND)
+        # 予約録音ボタン
+        self.schedule_btn = button_area_creator.button(_("予約録音(&R)"), event=self.onScheduleRecording)
+        self.schedule_btn.Enable(False)  # 初期状態は無効（番組が選択されていないため）
+        
+        # 見た目の調整
+        button_area_creator.AddSpace(-1)
+        
         # データ更新ボタン
         self.refresh_btn = button_area_creator.button(_("データ更新"), event=self.onRefresh)
 
@@ -165,6 +175,10 @@ class ProgramSearchDialog(BaseDialog):
 
         # 閉じるボタン
         self.close_btn = button_area_creator.cancelbutton(_("閉じる"), event=self.onClose)
+        
+        # 検索結果リストの選択変更イベントをバインド
+        self.result_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.onItemSelected)
+        self.result_list.Bind(wx.EVT_LIST_ITEM_DESELECTED, self.onItemDeselected)
 
     def setup_date_options(self):
         """日付選択オプションを設定（データベースの実際の日付範囲を使用）"""
@@ -479,6 +493,8 @@ class ProgramSearchDialog(BaseDialog):
             self.result_list.Focus(0)
             try:
                 self.result_list.Select(0)
+                # 最初のアイテムが選択されたので予約録音ボタンを有効化
+                self.schedule_btn.Enable(True)
                 globalVars.app.say(_(f"結果 {count}件"), interrupt=True)
             except Exception:
                 pass
@@ -495,6 +511,24 @@ class ProgramSearchDialog(BaseDialog):
                 self.show_program_detail(program)
         except Exception as e:
             self.log.error(f"Failed to show program detail: {e}")
+    
+    def onItemSelected(self, event):
+        """リストアイテムが選択された時の処理"""
+        try:
+            index = event.GetIndex()
+            if 0 <= index < len(self.search_results) and len(self.search_results) > 0:
+                # 予約録音ボタンを有効化
+                self.schedule_btn.Enable(True)
+        except Exception as e:
+            self.log.error(f"Failed to handle item selection: {e}")
+    
+    def onItemDeselected(self, event):
+        """リストアイテムの選択が解除された時の処理"""
+        try:
+            # 予約録音ボタンを無効化
+            self.schedule_btn.Enable(False)
+        except Exception as e:
+            self.log.error(f"Failed to handle item deselection: {e}")
     
     def show_program_detail(self, program):
         """番組詳細を表示"""
@@ -640,6 +674,150 @@ class ProgramSearchDialog(BaseDialog):
             self.update_station_list()
         else:
             simpleDialog.errorDialog(_("データの更新に失敗しました。"))
+    
+    def onScheduleRecording(self, event):
+        """選択された番組を予約録音"""
+        try:
+            # 選択されたアイテムのインデックスを取得（フォーカスまたは選択されているアイテム）
+            index = self.result_list.GetFocusedItem()
+            if index < 0:
+                # フォーカスされていない場合は、選択されている最初のアイテムを取得
+                index = self.result_list.GetFirstSelected()
+            
+            if index < 0 or index >= len(self.search_results):
+                simpleDialog.errorDialog(_("番組を選択してください。"))
+                return
+            
+            program = self.search_results[index]
+            
+            # 必要な情報を取得
+            station_id = program.get('station_id')
+            station_name = program.get('station_name', '')
+            program_title = program.get('title', '')
+            start_time_str = program.get('start_time', '')
+            end_time_str = program.get('end_time', '')
+            date_str = program.get('date', '')
+            
+            if not all([station_id, program_title, start_time_str, end_time_str, date_str]):
+                simpleDialog.errorDialog(_("番組情報が不完全です。"))
+                self.log.error(f"Incomplete program data: {program}")
+                return
+            
+            # 日付と時間をパース
+            try:
+                # 日付をパース（YYYYMMDD形式）
+                if len(date_str) == 8:
+                    year = int(date_str[:4])
+                    month = int(date_str[4:6])
+                    day = int(date_str[6:8])
+                    selected_date = datetime.date(year, month, day)
+                else:
+                    raise ValueError(f"Invalid date format: {date_str}")
+                
+                # 時間をパース（HH:MM:SS形式またはHH:MM形式）
+                start_parts = start_time_str.split(':')
+                end_parts = end_time_str.split(':')
+                
+                if len(start_parts) >= 2 and len(end_parts) >= 2:
+                    start_hour = int(start_parts[0])
+                    start_minute = int(start_parts[1])
+                    end_hour = int(end_parts[0])
+                    end_minute = int(end_parts[1])
+                else:
+                    raise ValueError(f"Invalid time format: {start_time_str} - {end_time_str}")
+                
+                # datetimeオブジェクトを作成
+                start_time_dt = datetime.datetime.combine(
+                    selected_date,
+                    datetime.time(start_hour, start_minute)
+                )
+                end_time_dt = datetime.datetime.combine(
+                    selected_date,
+                    datetime.time(end_hour, end_minute)
+                )
+                
+                # 深夜番組の処理（開始時間が4:59以前の場合は翌日）
+                if start_time_dt.time() < datetime.time(4, 59, 59):
+                    start_time_dt += datetime.timedelta(days=1)
+                if end_time_dt.time() <= datetime.time(5, 0):
+                    end_time_dt += datetime.timedelta(days=1)
+                
+                # 過去の番組かチェック
+                current = datetime.datetime.now()
+                if start_time_dt < current:
+                    simpleDialog.errorDialog(_("過去の番組の録音はできません。"))
+                    self.log.error(f"Failed to schedule program: Specified time ({start_time_dt}) is in the past.")
+                    return
+                
+            except (ValueError, TypeError) as e:
+                self.log.error(f"Failed to parse date/time: {e}")
+                simpleDialog.errorDialog(_("日時情報の解析に失敗しました。"))
+                return
+            
+            # 録音品質を取得（メインウィンドウの設定から）
+            filetype = "mp3"  # デフォルト
+            try:
+                if hasattr(globalVars.app.hMainView, 'menu'):
+                    menu = globalVars.app.hMainView.menu
+                    if hasattr(menu, 'hRecordingFileTypeMenu'):
+                        if menu.hRecordingFileTypeMenu.IsChecked(10001):  # WAV
+                            filetype = "wav"
+            except Exception as e:
+                self.log.warning(f"Failed to get recording file type, using default: {e}")
+            
+            # 出力パスを準備
+            replace = program_title.replace(" ", "-")
+            from recorder import create_recording_dir
+            station_dir = station_name.replace(" ", "_")
+            dirs = create_recording_dir(station_dir, program_title)
+            
+            # タイムスタンプを追加してファイル名重複を回避
+            timestamp = start_time_dt.strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(dirs, f"{timestamp}_{replace}")
+            
+            # 録音予約を作成
+            schedule = RecordingSchedule(
+                station_id=station_id,
+                station_name=station_name,
+                program_title=program_title,
+                start_time=start_time_dt,
+                end_time=end_time_dt,
+                output_path=output_path,
+                filetype=filetype
+            )
+            
+            # 予約を追加
+            schedule_manager.add_schedule(schedule)
+            
+            # 監視を開始（初回のみ）
+            schedule_manager.start_monitoring()
+            
+            # 現在のスケジュール数を取得
+            total_schedules = len(schedule_manager.schedules)
+            
+            # 通知を表示
+            if total_schedules == 1:
+                message = f'録音がスケジュールされました。録音は、{start_time_dt.strftime("%Y-%m-%d %H:%M")}に開始されます。'
+            else:
+                message = f'録音がスケジュールされました。録音は、{start_time_dt.strftime("%Y-%m-%d %H:%M")}に開始されます。（{total_schedules}件の録音予約中）'
+            
+            try:
+                notification_notify(
+                    title='録音準備',
+                    message=message,
+                    app_name='rpb',
+                    timeout=10
+                )
+                self.log.info(f"Recording schedule notification sent successfully: {program_title}")
+            except Exception as e:
+                self.log.error(f"Failed to send recording schedule notification: {e}")
+            
+            self.log.info(f"Recording scheduled successfully: {program_title}")
+            simpleDialog.dialog(_("完了"), message)
+            
+        except Exception as e:
+            self.log.error(f"Error in onScheduleRecording: {e}")
+            simpleDialog.errorDialog(f"録音スケジュールに失敗しました: {e}")
     
     def onClose(self, event):
         """ダイアログを閉じる"""
