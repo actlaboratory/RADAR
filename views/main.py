@@ -142,7 +142,6 @@ class Menu(BaseMenu):
 		# 録音メニュー
 		self.RegisterMenuCommand(self.hRecordingMenu, {
 			"RECORDING_IMMEDIATELY": self.parent.events.record_immediately,
-			"RECORDING_SCHEDULE": self.parent.events.recording_schedule,
 			"RECORDING_SCHEDULE_MANAGE": self.parent.events.manage_schedules,
 			"RECORDING_MANAGE": self.parent.events.manage_recordings,
 		})
@@ -490,11 +489,6 @@ class Events(BaseEvents):
 		"""録音の開始/停止を処理するメソッド"""
 		if hasattr(self.parent, 'recording_handler'):
 			self.parent.recording_handler.record_immediately(event)
-
-	def recording_schedule(self, event):
-		"""録音予約ウィザードを表示"""
-		if hasattr(self.parent, 'recording_handler'):
-			self.parent.recording_handler.recording_schedule(event)
 
 	def manage_schedules(self, event):
 		"""予約録音管理ダイアログを表示"""

@@ -7,7 +7,6 @@ import datetime
 import re
 from notification_util import notify as notification_notify
 from simpleDialog import *
-from views import recordingWizzard
 from views import scheduledRecordingManager
 from views import recordingManager
 import menuItemsStore
@@ -281,17 +280,6 @@ class RecordingHandler:
             
         except Exception as e:
             self.log.error(f"Error updating recording menu for station: {e}")
-
-    def recording_schedule(self, event):
-        """録音予約ウィザードを表示"""
-        try:
-            # 常に新規作成ウィザードを表示
-            rw = recordingWizzard.RecordingWizzard(self.events.current_selected_station_id, self.parent.radio_manager.stid[self.events.current_selected_station_id])
-            rw.Show()
-                
-        except Exception as e:
-            self.log.error(f"Error in recording schedule: {e}")
-            errorDialog(_("録音予約の処理に失敗しました。"))
 
     def manage_schedules(self, event):
         """スケジュール録音一覧ダイアログを表示"""

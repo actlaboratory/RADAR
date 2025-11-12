@@ -2,7 +2,7 @@
 # 番組情報処理ハンドラーモジュール
 
 import wx
-from views import showRadioProgramScheduleListBase
+from views import recordingWizzard
 from simpleDialog import *
 
 
@@ -93,8 +93,7 @@ class ProgramInfoHandler:
 
     def initializeInfoView(self, station_id):
         """番組一覧表示"""
-        proglst = showRadioProgramScheduleListBase.ShowSchedule(station_id, self.parent.radio_manager.stid[station_id])
-        proglst.Initialize()
+        proglst = recordingWizzard.RecordingWizzard(station_id, self.parent.radio_manager.stid[station_id])
         proglst.Show()
         return
 

@@ -24,7 +24,6 @@ dic={
 	"PROGRAM_SEARCH":_("番組検索(&F)")+"...",
 
 	"RECORDING_IMMEDIATELY":_("今すぐ録音(&r)"),
-	"RECORDING_SCHEDULE":_("予約録音(&s)"),
 	"RECORDING_SCHEDULE_MANAGE":_("スケジュール管理(&M)")+"...",
 	"RECORDING_MANAGE":_("録音管理(&R)")+"...",
 	"RECORDING_OPTION":_("録音品質の選択"),
