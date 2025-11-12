@@ -100,7 +100,7 @@ class ProgramInfoHandler:
     def switching_programInfo(self, event):
         """番組情報の表示/非表示を切り替え"""
         if self.events.displaying:
-            self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示&P"))
+            self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示(&P)"))
             self.nowprograminfo.Destroy()
             self.nplist.Destroy()
             self.dscboxLabel.Destroy()
@@ -108,7 +108,7 @@ class ProgramInfoHandler:
             self.events.displaying = False
             self.creator.GetSizer().Layout()
         else:
-            self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示&H"))
+            self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示(&H)"))
             self.description()
             self.SHOW_NOW_PROGRAMLIST()
             if hasattr(self.events, 'current_playing_station_id') and self.events.current_playing_station_id:
