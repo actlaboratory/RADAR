@@ -242,7 +242,7 @@ class Events(BaseEvents):
 			super().OnExit(event)
 			globalVars.app.tb.Destroy()
 
-	def exit(self):
+	def exit(self, event=None):
 		self.log.info("Attempting to terminate process...")
 		# 録音中かどうかを確認
 		active_recorders = recorder_manager.get_active_recorders()
