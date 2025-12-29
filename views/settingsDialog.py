@@ -12,6 +12,7 @@ from views.folderSelector import FolderSelector
 from enum import Enum,auto
 from views.baseDialog import *
 import os
+import errorCodes
 
 
 class configType(Enum):
@@ -173,6 +174,10 @@ class Dialog(BaseDialog):
 				conf[v[1]][v[2]] = list(v[3].keys())[obj.GetSelection()]
 			else:
 				conf[v[1]][v[2]] = obj.GetValue()
+		# 設定をファイルに保存
+		result = conf.write()
+		if result != errorCodes.OK:
+			self.log.warning("Failed to save config file")
 		self.app.InitSpeech()
 		self.app.setProxyEnviron()
 

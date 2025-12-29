@@ -10,6 +10,7 @@ from simpleDialog import *
 from views import scheduledRecordingManager
 from views import recordingManager
 import menuItemsStore
+import errorCodes
 
 
 class RecordingHandler:
@@ -76,6 +77,11 @@ class RecordingHandler:
         # 設定を保存
         self.parent.app.config["record"]["menu_id"] = selected
         self.parent.app.config["record"]["check_menu"] = self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected)
+        
+        # 設定をファイルに保存
+        result = self.parent.app.config.write()
+        if result != errorCodes.OK:
+            self.log.warning("Failed to save config file")
         
         # デバッグログ
         filetype = "mp3" if selected == 10000 else "wav"
