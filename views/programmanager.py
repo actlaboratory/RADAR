@@ -38,15 +38,40 @@ class ProgramManager:
         try:
             # 日付の処理を修正
             if isinstance(date, str):
-                if len(date) == 8:  # YYYYMMDD形式
+                if len(date) == 8 and date.isdigit():  # YYYYMMDD形式
                     formatted_date = date
                 elif ',' in date:  # カンマ区切り形式
                     lists = date.split(",")
                     if len(lists) >= 3:
-                        year = lists[0]
-                        month = lists[1].zfill(2)
-                        day = lists[2].zfill(2)
+                        year = lists[0].strip()
+                        month = lists[1].strip().zfill(2)
+                        day = lists[2].strip().zfill(2)
                         formatted_date = f"{year}{month}{day}"
+                        self.log.debug(f"Converted comma-separated date '{date}' to '{formatted_date}'")
+                    else:
+                        self.log.error(f"Invalid date format: {date}")
+                        self.root = None
+                        return
+                elif '/' in date:  # スラッシュ区切り形式
+                    lists = date.split("/")
+                    if len(lists) >= 3:
+                        year = lists[0].strip()
+                        month = lists[1].strip().zfill(2)
+                        day = lists[2].strip().zfill(2)
+                        formatted_date = f"{year}{month}{day}"
+                        self.log.debug(f"Converted slash-separated date '{date}' to '{formatted_date}'")
+                    else:
+                        self.log.error(f"Invalid date format: {date}")
+                        self.root = None
+                        return
+                elif '-' in date:  # ハイフン区切り形式
+                    lists = date.split("-")
+                    if len(lists) >= 3:
+                        year = lists[0].strip()
+                        month = lists[1].strip().zfill(2)
+                        day = lists[2].strip().zfill(2)
+                        formatted_date = f"{year}{month}{day}"
+                        self.log.debug(f"Converted hyphen-separated date '{date}' to '{formatted_date}'")
                     else:
                         self.log.error(f"Invalid date format: {date}")
                         self.root = None

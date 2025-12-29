@@ -71,13 +71,41 @@ class CalendarUtil:
         return results
 
     def transform_date(self, date):
-        """日付データから/を除去し、int型に変換して返す"""
+        """日付データをYYYYMMDD形式に変換して返す"""
         if "/" in date:
-            result = date.replace("/", ",")
-            return result
+            # "2026/1/1" -> "20260101"
+            parts = date.split("/")
+            if len(parts) >= 3:
+                year = parts[0]
+                month = parts[1].zfill(2)
+                day = parts[2].zfill(2)
+                return f"{year}{month}{day}"
+            else:
+                # フォールバック: カンマ区切り形式に変換（後方互換性のため）
+                return date.replace("/", ",")
         if "-" in date:
-            result = date.replace("-", "")
-            return result
+            # "2026-1-1" -> "20260101"
+            parts = date.split("-")
+            if len(parts) >= 3:
+                year = parts[0]
+                month = parts[1].zfill(2)
+                day = parts[2].zfill(2)
+                return f"{year}{month}{day}"
+            else:
+                return date.replace("-", "")
+        if "," in date:
+            # "2026,1,1" -> "20260101"
+            parts = date.split(",")
+            if len(parts) >= 3:
+                year = parts[0].strip()
+                month = parts[1].strip().zfill(2)
+                day = parts[2].strip().zfill(2)
+                return f"{year}{month}{day}"
+        # 既にYYYYMMDD形式の場合
+        if len(date) == 8 and date.isdigit():
+            return date
+        # その他の形式はそのまま返す（後方互換性のため）
+        return date
 
     def get_radio_date(self):
         """ラジオの日付ルールに従った日付を取得（翌朝5時までを今日として扱う）"""
