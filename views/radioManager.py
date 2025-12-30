@@ -221,13 +221,12 @@ class RadioManager:
 
     def get_latest_programList(self, progs):
         """番組リストを最新に更新"""
-        self.tree.Destroy()
+        self.tree.DeleteAllItems()
         # 番組情報が表示されている場合のみクリア
         if self.events.displaying:
             self.parent.program_info_handler.nplist.clear()
             self.parent.program_info_handler.DSCBOX.Disable()
         self.areaDetermination(progs)
-        self.AreaTreeCtrl()
         self.setupradio()
         self.setRadioList()
 
