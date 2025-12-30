@@ -15,6 +15,7 @@ import globalVars
 import update
 import menuItemsStore
 import urllib
+import ConfigManager
 from recorder import recorder_manager
 from recorder import schedule_manager
 from .base import *
