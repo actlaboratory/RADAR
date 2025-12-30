@@ -130,7 +130,7 @@ class Menu(BaseMenu):
 		self.RegisterMenuCommand(self.hFileMenu, {
 			"FILE_RELOAD": self.parent.events.onReLoad,
 			"HIDE": self.parent.events.onHide,
-			"EXIT":self.parent.events.exit,
+			"EXIT":self.parent.events.onExitMenu,
 		})
 		
 		# メニューが開かれたときに設定に応じてHIDEメニューを無効化
@@ -239,9 +239,19 @@ class Events(BaseEvents):
 				super().OnExit(event)
 				globalVars.app.tb.Destroy()
 		else:
-			# その他の終了イベント
+			# その他の終了イベント（タスクバーからの終了など）
+			# タスクバーからの終了は常に通常通り終了
 			super().OnExit(event)
 			globalVars.app.tb.Destroy()
+
+	def onExitMenu(self, event):
+		"""ファイルメニューから「終了」が選択されたときの処理"""
+		if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
+			# 設定が有効な場合はタスクバーに最小化
+			self.hide()
+		else:
+			# 設定が無効な場合は通常通り終了
+			self.exit(event)
 
 	def exit(self, event=None):
 		self.log.info("Attempting to terminate process...")
