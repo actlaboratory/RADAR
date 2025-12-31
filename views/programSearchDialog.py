@@ -118,14 +118,14 @@ class ProgramSearchDialog(BaseDialog):
         self.date_combo, date_label = date_creator.combobox(_("日付"), [], textLayout=None)
         self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
 
-        self.start_hour_spin, _label = date_creator.spinCtrl(_("開始時間（時）"), min=0, max=23, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.start_hour_spin, _label = date_creator.spinCtrl(_("開始時間（時）"), min=0, max=29, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
         self.start_minute_spin, _label = date_creator.spinCtrl(_("開始時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
 
         # 終了時間
         creator.staticText(_("終了時間"))
         date_creator = views.ViewCreator.ViewCreator(            self.viewMode, self.panel, creator.GetSizer(),wx.HORIZONTAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
-        self.end_hour_spin, _label = date_creator.spinCtrl(_("終了時間（時）"), min=0, max=23, defaultValue=23, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.end_hour_spin, _label = date_creator.spinCtrl(_("終了時間（時）"), min=0, max=29, defaultValue=29, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
         self.end_minute_spin, _label = date_creator.spinCtrl(_("終了時間（分）"), min=0, max=59, defaultValue=59, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
 
@@ -419,8 +419,8 @@ class ProgramSearchDialog(BaseDialog):
         if start_hour > 0 or start_minute > 0:
             criteria['start_time'] = f"{start_hour:02d}:{start_minute:02d}:00"
         
-        # 終了時間が設定されている場合（23:59以外）
-        if not (end_hour == 23 and end_minute == 59):
+        # 終了時間が設定されている場合（29:59以外、ラジオ形式の最大値）
+        if not (end_hour == 29 and end_minute == 59):
             criteria['end_time'] = f"{end_hour:02d}:{end_minute:02d}:00"
         
         # 時間範囲の妥当性チェック
@@ -558,10 +558,10 @@ class ProgramSearchDialog(BaseDialog):
         self.station_combo.SetSelection(0)  # 「指定なし」を選択
         self.date_combo.SetSelection(0)  # 「指定なし（全日付）」を選択
         
-        # スピンコントロールをリセット
+        # スピンコントロールをリセット（ラジオ形式：0-29時）
         self.start_hour_spin.SetValue(0)
         self.start_minute_spin.SetValue(0)
-        self.end_hour_spin.SetValue(23)
+        self.end_hour_spin.SetValue(29)
         self.end_minute_spin.SetValue(59)
         
         self.result_list.clear()
