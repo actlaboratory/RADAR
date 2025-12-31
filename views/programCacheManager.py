@@ -223,13 +223,21 @@ class ProgramCacheManager:
                 return []
     
     def _filter_past_programs(self, programs):
-        """過去の番組を除外"""
+        """過去の番組を除外（ラジオの日付ルールに従う：5時未満は前日として扱う）"""
         import datetime
         
         if not programs:
             return programs
         
+        # ラジオの日付ルールに従った現在時刻を取得
+        # 5時未満の場合は前日の日付として扱う
         current = datetime.datetime.now()
+        if current.hour < 5:
+            # 5時未満の場合は、前日の日付として扱う（時刻はそのまま）
+            # 例：現在が1月2日3:00の場合、1月1日3:00として扱う
+            current = current - datetime.timedelta(days=1)
+        # 秒とマイクロ秒を0に設定して比較の精度を統一
+        current = current.replace(second=0, microsecond=0)
         
         filtered_programs = []
         for program in programs:
@@ -255,6 +263,8 @@ class ProgramCacheManager:
                 if len(start_parts) >= 2:
                     start_hour = int(start_parts[0])
                     start_minute = int(start_parts[1])
+                    # 秒の処理（秒が指定されている場合は取得、されていない場合は0）
+                    start_second = int(start_parts[2]) if len(start_parts) >= 3 else 0
                 else:
                     continue
                 
@@ -267,16 +277,19 @@ class ProgramCacheManager:
                 # datetimeオブジェクトを作成
                 program_datetime = datetime.datetime.combine(
                     program_date,
-                    datetime.time(start_hour, start_minute)
+                    datetime.time(start_hour, start_minute, start_second)
                 )
                 
                 # 24時以降の時間の場合は日付を進める
                 if days_offset > 0:
                     program_datetime += datetime.timedelta(days=days_offset)
                 
-                # 深夜番組の処理（開始時間が4:59以前の場合は翌日として扱う）
-                if program_datetime.time() < datetime.time(4, 59, 59):
-                    program_datetime += datetime.timedelta(days=1)
+                # 深夜番組の処理（ラジオの日付ルール：5時未満は前日として扱う）
+                # 開始時間が5時未満の場合は、前日の番組として扱う
+                # 例：1月2日の3:00開始の番組は、1月1日の3:00として扱う
+                if program_datetime.time() < datetime.time(5, 0, 0):
+                    # 前日の日付として扱う（時刻はそのまま）
+                    program_datetime = program_datetime - datetime.timedelta(days=1)
                 
                 # 現在時刻より後の番組のみを含める
                 if program_datetime >= current:
