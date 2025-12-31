@@ -268,9 +268,12 @@ class ProgramCacheManager:
                 else:
                     continue
                 
-                # 24時以降の時間を処理（例：25:00 → 翌日1:00）
+                # 24時以降の時間を処理（例：25:00 → 翌日1:00、28:00 → 翌日4:00）
                 days_offset = 0
+                is_24h_over = False
+                original_hour = start_hour
                 if start_hour >= 24:
+                    is_24h_over = True
                     days_offset = start_hour // 24
                     start_hour = start_hour % 24
                 
@@ -285,9 +288,10 @@ class ProgramCacheManager:
                     program_datetime += datetime.timedelta(days=days_offset)
                 
                 # 深夜番組の処理（ラジオの日付ルール：5時未満は前日として扱う）
-                # 開始時間が5時未満の場合は、前日の番組として扱う
+                # ただし、24時以降の時間（28時など）は既に日付を進めているので、このチェックをスキップ
+                # 例：1月1日の28:00（1月2日の4:00）は、そのまま1月2日の4:00として扱う
                 # 例：1月2日の3:00開始の番組は、1月1日の3:00として扱う
-                if program_datetime.time() < datetime.time(5, 0, 0):
+                if not is_24h_over and program_datetime.time() < datetime.time(5, 0, 0):
                     # 前日の日付として扱う（時刻はそのまま）
                     program_datetime = program_datetime - datetime.timedelta(days=1)
                 
