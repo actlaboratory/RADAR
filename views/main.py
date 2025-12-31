@@ -232,14 +232,7 @@ class Events(BaseEvents):
 		if event.CanVeto():
 			# Alt+F4が押された
 			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
-				event.Veto()
 				self.hide()
-				return
-			else:
-				super().OnExit(event)
-				self.exit(event)
-				globalVars.app.tb.Destroy()
-				return
 		super().OnExit(event)
 		self.exit(event)
 		globalVars.app.tb.Destroy()
@@ -284,18 +277,9 @@ class Events(BaseEvents):
 		
 		# スケジュール録音データの完全削除
 		self._cleanup_schedule_data()
-		
 		self.log.info("Application cleanup completed")
-		
-		# onExitMenuから呼ばれた場合のみClose()を呼び出す
-		# OnExitから呼ばれた場合は、OnExitメソッド内でsuper().OnExit(event)が呼ばれるため
-		# ここでClose()を呼び出すと再帰的にOnExitが呼ばれてしまう
-		# eventがNone、またはwx.CommandEventの場合はonExitMenuから呼ばれたと判断
-		# wx.CloseEventの場合はOnExitから呼ばれたと判断
-		if event is None or not isinstance(event, wx.CloseEvent):
-			globalVars.app.tb.Destroy()
-			self.log.info("Exiting...")
-			self.parent.hFrame.Close(True)
+		globalVars.app.tb.Destroy()
+		self.log.info("Exiting...")
 
 	def _cleanup_recording_handler(self):
 		"""録音ハンドラーのクリーンアップ"""
