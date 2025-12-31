@@ -161,18 +161,21 @@ class ProgramCacheManager:
                 if search_criteria.get('date'):
                     where_conditions.append("date = ?")
                     params.append(search_criteria['date'])
-                else:
-                    # 日付が指定されていない場合、現在の日付以降の番組のみを検索
-                    # ラジオの日付ルールに従った日付を取得
-                    from tcutil import CalendarUtil
-                    calendar_util = CalendarUtil()
-                    today = calendar_util.get_radio_date()
-                    where_conditions.append("date >= ?")
-                    params.append(today)
+                # 日付が指定されていない場合は、日付条件を追加しない
+                # _filter_past_programsで過去の番組を除外するため、すべての日付を検索対象にする
                 
                 # 検索クエリの構築
                 where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-                limit = search_criteria.get('limit', 100)
+                # 日付が指定されていない場合は、LIMITを大幅に増やして
+                # _filter_past_programsで過去の番組を除外した後も十分な結果が得られるようにする
+                requested_limit = search_criteria.get('limit', 100)
+                if search_criteria.get('date'):
+                    # 日付指定時は通常のLIMITを使用
+                    query_limit = requested_limit
+                else:
+                    # 日付未指定時は、未来の番組を十分に取得できるようにLIMITを増やす
+                    # 過去の番組を除外した後も十分な結果が得られるようにする
+                    query_limit = max(requested_limit * 50, 10000)
                 
                 query = f'''
                     SELECT station_id, station_name, title, performer, 
@@ -182,7 +185,7 @@ class ProgramCacheManager:
                     ORDER BY date, start_time
                     LIMIT ?
                 '''
-                params.append(limit)
+                params.append(query_limit)
                 
                 cursor.execute(query, params)
                 results = cursor.fetchall()
@@ -204,7 +207,15 @@ class ProgramCacheManager:
                 # 過去の番組を除外（日付と時間を組み合わせて現在時刻と比較）
                 programs = self._filter_past_programs(programs)
                 
-                self.log.info(f"Search completed: {len(programs)} results found")
+                # 過去の番組を除外した後、要求されたLIMITを適用
+                # ただし、日付未指定の場合はLIMITを適用しない（すべての結果を返す）
+                if search_criteria.get('date'):
+                    # 日付指定時のみLIMITを適用
+                    if len(programs) > requested_limit:
+                        programs = programs[:requested_limit]
+                # 日付未指定時はLIMITを適用しない（すべての未来の番組を返す）
+                
+                self.log.info(f"Search completed: {len(programs)} results found (requested limit: {requested_limit}, date specified: {bool(search_criteria.get('date'))})")
                 return programs
                 
             except sqlite3.Error as e:
@@ -247,11 +258,21 @@ class ProgramCacheManager:
                 else:
                     continue
                 
+                # 24時以降の時間を処理（例：25:00 → 翌日1:00）
+                days_offset = 0
+                if start_hour >= 24:
+                    days_offset = start_hour // 24
+                    start_hour = start_hour % 24
+                
                 # datetimeオブジェクトを作成
                 program_datetime = datetime.datetime.combine(
                     program_date,
                     datetime.time(start_hour, start_minute)
                 )
+                
+                # 24時以降の時間の場合は日付を進める
+                if days_offset > 0:
+                    program_datetime += datetime.timedelta(days=days_offset)
                 
                 # 深夜番組の処理（開始時間が4:59以前の場合は翌日として扱う）
                 if program_datetime.time() < datetime.time(4, 59, 59):

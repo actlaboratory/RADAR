@@ -92,13 +92,8 @@ class ProgramSearchEngine:
             if search_criteria.get('date'):
                 where_conditions.append("date = ?")
                 params.append(search_criteria['date'])
-            else:
-                # 日付が指定されていない場合、現在の日付以降の番組のみを検索
-                from tcutil import CalendarUtil
-                calendar_util = CalendarUtil()
-                today = calendar_util.get_radio_date()
-                where_conditions.append("date >= ?")
-                params.append(today)
+            # 日付が指定されていない場合は、日付条件を追加しない
+            # _filter_past_programsで過去の番組を除外するため、すべての日付を検索対象にする
             
             # 時間範囲の重複検索ロジック
             start_time = search_criteria.get('start_time')
@@ -113,7 +108,16 @@ class ProgramSearchEngine:
             
             # クエリの構築
             where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-            limit = search_criteria.get('limit', 100)
+            # 日付が指定されていない場合は、LIMITを大幅に増やして
+            # _filter_past_programsで過去の番組を除外した後も十分な結果が得られるようにする
+            requested_limit = search_criteria.get('limit', 100)
+            if search_criteria.get('date'):
+                # 日付指定時は通常のLIMITを使用
+                query_limit = requested_limit
+            else:
+                # 日付未指定時は、未来の番組を十分に取得できるようにLIMITを増やす
+                # 過去の番組を除外した後も十分な結果が得られるようにする
+                query_limit = max(requested_limit * 50, 10000)
             
             query = f'''
                 SELECT station_id, station_name, title, performer, 
@@ -123,7 +127,7 @@ class ProgramSearchEngine:
                 ORDER BY start_time
                 LIMIT ?
             '''
-            params.append(limit)
+            params.append(query_limit)
             
             cursor.execute(query, params)
             results = cursor.fetchall()
@@ -145,7 +149,15 @@ class ProgramSearchEngine:
             # 過去の番組を除外
             programs = self.cache_manager._filter_past_programs(programs)
             
-            self.log.info(f"Time range search completed: {len(programs)} results found")
+            # 過去の番組を除外した後、要求されたLIMITを適用
+            # ただし、日付未指定の場合はLIMITを適用しない（すべての結果を返す）
+            if search_criteria.get('date'):
+                # 日付指定時のみLIMITを適用
+                if len(programs) > requested_limit:
+                    programs = programs[:requested_limit]
+            # 日付未指定時はLIMITを適用しない（すべての未来の番組を返す）
+            
+            self.log.info(f"Time range search completed: {len(programs)} results found (requested limit: {requested_limit}, date specified: {bool(search_criteria.get('date'))})")
             return programs
             
         except Exception as e:
