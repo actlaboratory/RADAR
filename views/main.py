@@ -246,12 +246,8 @@ class Events(BaseEvents):
 
 	def onExitMenu(self, event):
 		"""ファイルメニューから「終了」が選択されたときの処理"""
-		if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
-			# 設定が有効な場合はタスクバーに最小化
-			self.hide()
-		else:
-			# 設定が無効な場合は通常通り終了
-			self.exit(event)
+		# メニューバーからの終了は常に通常通り終了（設定に関係なく）
+		self.exit(event)
 
 	def exit(self, event=None):
 		self.log.info("Attempting to terminate process...")

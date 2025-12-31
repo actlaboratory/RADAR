@@ -6,8 +6,6 @@ defaultKeymap={}
 
 defaultKeymap["mainView"]={
 	"FILE_RELOAD":"ctrl+R/F5",
-	"HIDE":"",
-	"EXIT":"alt+f4",
 
 	"OPTION_OPTION":"",
 	"OPTION_KEY_CONFIG":"",
@@ -27,8 +25,6 @@ defaultKeymap["mainView"]={
 	"RECORDING_SCHEDULE_MANAGE":"",
 	"RECORDING_MANAGE":"ctrl+shift+R",
 	"RECORDING_OPTION":"",
-	"RECORDING_MP3":"",
-	"RECORDING_WAV":"",
 
 	"HELP_UPDATE":"",
 	"HELP_VERSIONINFO":"",
