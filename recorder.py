@@ -38,6 +38,7 @@ MAX_RECORDING_HOURS = 8
 SCHEDULE_CHECK_INTERVAL = 5  # 秒
 SCHEDULE_EXECUTION_WINDOW = 10  # 秒
 MIN_RETRY_INTERVAL = 60  # 秒
+RECORDING_END_TIME_BUFFER = 30  # 秒（ラジコの放送時刻と配信時刻のずれに対応するため、停止時刻を延長）
 
 # 録音ステータス定数
 RECORDING_STATUS_SCHEDULED = "scheduled"  # 予約スケジュール済み
@@ -633,7 +634,8 @@ class ScheduleManager:
                 stream_url = self._get_authenticated_stream_url(schedule.station_id)
                 
                 # 録音開始
-                end_time = time.mktime(schedule.end_time.timetuple())
+                # ラジコの放送時刻と配信時刻のずれに対応するため、停止時刻を30秒延長
+                end_time = time.mktime(schedule.end_time.timetuple()) + RECORDING_END_TIME_BUFFER
                 info = f"{schedule.station_name} {schedule.program_title}"
                 
                 # 録音完了時のコールバック
