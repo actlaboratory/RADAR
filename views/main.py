@@ -234,19 +234,20 @@ class Events(BaseEvents):
 			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
 				event.Veto()
 				self.hide()
+				return
 			else:
-				# 最小化設定が無効な場合は通常通り終了
 				super().OnExit(event)
+				self.exit(event)
 				globalVars.app.tb.Destroy()
-		else:
-			# その他の終了イベント（タスクバーからの終了など）
-			# タスクバーからの終了は常に通常通り終了
-			super().OnExit(event)
-			globalVars.app.tb.Destroy()
+				return
+		super().OnExit(event)
+		self.exit(event)
+		globalVars.app.tb.Destroy()
+		return
 
 	def onExitMenu(self, event):
 		"""ファイルメニューから「終了」が選択されたときの処理"""
-		# メニューバーからの終了は常に通常通り終了（設定に関係なく）
+
 		self.exit(event)
 
 	def exit(self, event=None):
@@ -285,6 +286,16 @@ class Events(BaseEvents):
 		self._cleanup_schedule_data()
 		
 		self.log.info("Application cleanup completed")
+		
+		# onExitMenuから呼ばれた場合のみClose()を呼び出す
+		# OnExitから呼ばれた場合は、OnExitメソッド内でsuper().OnExit(event)が呼ばれるため
+		# ここでClose()を呼び出すと再帰的にOnExitが呼ばれてしまう
+		# eventがNone、またはwx.CommandEventの場合はonExitMenuから呼ばれたと判断
+		# wx.CloseEventの場合はOnExitから呼ばれたと判断
+		if event is None or not isinstance(event, wx.CloseEvent):
+			globalVars.app.tb.Destroy()
+			self.log.info("Exiting...")
+			self.parent.hFrame.Close(True)
 
 	def _cleanup_recording_handler(self):
 		"""録音ハンドラーのクリーンアップ"""
@@ -301,9 +312,6 @@ class Events(BaseEvents):
 				self.parent.radio_manager.exit()
 			except Exception as e:
 				self.log.error(f"Error during radio manager cleanup: {e}")
-		globalVars.app.tb.Destroy()
-		self.log.info("Exiting...")
-		self.parent.hFrame.Close(True)
 
 	def _has_schedule_data(self):
 		"""スケジュールデータの存在確認"""
