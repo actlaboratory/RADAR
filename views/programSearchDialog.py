@@ -127,7 +127,7 @@ class ProgramSearchDialog(BaseDialog):
         date_creator = views.ViewCreator.ViewCreator(            self.viewMode, self.panel, creator.GetSizer(),wx.HORIZONTAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
         self.end_hour_spin, _label = date_creator.spinCtrl(_("終了時間（時）"), min=0, max=29, defaultValue=29, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
-        self.end_minute_spin, _label = date_creator.spinCtrl(_("終了時間（分）"), min=0, max=59, defaultValue=59, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.end_minute_spin, _label = date_creator.spinCtrl(_("終了時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
 
         # 検索・クリアボタン
         button_area_creator = views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.creator.GetSizer(),wx.HORIZONTAL,style=wx.ALIGN_RIGHT)
@@ -416,12 +416,12 @@ class ProgramSearchDialog(BaseDialog):
         
         # 開始時間が29:01以降の場合はエラー
         if start_hour == 29 and start_minute > 0:
-            simpleDialog.dialog(_("エラー"), _("開始時間は29:00までしか指定できません。"))
+            simpleDialog.dialog(_("エラー"), _("29:00以降の時間を指定することはできません。"))
             return {}
         
         # 終了時間が29:01以降の場合はエラー
         if end_hour == 29 and end_minute > 0:
-            simpleDialog.dialog(_("エラー"), _("終了時間は29:00までしか指定できません。"))
+            simpleDialog.dialog(_("エラー"), _("29:00以降の時間を指定することはできません。"))
             return {}
         
         # 時間範囲の設定
