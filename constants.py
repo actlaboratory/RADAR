@@ -9,9 +9,9 @@ import os.path
 APP_FULL_NAME = "Radio Audio Data Archive and Recorder "#アプリケーションの完全な名前
 APP_NAME="RADAR"#アプリケーションの名前
 APP_ICON = "radar.ico"
-APP_VERSION="0.0.1"
-APP_LAST_RELEASE_DATE="9999-99-99"
-APP_COPYRIGHT_YEAR="20xx"
+APP_VERSION="1.0.0"
+APP_LAST_RELEASE_DATE="2025-12-31"
+APP_COPYRIGHT_YEAR="2026"
 APP_LICENSE="Apache License 2.0"
 APP_DEVELOPERS="actlaboratory"
 APP_DEVELOPERS_URL="https://actlab.org/"
