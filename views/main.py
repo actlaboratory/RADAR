@@ -232,10 +232,13 @@ class Events(BaseEvents):
 		if event.CanVeto():
 			# Alt+F4が押された
 			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
+				# 最小化する場合は、ウィンドウの閉じるイベントをキャンセル
+				event.Veto()
 				self.hide()
+				return
+			# 最小化しない場合は、ウィンドウの閉じるイベントを許可して終了処理を実行
 		super().OnExit(event)
 		self.exit(event)
-		globalVars.app.tb.Destroy()
 		return
 
 	def onExitMenu(self, event):
@@ -244,7 +247,11 @@ class Events(BaseEvents):
 		self.exit(event)
 
 	def exit(self, event=None):
-		self.log.info("Attempting to terminate process...")
+		# ログ出力が失敗しても処理を続行
+		try:
+			self.log.info("Attempting to terminate process...")
+		except:
+			pass
 		# 録音中かどうかを確認
 		active_recorders = recorder_manager.get_active_recorders()
 		
@@ -277,9 +284,23 @@ class Events(BaseEvents):
 		
 		# スケジュール録音データの完全削除
 		self._cleanup_schedule_data()
-		self.log.info("Application cleanup completed")
+		
+		# ログ出力が失敗しても処理を続行
+		try:
+			self.log.info("Application cleanup completed")
+		except:
+			pass
+		
 		globalVars.app.tb.Destroy()
-		self.log.info("Exiting...")
+		
+		# ログ出力が失敗しても処理を続行
+		try:
+			self.log.info("Exiting...")
+		except:
+			pass
+		
+		# メインウィンドウを閉じてアプリケーションを終了
+		self.parent.hFrame.Close(force=True)
 
 	def _cleanup_recording_handler(self):
 		"""録音ハンドラーのクリーンアップ"""
@@ -287,7 +308,11 @@ class Events(BaseEvents):
 			try:
 				self.parent.recording_handler.cleanup()
 			except Exception as e:
-				self.log.error(f"Error during recording handler cleanup: {e}")
+				# ログ出力が失敗しても処理を続行
+				try:
+					self.log.error(f"Error during recording handler cleanup: {e}")
+				except:
+					pass
 
 	def _cleanup_radio_manager(self):
 		"""ラジオマネージャーのクリーンアップ"""
@@ -295,7 +320,11 @@ class Events(BaseEvents):
 			try:
 				self.parent.radio_manager.exit()
 			except Exception as e:
-				self.log.error(f"Error during radio manager cleanup: {e}")
+				# ログ出力が失敗しても処理を続行
+				try:
+					self.log.error(f"Error during radio manager cleanup: {e}")
+				except:
+					pass
 
 	def _has_schedule_data(self):
 		"""スケジュールデータの存在確認"""
@@ -315,7 +344,11 @@ class Events(BaseEvents):
 			return False
 			
 		except Exception as e:
-			self.log.error(f"Error checking schedule data: {e}")
+			# ログ出力が失敗しても処理を続行
+			try:
+				self.log.error(f"Error checking schedule data: {e}")
+			except:
+				pass
 			return False
 
 	def _cleanup_schedule_data(self):
@@ -327,7 +360,11 @@ class Events(BaseEvents):
 			if os.path.exists(schedule_file):
 				# スケジュールファイルを削除
 				os.remove(schedule_file)
-				self.log.info(f"Schedule file deleted: {schedule_file}")
+				# ログ出力が失敗しても処理を続行
+				try:
+					self.log.info(f"Schedule file deleted: {schedule_file}")
+				except:
+					pass
 			
 			# スケジュールマネージャーのクリーンアップ
 			schedule_manager.cleanup()
@@ -336,12 +373,24 @@ class Events(BaseEvents):
 			with schedule_manager.lock:
 				removed_count = len(schedule_manager.schedules)
 				schedule_manager.schedules.clear()
-				self.log.info(f"All schedule data cleared: {removed_count} schedules removed")
+				# ログ出力が失敗しても処理を続行
+				try:
+					self.log.info(f"All schedule data cleared: {removed_count} schedules removed")
+				except:
+					pass
 			
-			self.log.info("Schedule data cleanup completed")
+			# ログ出力が失敗しても処理を続行
+			try:
+				self.log.info("Schedule data cleanup completed")
+			except:
+				pass
 			
 		except Exception as e:
-			self.log.error(f"Error during schedule data cleanup: {e}")
+			# ログ出力が失敗しても処理を続行
+			try:
+				self.log.error(f"Error during schedule data cleanup: {e}")
+			except:
+				pass
 
 
 	def option(self, event):

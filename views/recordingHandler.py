@@ -324,6 +324,14 @@ class RecordingHandler:
             from recorder import recorder_manager
             recorder_manager.cleanup()
             
-            self.log.info("Recording cleanup completed")
+            # ログ出力が失敗しても処理を続行
+            try:
+                self.log.info("Recording cleanup completed")
+            except:
+                pass
         except Exception as e:
-            self.log.error(f"Error during recording cleanup: {e}")
+            # ログ出力が失敗しても処理を続行
+            try:
+                self.log.error(f"Error during recording cleanup: {e}")
+            except:
+                pass
