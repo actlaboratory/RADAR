@@ -1,4 +1,4 @@
-Copyright (c)2021 Kazto kashiwamochi,ACT laboratory All rights reserved.
+Copyright (c)2025 mayumi pc,ACT laboratory All rights reserved.
 
 本ソフトウェアは、Apache License 2.0の条件に従い、自由に利用することができます。
 本ソフトウェアのソースコードは、readme.txtに記載のURLよりダウンロード可能です。
@@ -16,6 +16,8 @@ Copyright (c)2021 Kazto kashiwamochi,ACT laboratory All rights reserved.
 
 ・MITライセンスに基づく以下のライブラリ
 	AccessibleOutput2　(https://pypi.org/project/accessible-output2/)
+　　dukpy　(https://github.com/amol-/dukpy)
+		Copyright (c) 2015 Alessandro Molina
 
 ・MS-PLに基づく以下のライブラリ
 	DotNetZip
