@@ -24,7 +24,6 @@ defaultKeymap["mainView"]={
 	"RECORDING_IMMEDIATELY":"",
 	"RECORDING_SCHEDULE_MANAGE":"",
 	"RECORDING_MANAGE":"ctrl+shift+R",
-	"RECORDING_OPTION":"",
 
 	"HELP_UPDATE":"",
 	"HELP_VERSIONINFO":"",
