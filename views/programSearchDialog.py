@@ -118,16 +118,16 @@ class ProgramSearchDialog(BaseDialog):
         self.date_combo, date_label = date_creator.combobox(_("日付"), [], textLayout=None)
         self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
 
-        self.start_hour_spin, _label = date_creator.spinCtrl(_("開始時間（時）"), min=5, max=29, defaultValue=5, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.start_hour_spin, _label = date_creator.spinCtrl(_("開始時間（時）"), min=5, max=28, defaultValue=5, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
         self.start_minute_spin, _label = date_creator.spinCtrl(_("開始時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
 
         # 終了時間
         creator.staticText(_("終了時間"))
         date_creator = views.ViewCreator.ViewCreator(            self.viewMode, self.panel, creator.GetSizer(),wx.HORIZONTAL, 20, style=wx.EXPAND|wx.ALL, margin=20)
-        self.end_hour_spin, _label = date_creator.spinCtrl(_("終了時間（時）"), min=0, max=29, defaultValue=29, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.end_hour_spin, _label = date_creator.spinCtrl(_("終了時間（時）"), min=0, max=28, defaultValue=28, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
-        self.end_minute_spin, _label = date_creator.spinCtrl(_("終了時間（分）"), min=0, max=59, defaultValue=0, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
+        self.end_minute_spin, _label = date_creator.spinCtrl(_("終了時間（分）"), min=0, max=59, defaultValue=59, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
 
         # 検索・クリアボタン
         button_area_creator = views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.creator.GetSizer(),wx.HORIZONTAL,style=wx.ALIGN_RIGHT)
@@ -414,23 +414,14 @@ class ProgramSearchDialog(BaseDialog):
         end_hour = self.end_hour_spin.GetValue()
         end_minute = self.end_minute_spin.GetValue()
         
-        # 開始時間が29:01以降の場合はエラー
-        if start_hour == 29 and start_minute > 0:
-            simpleDialog.dialog(_("エラー"), _("29:00以降の時間を指定することはできません。"))
-            return {}
-        
-        # 終了時間が29:01以降の場合はエラー
-        if end_hour == 29 and end_minute > 0:
-            simpleDialog.dialog(_("エラー"), _("29:00以降の時間を指定することはできません。"))
-            return {}
         
         # 時間範囲の設定
         # 開始時間が設定されている場合（5:00以降）
         if start_hour >= 5:
             criteria['start_time'] = f"{start_hour:02d}:{start_minute:02d}:00"
         
-        # 終了時間が設定されている場合（29:00以外、ラジオ形式の最大値）
-        if not (end_hour == 29 and end_minute == 0):
+        # 終了時間が設定されている場合（28:59以外、ラジオ形式の最大値）
+        if not (end_hour == 28 and end_minute == 59):
             criteria['end_time'] = f"{end_hour:02d}:{end_minute:02d}:00"
         
         # 時間範囲の妥当性チェック
@@ -571,8 +562,8 @@ class ProgramSearchDialog(BaseDialog):
         # スピンコントロールをリセット（ラジオ形式：5-29時、分は0分から）
         self.start_hour_spin.SetValue(5)
         self.start_minute_spin.SetValue(0)
-        self.end_hour_spin.SetValue(29)
-        self.end_minute_spin.SetValue(0)
+        self.end_hour_spin.SetValue(28)
+        self.end_minute_spin.SetValue(59)
         
         self.result_list.clear()
         self.result_count_label.SetLabel(_("検索結果: 0件"))
