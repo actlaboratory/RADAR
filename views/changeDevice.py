@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # 再生デバイス変更ダイアログ
 
 import wx
@@ -6,7 +6,7 @@ import globalVars
 import views.ViewCreator
 from logging import getLogger
 from views.baseDialog import *
-from soundPlayer.player import getDeviceList
+from views.mpvPlayer import getDeviceList
 
 class ChangeDeviceDialog(BaseDialog):
 	def __init__(self):
@@ -24,21 +24,25 @@ class ChangeDeviceDialog(BaseDialog):
 		self.deviceList, self.static = self.creator.listCtrl(_("再生デバイス"), None, wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_RAISED | wx.LC_NO_HEADER,sizerFlag=wx.EXPAND)
 		self.deviceList.AppendColumn(_("再生デバイス"),width=450)
 		self.deviceList.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.closeDialog)
+		self.devices = getDeviceList()
 		self.deviceList.InsertItem(0, _("規定のデバイス"))
-		deviceList = list(getDeviceList())
-		print(deviceList)
-		del deviceList[deviceList.index("No sound")]
-		del deviceList[deviceList.index("Default")]
-		for i in deviceList:
-			self.deviceList.Append([i])
-		current = globalVars.app.config["livePlay"]["device"]
-		if len(current) > 0:
-			try:
-				idx = deviceList.index(current) + 1
-			except ValueError:
-				idx = 0
-		else:
-			idx = 0
+		for d in self.devices:
+			self.deviceList.Append([d["name"]])
+
+		try:
+			if globalVars.app.config.has_section("livePlay"):
+				current_id = globalVars.app.config.getstring("livePlay", "device_id", "")
+			else:
+				current_id = ""
+		except Exception:
+			current_id = ""
+
+		idx = 0
+		if current_id:
+			for i, d in enumerate(self.devices, start=1):
+				if d["id"] == current_id:
+					idx = i
+					break
 		self.deviceList.Focus(idx)
 		self.deviceList.Select(idx)
 
@@ -49,9 +53,9 @@ class ChangeDeviceDialog(BaseDialog):
 	def GetData(self):
 		selected = self.deviceList.GetFocusedItem()
 		if selected == 0:
-			return ""
+			return None
 		else:
-			return self.deviceList.GetItemText(selected)
+			return self.devices[selected - 1]
 
 	def closeDialog(self, event):
 		self.wnd.EndModal(wx.ID_OK)

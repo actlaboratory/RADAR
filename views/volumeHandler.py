@@ -5,6 +5,7 @@
 
 import wx
 from views import changeDevice
+from simpleDialog import errorDialog
 
 
 class VolumeHandler:
@@ -58,4 +59,18 @@ class VolumeHandler:
         ret = changeDeviceDialog.Show()
         if ret == wx.ID_CANCEL:
             return
-        self.parent.radio_manager._player.setDeviceByName(changeDeviceDialog.GetData())
+        selected = changeDeviceDialog.GetData()
+        device_id = "" if not selected else selected["id"]
+        ok = self.parent.radio_manager._player.setDeviceByName(device_id)
+        if ok is False:
+            errorDialog(_("選択した再生デバイスは利用できなかったため、規定のデバイスに戻しました。"))
+            return
+
+        try:
+            if not self.parent.app.config.has_section("livePlay"):
+                self.parent.app.config["livePlay"] = {}
+            self.parent.app.config["livePlay"]["device_id"] = device_id
+            self.parent.app.config["livePlay"]["device"] = "" if not selected else selected["name"]
+            self.parent.app.config.write()
+        except Exception:
+            pass

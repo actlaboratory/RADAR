@@ -1,9 +1,12 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 #constant values
 #Copyright (C) 20XX anonimous <anonimous@sample.com>
 
 import wx
 import os.path
+
+# パスの基準ディレクトリ
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 #アプリケーション基本情報
 APP_FULL_NAME = "Radio Audio Data Archive and Recorder "#アプリケーションの完全な名前
@@ -18,7 +21,9 @@ APP_DEVELOPERS_URL="https://actlab.org/"
 APP_DETAILS_URL="https://actlab.org/software/"
 APP_COPYRIGHT_MESSAGE = "Copyright (c) %s %s All lights reserved." % (APP_COPYRIGHT_YEAR, APP_DEVELOPERS)
 SUPPORTING_LANGUAGE={"ja-JP": "日本語","en-US": "English"}
-FFMPEG_PATH = os.path.abspath("bin\\ffmpeg.exe")
+FFMPEG_PATH = os.path.join(BASE_DIR, "bin", "ffmpeg.exe")
+FFPLAY_PATH = os.path.join(BASE_DIR, "bin", "ffplay.exe")
+MPV_PATH = os.path.join(BASE_DIR, "bin", "mpv.exe")
 #各種ファイル名
 LOG_PREFIX="app"
 LOG_FILE_NAME="RADAR.log"

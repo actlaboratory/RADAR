@@ -1,4 +1,4 @@
-﻿wxpython==4.2.2
+wxpython==4.2.2
 pywin32
 winpaths
 pyinstaller==6.3.0
@@ -6,7 +6,9 @@ pyperclip
 requests
 https://github.com/actlaboratory/proxyUtil/archive/0.2.4.zip
 https://github.com/actlaboratory/diff_archiver/archive/v1.0.1.zip
-https://github.com/actlaboratory/soundPlayer/archive/0.5.4.zip
+psutil==5.9.8
+comtypes==1.4.16
+pycaw==20251023
 pillow==9.5
 lxml
 dukpy
