@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # main view
 # Copyright (C) 2019 Yukio Nozawa <personal@nyanchangames.com>
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
@@ -165,6 +165,7 @@ class Menu(BaseMenu):
 		# 録音品質選択メニューの中身
 		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_MP3, "mp3")
 		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_WAV, "wav")
+		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_M4A, "m4a")
 
 		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {

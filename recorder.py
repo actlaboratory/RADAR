@@ -9,6 +9,7 @@ import atexit
 import signal
 import locale
 import re
+import shutil
 from notification_util import notify as notification_notify
 from logging import getLogger
 from views import token
@@ -16,6 +17,7 @@ import threading
 import time
 import json
 import datetime
+from collections import deque
 from accessible_output2.outputs.base import OutputError
 from concurrent.futures import ThreadPoolExecutor
 import queue
@@ -64,24 +66,21 @@ class Recorder:
         self.process = None
         self.recording = False
         self._stop_event = threading.Event()
+        self.last_ffmpeg_cmd = ""
+        self._stderr_lines = deque(maxlen=80)
+        self._stderr_lock = threading.Lock()
 
     def start(self):
         """録音を開始"""
         try:
             self.logger.info(f"Start recording: {self.stream_url} -> {self.output_path}.{self.filetype}")
             ffmpeg_path = self._get_ffmpeg_path()
-            
-            # ファイルタイプに応じた音質設定を取得
-            quality_settings = self._get_quality_settings()
-            
-            cmd = [
-                ffmpeg_path,
-                "-loglevel", "error",
-                "-i", self.stream_url,
-            ] + quality_settings + [
-                "-vn", f"{self.output_path}.{self.filetype}",
-                "-y"
-            ]
+
+            # 出力先ディレクトリを保証
+            self._ensure_output_directory()
+
+            cmd = self._build_ffmpeg_command(ffmpeg_path)
+            self.last_ffmpeg_cmd = " ".join(cmd)
             self.logger.debug(f"FFmpeg command: {' '.join(cmd)}")
             # Windows環境でffmpegプロンプトを非表示にする
             startupinfo = None
@@ -101,6 +100,7 @@ class Recorder:
             )
             self.recording = True
             self.logger.info(f"FFmpeg process started with PID: {self.process.pid}")
+            threading.Thread(target=self._consume_stderr, daemon=True).start()
             threading.Thread(target=self._monitor, daemon=True).start()
         except Exception as e:
             self.logger.error(f"Failed to start recording: {e}")
@@ -114,26 +114,35 @@ class Recorder:
         
         if self.process and self.process.poll() is None:
             try:
-                # まずstdinを閉じる（ffmpegに終了シグナルを送る）
+                # ffmpegへ明示的に終了シグナルを送る
                 if self.process.stdin:
-                    self.process.stdin.close()
-                
-                # プロセスを終了
-                self.process.terminate()
-                self.logger.info(f"Process termination signal sent for: {self.output_path}.{self.filetype}")
+                    try:
+                        self.process.stdin.write(b"q\n")
+                        self.process.stdin.flush()
+                    except Exception:
+                        # stdin送信に失敗した場合は terminate にフォールバック
+                        pass
+                    finally:
+                        try:
+                            self.process.stdin.close()
+                        except Exception:
+                            pass
                 
                 # 終了を待つ
                 try:
                     self.process.wait(timeout=5)
                     self.logger.info(f"Process terminated gracefully: {self.output_path}.{self.filetype}")
                 except subprocess.TimeoutExpired:
-                    self.logger.warning("Terminate failed, killing process")
+                    self.logger.warning("Graceful stop timed out, trying terminate")
                     try:
+                        self.process.terminate()
+                        self.process.wait(timeout=3)
+                        self.logger.info(f"Process terminated after terminate(): {self.output_path}.{self.filetype}")
+                    except subprocess.TimeoutExpired:
+                        self.logger.warning("Terminate failed, killing process")
                         self.process.kill()
                         self.process.wait(timeout=2)
                         self.logger.info(f"Process killed forcefully: {self.output_path}.{self.filetype}")
-                    except subprocess.TimeoutExpired:
-                        self.logger.error("Failed to kill process even after force kill")
                     except Exception as e:
                         self.logger.error(f"Kill failed: {e}")
                         
@@ -149,8 +158,11 @@ class Recorder:
         """録音プロセスの監視"""
         try:
             self.logger.info(f"Starting process monitoring for: {self.output_path}.{self.filetype}")
+            proc = self.process
+            if not proc:
+                raise RecorderError("Recording process is not initialized.")
             while not self._stop_event.is_set():
-                if self.process.poll() is not None:
+                if proc.poll() is not None:
                     # プロセスが終了
                     if self._stop_event.is_set():
                         # 正常終了（stop()が呼ばれた場合）
@@ -158,8 +170,17 @@ class Recorder:
                         break
                     else:
                         # 異常終了
-                        stderr = self.process.stderr.read().decode(errors="ignore") if self.process.stderr else ""
-                        self.logger.error(f"Recording process exited unexpectedly: {self.output_path}.{self.filetype}, stderr: {stderr}")
+                        return_code = proc.returncode
+                        stderr = self._get_recent_stderr()
+                        if not stderr.strip():
+                            stderr = (
+                                f"(empty stderr) returncode={return_code}, "
+                                f"cmd={self.last_ffmpeg_cmd}"
+                            )
+                        self.logger.error(
+                            f"Recording process exited unexpectedly: {self.output_path}.{self.filetype}, "
+                            f"returncode={return_code}, stderr: {stderr}"
+                        )
                         raise RecorderError(f"Recording process exited unexpectedly: {stderr}")
                 time.sleep(1)
         except Exception as e:
@@ -169,17 +190,135 @@ class Recorder:
             self.recording = False
             self.logger.info(f"Process monitoring ended for: {self.output_path}.{self.filetype}")
 
+    def _build_ffmpeg_command(self, ffmpeg_path):
+        """録音用ffmpegコマンドを構築"""
+        quality_settings = self._get_quality_settings()
+        output_file = f"{self.output_path}.{self.filetype}"
+        return [
+            ffmpeg_path,
+            "-hide_banner",
+            "-nostats",
+            "-y",
+            "-loglevel", "error",
+            "-fflags", "+discardcorrupt",
+            "-i", self.stream_url,
+        ] + quality_settings + [
+            "-vn",
+            output_file
+        ]
+
+    def _ensure_output_directory(self):
+        """出力ディレクトリが存在しない場合は作成"""
+        output_dir = os.path.dirname(self.output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+    def _consume_stderr(self):
+        """ffmpegのstderrを継続的に読み取り、最後の数行を保持"""
+        proc = self.process
+        if not proc or not proc.stderr:
+            return
+        try:
+            while True:
+                line = proc.stderr.readline()
+                if not line:
+                    break
+                text = line.decode(errors="ignore").rstrip()
+                if text:
+                    with self._stderr_lock:
+                        self._stderr_lines.append(text)
+        except Exception as e:
+            self.logger.debug(f"Failed to consume ffmpeg stderr: {e}")
+
+    def _get_recent_stderr(self):
+        """保持しているstderrの末尾を文字列化"""
+        with self._stderr_lock:
+            if not self._stderr_lines:
+                return ""
+            return "\n".join(self._stderr_lines)
+
     def _notify_error(self, error):
         """エラーを管理者に通知"""
         if self.on_error:
             self.on_error(self, error)
 
     def _get_ffmpeg_path(self):
-        """ffmpegのパスを取得"""
-        ffmpeg_path = constants.FFMPEG_PATH
-        if not os.path.exists(ffmpeg_path):
-            raise RecorderError("ffmpeg.exe not found.")
-        return ffmpeg_path
+        """利用可能なffmpegのパスを取得（起動確認付き）"""
+        candidates = []
+
+        # 1) 設定済みパス
+        if constants.FFMPEG_PATH:
+            candidates.append(constants.FFMPEG_PATH)
+
+        # 2) ワークスペース直下のffmpeg.exe
+        candidates.append(os.path.abspath("ffmpeg.exe"))
+
+        # 3) PATH上のffmpeg
+        path_ffmpeg = shutil.which("ffmpeg")
+        if path_ffmpeg:
+            candidates.append(path_ffmpeg)
+
+        tried = []
+        failed_reasons = []
+        for candidate in candidates:
+            if not candidate:
+                continue
+            normalized = os.path.abspath(candidate)
+            if normalized in tried:
+                continue
+            tried.append(normalized)
+
+            if not os.path.exists(normalized):
+                continue
+
+            ok, reason = self._validate_ffmpeg_binary(normalized)
+            if ok:
+                if normalized != os.path.abspath(constants.FFMPEG_PATH):
+                    self.logger.warning(f"Using fallback ffmpeg binary: {normalized}")
+                return normalized
+            self.logger.warning(f"ffmpeg validation failed: {normalized} ({reason})")
+            failed_reasons.append(f"{normalized}: {reason}")
+
+        detail = "; ".join(failed_reasons[:3])
+        raise RecorderError(
+            "利用可能なffmpegが見つからないか、ffmpeg起動に必要なDLLが不足しています。"
+            " ffmpegの再配置またはPATH上のffmpegを確認してください。"
+            + (f" 詳細: {detail}" if detail else "")
+        )
+
+    def _validate_ffmpeg_binary(self, ffmpeg_path):
+        """ffmpegが実際に起動できるか検証"""
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
+        try:
+            proc = subprocess.run(
+                [ffmpeg_path, "-version"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                timeout=5,
+                check=False
+            )
+        except Exception as e:
+            return False, f"exception={e}"
+
+        if proc.returncode == 0:
+            return True, ""
+
+        stderr = (proc.stderr or b"").decode(errors="ignore").strip()
+        code = proc.returncode
+        # WindowsのSTATUS_DLL_NOT_FOUND: -1073741515 (0xC0000135)
+        if code in (-1073741515, 3221225781):
+            return False, "STATUS_DLL_NOT_FOUND (0xC0000135)"
+        if not stderr:
+            return False, f"returncode={code}"
+        return False, f"returncode={code}, stderr={stderr[:200]}"
 
     def _get_quality_settings(self):
         """ファイルタイプに応じた音質設定を取得"""
@@ -197,6 +336,12 @@ class Recorder:
                 "-b:a", "192k",
                 "-ar", "44100",
                 "-ac", "2"
+            ]
+        elif self.filetype == "m4a":
+            # M4A: ラジコAACを再エンコードせずに保存
+            return [
+                "-acodec", "copy",
+                "-bsf:a", "aac_adtstoasc"
             ]
         else:
             # デフォルト設定（コピー）
@@ -217,10 +362,12 @@ class RecorderManager:
         self.recorders = []  # [{recorder, info, retry_count, end_time}]
         self.lock = threading.Lock()
         self.max_hours = MAX_RECORDING_HOURS
+        self.last_start_error = ""
 
     def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None, station_id=None, program_title=None):
         """録音を開始"""
         try:
+            self.last_start_error = ""
             def on_error(rec, error):
                 self._handle_error(rec, error, info, stream_url, output_path, end_time, filetype)
             
@@ -242,8 +389,13 @@ class RecorderManager:
             self.logger.info(f"Recorder started: {info}")
             return recorder
         except Exception as e:
+            self.last_start_error = str(e)
             self.logger.error(f"Failed to start recording: {e}")
             return None
+
+    def get_last_start_error(self):
+        """最後の録音開始エラーを取得"""
+        return self.last_start_error
 
     def _schedule_stop(self, recorder, end_time, on_complete=None):
         """指定時刻に録音を停止"""
@@ -286,8 +438,16 @@ class RecorderManager:
                 new_path = f"{output_path}_retry{retry}"
             else:
                 new_path = output_path
-                
-            if retry < MAX_RETRY:
+
+            # ffmpeg実行環境の不備はリトライしても復旧しないため即失敗にする
+            error_text = str(error)
+            non_retryable = (
+                "STATUS_DLL_NOT_FOUND" in error_text or
+                "ffmpeg validation failed" in error_text or
+                "利用可能なffmpegが見つからない" in error_text
+            )
+
+            if retry < MAX_RETRY and not non_retryable:
                 self.logger.info(f"Retrying recording: {new_path}")
                 # 元のコールバックを保持してリトライ
                 on_complete = rec_entry.get("on_complete")
@@ -910,14 +1070,15 @@ def get_create_station_subdir_setting():
 
 def get_file_type_from_config():
     """設定からファイルタイプを取得（後方互換性）"""
-    filetypes = ["mp3", "wav"]
     try:
         config = ConfigManager.ConfigManager()
         menu_id = config.getint("record", "menu_id")
-        if menu_id == 10000:  # MP3
+        if menu_id == constants.RECORDING_MP3:  # MP3
             return "mp3"
-        elif menu_id == 10001:  # WAV
+        elif menu_id == constants.RECORDING_WAV:  # WAV
             return "wav"
+        elif menu_id == constants.RECORDING_M4A:  # M4A
+            return "m4a"
         else:
             # デフォルトはMP3
             return "mp3"

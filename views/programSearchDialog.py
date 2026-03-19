@@ -5,6 +5,7 @@ import globalVars
 import wx
 import datetime
 import os
+import re
 from logging import getLogger
 import constants
 import simpleDialog
@@ -761,13 +762,16 @@ class ProgramSearchDialog(BaseDialog):
                 if hasattr(globalVars.app.hMainView, 'menu'):
                     menu = globalVars.app.hMainView.menu
                     if hasattr(menu, 'hRecordingFileTypeMenu'):
-                        if menu.hRecordingFileTypeMenu.IsChecked(10001):  # WAV
+                        if menu.hRecordingFileTypeMenu.IsChecked(constants.RECORDING_M4A):  # M4A
+                            filetype = "m4a"
+                        elif menu.hRecordingFileTypeMenu.IsChecked(constants.RECORDING_WAV):  # WAV
                             filetype = "wav"
             except Exception as e:
                 self.log.warning(f"Failed to get recording file type, using default: {e}")
             
             # 出力パスを準備
-            replace = program_title.replace(" ", "-")
+            safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
+            replace = safe_title.replace(" ", "-")
             from recorder import create_recording_dir
             station_dir = station_name.replace(" ", "_")
             dirs = create_recording_dir(station_dir, program_title)

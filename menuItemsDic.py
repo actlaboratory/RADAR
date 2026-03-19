@@ -29,6 +29,7 @@ dic={
 	"RECORDING_OPTION":_("録音品質の選択"),
 	"RECORDING_MP3":_("MP3(&M)"),
 	"RECORDING_WAV":_("WAV(&W)"),
+	"RECORDING_M4A":_("M4A(&A)"),
 
 	"OPTION_OPTION":_("設定(&O)")+"...",
 	"OPTION_KEY_CONFIG":_("ショートカットキーの設定(&K)")+"...",

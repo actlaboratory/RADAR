@@ -5,12 +5,14 @@ import wx
 import time
 import datetime
 import re
+import os
 from notification_util import notify as notification_notify
 from simpleDialog import *
 from views import scheduledRecordingManager
 from views import recordingManager
 import menuItemsStore
 import errorCodes
+import constants
 
 
 class RecordingHandler:
@@ -35,8 +37,10 @@ class RecordingHandler:
     def _init_recording_settings(self):
         """録音設定を初期化"""
         # 設定値の取得（存在しない場合はデフォルト値を使用）
-        menu_id = self.app.config.getint("record", "menu_id", 10000)  # MP3
+        menu_id = self.app.config.getint("record", "menu_id", constants.RECORDING_MP3)
         check_menu = self.app.config.getboolean("record", "check_menu", True)
+        if menu_id not in self._get_recording_format_menu_ids():
+            menu_id = constants.RECORDING_MP3
         
         # 設定を保存（デフォルト値の場合）
         if not self.app.config.has_section("record"):
@@ -67,12 +71,12 @@ class RecordingHandler:
     def onRecordMenuSelect(self, event):
         """録音品質メニューの動作"""
         selected = event.GetId()
-        
+
         # 排他的選択（ラジオボタン的な動作）
-        if selected == 10000 and self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected):
-            self.parent.menu.hRecordingFileTypeMenu.Check(10001, False)  # WAVをオフ
-        elif selected == 10001 and self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected):
-            self.parent.menu.hRecordingFileTypeMenu.Check(10000, False)  # MP3をオフ
+        if selected in self._get_recording_format_menu_ids() and self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected):
+            for menu_id in self._get_recording_format_menu_ids():
+                if menu_id != selected:
+                    self.parent.menu.hRecordingFileTypeMenu.Check(menu_id, False)
         
         # 設定を保存
         self.parent.app.config["record"]["menu_id"] = selected
@@ -84,7 +88,7 @@ class RecordingHandler:
             self.log.warning("Failed to save config file")
         
         # デバッグログ
-        filetype = "mp3" if selected == 10000 else "wav"
+        filetype = self._filetype_from_menu_id(selected)
         self.log.info(f"Recording file type changed to: {filetype}")
 
     def record_immediately(self, event):
@@ -145,13 +149,10 @@ class RecordingHandler:
             
             # タイムスタンプを追加してファイル名重複を回避
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_path = f"{dirs}\{timestamp}_{replace}"
+            file_path = os.path.join(dirs, f"{timestamp}_{replace}")
             
             # ファイルタイプを取得（現在のメニュー選択状態から）
-            if self.parent.menu.hRecordingFileTypeMenu.IsChecked(10001):  # WAV
-                filetype = "wav"
-            else:  # MP3（デフォルト）
-                filetype = "mp3"
+            filetype = self._get_selected_filetype()
             self.log.info(f"Recording with file type: {filetype}")
             
             stream_url = self.parent.radio_manager.m3u8
@@ -197,12 +198,40 @@ class RecordingHandler:
                     self.log.error(f"Failed to send recording start notification: {e}")
             else:
                 self.log.error("Recording failed to start")
-                errorDialog(_("録音の開始に失敗しました。"))
+                detail = recorder_manager.get_last_start_error()
+                if detail:
+                    errorDialog(_("録音の開始に失敗しました。") + f"\n\n{detail}")
+                else:
+                    errorDialog(_("録音の開始に失敗しました。"))
         
         except Exception as e:
             self.log.error(f"Error during recording start: {e}")
             errorDialog(_("録音の開始中にエラーが発生しました。"))
             self._update_recording_menu_for_station(self.events.current_selected_station_id)
+
+    def _get_recording_format_menu_ids(self):
+        """録音形式メニューIDの一覧を返す"""
+        return [
+            constants.RECORDING_MP3,
+            constants.RECORDING_WAV,
+            constants.RECORDING_M4A
+        ]
+
+    def _filetype_from_menu_id(self, menu_id):
+        """メニューIDからファイルタイプ文字列を返す"""
+        if menu_id == constants.RECORDING_WAV:
+            return "wav"
+        if menu_id == constants.RECORDING_M4A:
+            return "m4a"
+        return "mp3"
+
+    def _get_selected_filetype(self):
+        """現在選択されている録音形式を返す"""
+        menu = self.parent.menu.hRecordingFileTypeMenu
+        for menu_id in self._get_recording_format_menu_ids():
+            if menu.IsChecked(menu_id):
+                return self._filetype_from_menu_id(menu_id)
+        return "mp3"
 
     def check_recording_status(self, event):
         """録音状態をチェックしてUIを更新"""
