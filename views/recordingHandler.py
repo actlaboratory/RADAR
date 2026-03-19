@@ -8,7 +8,6 @@ import re
 import os
 from notification_util import notify as notification_notify
 from simpleDialog import *
-from views import scheduledRecordingManager
 from views import recordingManager
 import menuItemsStore
 import errorCodes
@@ -319,7 +318,7 @@ class RecordingHandler:
     def manage_schedules(self, event):
         """スケジュール録音一覧ダイアログを表示"""
         try:
-            dialog = scheduledRecordingManager.ScheduledRecordingManager()
+            dialog = recordingManager.RecordingManagerDialog(initial_tab="schedules")
             dialog.Initialize()
             dialog.Show()
             
@@ -330,7 +329,7 @@ class RecordingHandler:
     def manage_recordings(self, event):
         """録音管理ダイアログを表示"""
         try:
-            dialog = recordingManager.RecordingManagerDialog()
+            dialog = recordingManager.RecordingManagerDialog(initial_tab="recordings")
             dialog.Initialize()
             dialog.Show()
             
