@@ -156,7 +156,6 @@ class Menu(BaseMenu):
 		# 録音メニュー
 		self.RegisterMenuCommand(self.hRecordingMenu, {
 			"RECORDING_IMMEDIATELY": self.parent.events.record_immediately,
-			"RECORDING_SCHEDULE_MANAGE": self.parent.events.manage_schedules,
 			"RECORDING_MANAGE": self.parent.events.manage_recordings,
 		})
 
