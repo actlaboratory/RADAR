@@ -30,6 +30,12 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self.filetype = get_file_type_from_config()
         self.current_schedule = None
 
+    def _refresh_selected_filetype(self):
+        """録音形式設定を最新化して返す"""
+        from recorder import get_file_type_from_config
+        self.filetype = get_file_type_from_config()
+        return self.filetype
+
     def get_streamUrl(self, stationid):
         """ストリームURLを取得"""
         try:
@@ -40,6 +46,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
     def onFinishButton(self, event):
         """録音予約を確定"""
         try:
+            self._refresh_selected_filetype()
             current = datetime.datetime.now()
             program_title, start_dt, end_dt = self._get_selected_program_range()
 
@@ -157,6 +164,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         """選択番組を聴き逃し録音"""
         try:
             from recorder import recorder_manager, create_recording_dir
+            filetype = self._refresh_selected_filetype()
 
             title, start_dt, end_dt = self._get_selected_program_range()
             now = datetime.datetime.now()
@@ -185,7 +193,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 output_path,
                 info,
                 end_time,
-                self.filetype,
+                filetype,
                 station_id=self.stid,
                 program_title=title,
                 recording_seconds=duration_sec,
@@ -210,7 +218,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         if idx < 0:
             raise ValueError("番組を選択してください。")
 
-        date_str = self.clutl.getDateValue()[self.selection]
+        selection = self.cmb.GetSelection()
+        if selection < 0 or selection >= len(self.date_values):
+            raise ValueError("日付が選択されていません。")
+        date_str = self.date_values[selection]
         if not date_str:
             raise ValueError("日付が選択されていません。")
 

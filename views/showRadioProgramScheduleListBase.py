@@ -25,6 +25,8 @@ class ShowSchedule(BaseDialog):
         self.stlst = []
         self.enlst = []
         self.lst = None
+        self.date_values = []
+        self._past_dates_appended = False
 
     def Initialize(self):
         self.log.debug("created")
@@ -53,9 +55,44 @@ class ShowSchedule(BaseDialog):
 
     def calendarSelector(self):
         """日時指定用コンボボックスを作成し、内容を設定"""
-        self.cmb,label = self.creator.combobox(_("日付指定"), self.clutl.getDateValue(), textLayout=wx.HORIZONTAL)
+        self.date_values = list(self.clutl.getDateValue())
+        self.cmb,label = self.creator.combobox(_("日付指定"), self.date_values, textLayout=wx.HORIZONTAL)
         self.cmb.SetSelection(0)
         self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
+        self.show_past_btn = self.creator.button(_("過去の番組表を表示"), self.onShowPastProgramDates)
+
+    def _get_radio_base_date(self):
+        """ラジオ日付ルール(5時切替)に従った基準日を返す"""
+        now = datetime.datetime.now()
+        if now.hour < 5:
+            return now.date() - datetime.timedelta(days=1)
+        return now.date()
+
+    def onShowPastProgramDates(self, event):
+        """タイムフリー視聴可能期間の過去日付をコンボへ追記"""
+        if self._past_dates_appended:
+            return
+
+        base_date = self._get_radio_base_date()
+        # タイムフリー最古日まで（7日前まで）を追記
+        past_dates = []
+        for days in range(7, 0, -1):
+            d = base_date - datetime.timedelta(days=days)
+            date_str = f"{d.year}/{d.month}/{d.day}"
+            if date_str not in self.date_values:
+                past_dates.append(date_str)
+
+        if past_dates:
+            current_selection = self.cmb.GetSelection()
+            if current_selection < 0:
+                current_selection = 0
+            merged_dates = past_dates + self.date_values
+            self.cmb.SetItems(merged_dates)
+            self.date_values = merged_dates
+            self.cmb.SetSelection(current_selection + len(past_dates))
+
+        self._past_dates_appended = True
+        self.show_past_btn.Disable()
 
     def show_programlist(self, event=None):
         self.lst.clear()
@@ -68,7 +105,9 @@ class ShowSchedule(BaseDialog):
         self.selection = selection
         if selection == None:
             return
-        date = self.clutl.transform_date(self.clutl.getDateValue()[selection])
+        if selection < 0 or selection >= len(self.date_values):
+            return
+        date = self.clutl.transform_date(self.date_values[selection])
         self.progs.retrieveRadioListings(self.stid,date)
         title = self.progs.gettitle() #番組のタイトル
         pfm = self.progs.getpfm() #出演者の名前
