@@ -423,6 +423,9 @@ class RecorderManager:
 
     def _handle_error(self, recorder, error, info, stream_url, output_path, end_time, filetype):
         """エラー処理とリトライ"""
+        should_retry = False
+        retry_path = output_path
+        on_complete = None
         with self.lock:
             rec_entry = next((r for r in self.recorders if r["recorder"] == recorder), None)
             if not rec_entry:
@@ -451,7 +454,8 @@ class RecorderManager:
                 self.logger.info(f"Retrying recording: {new_path}")
                 # 元のコールバックを保持してリトライ
                 on_complete = rec_entry.get("on_complete")
-                self.start_recording(stream_url, new_path, info, end_time, filetype, on_complete)
+                should_retry = True
+                retry_path = new_path
             else:
                 self.logger.error(f"Recording failed after {MAX_RETRY} attempts: {info}")
                 try:
@@ -459,6 +463,22 @@ class RecorderManager:
                     self.logger.info(f"Recording failure notification sent successfully after max retries: {info}")
                 except Exception as e:
                     self.logger.error(f"Failed to send recording failure notification after max retries: {e}")
+        # start_recording は lock の外で実行（デッドロック防止）
+        if should_retry:
+            self.start_recording(stream_url, retry_path, info, end_time, filetype, on_complete)
+
+    def _is_recorder_active(self, recorder):
+        """録音中判定を安全に実行"""
+        try:
+            if isinstance(recorder, Recorder):
+                return bool(recorder.recording)
+            if hasattr(recorder, "is_recording"):
+                return bool(recorder.is_recording())
+        except RecursionError:
+            self.logger.error("RecursionError detected while checking recorder state.")
+        except Exception as e:
+            self.logger.error(f"Failed to check recorder state: {e}")
+        return False
 
     def stop_all(self):
         """全ての録音を停止"""
@@ -501,17 +521,17 @@ class RecorderManager:
     def get_active_recorders(self):
         """アクティブな録音の一覧を取得"""
         with self.lock:
-            return [(r["recorder"], r["info"]) for r in self.recorders if r["recorder"].is_recording()]
+            return [(r["recorder"], r["info"]) for r in self.recorders if self._is_recorder_active(r["recorder"])]
 
     def get_station_recorders(self, station_id):
         """指定された放送局の録音一覧を取得"""
         with self.lock:
-            return [r for r in self.recorders if station_id in r["info"] and r["recorder"].is_recording()]
+            return [r for r in self.recorders if station_id in r["info"] and self._is_recorder_active(r["recorder"])]
 
     def is_station_recording(self, station_id):
         """指定された放送局が録音中かどうかを判定"""
         with self.lock:
-            return any(station_id in r["info"] and r["recorder"].is_recording() for r in self.recorders)
+            return any(station_id in r["info"] and self._is_recorder_active(r["recorder"]) for r in self.recorders)
 
     def stop_station_recording(self, station_id):
         """指定された放送局の録音を停止"""
@@ -520,7 +540,7 @@ class RecorderManager:
             # 後ろから削除することでインデックスの問題を回避
             for i in range(len(self.recorders) - 1, -1, -1):
                 rec_entry = self.recorders[i]
-                if station_id in rec_entry["info"] and rec_entry["recorder"].is_recording():
+                if station_id in rec_entry["info"] and self._is_recorder_active(rec_entry["recorder"]):
                     rec_entry["recorder"].stop()
                     del self.recorders[i]
                     stopped_count += 1
@@ -531,7 +551,7 @@ class RecorderManager:
         """同じ放送局・同じ番組の重複録音をチェック"""
         with self.lock:
             for rec_entry in self.recorders:
-                if (rec_entry["recorder"].is_recording() and 
+                if (self._is_recorder_active(rec_entry["recorder"]) and 
                     rec_entry.get("station_id") == station_id and 
                     rec_entry.get("program_title") == program_title):
                     return True
@@ -541,7 +561,7 @@ class RecorderManager:
         """指定された放送局・番組の録音情報を取得"""
         with self.lock:
             for rec_entry in self.recorders:
-                if (rec_entry["recorder"].is_recording() and 
+                if (self._is_recorder_active(rec_entry["recorder"]) and 
                     rec_entry.get("station_id") == station_id and 
                     rec_entry.get("program_title") == program_title):
                     return {
