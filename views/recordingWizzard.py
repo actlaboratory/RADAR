@@ -2,6 +2,7 @@ import wx
 import time
 import datetime
 import locale
+import re
 from logging import getLogger
 from notification_util import notify as notification_notify
 import globalVars
@@ -25,7 +26,8 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self.log = getLogger("recording_wizzard")
         main_window = globalVars.app.hMainView.hFrame
         main_window.Bind(wx.EVT_CLOSE, self.on_application_close)
-        self.filetype = "mp3"  # 設定から取得する場合は修正
+        from recorder import get_file_type_from_config
+        self.filetype = get_file_type_from_config()
         self.current_schedule = None
 
     def get_streamUrl(self, stationid):
@@ -136,7 +138,8 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 return
             
             # 出力パスを準備
-            replace = program_title.replace(" ", "-")
+            safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
+            replace = safe_title.replace(" ", "-")
             # 設定から出力先フォルダを取得
             from recorder import create_recording_dir
             station_dir = self.radioname.replace(" ", "_")

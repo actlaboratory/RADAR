@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # main view
 # Copyright (C) 2019 Yukio Nozawa <personal@nyanchangames.com>
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
@@ -165,6 +165,7 @@ class Menu(BaseMenu):
 		# 録音品質選択メニューの中身
 		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_MP3, "mp3")
 		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_WAV, "wav")
+		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_M4A, "m4a")
 
 		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {
@@ -203,6 +204,7 @@ class Events(BaseEvents):
 	displaying = True  # 番組情報表示中
 	current_playing_station_id = None  # 現在再生中の放送局ID
 	current_selected_station_id = None  # 現在選択されている放送局ID
+	_exit_in_progress = False
 
 
 	def onUpdateProcess(self, event):
@@ -229,6 +231,9 @@ class Events(BaseEvents):
 	
 	def OnExit(self, event):
 		"""Alt+F4などでウィンドウを閉じようとしたときの処理"""
+		if self._exit_in_progress:
+			event.Skip()
+			return
 		if event.CanVeto():
 			# Alt+F4が押された
 			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
@@ -236,17 +241,18 @@ class Events(BaseEvents):
 				event.Veto()
 				self.hide()
 				return
-			# 最小化しない場合は、ウィンドウの閉じるイベントを許可して終了処理を実行
-		super().OnExit(event)
-		self.exit(event)
+		self.exit(event, from_close_event=True)
 		return
 
 	def onExitMenu(self, event):
 		"""ファイルメニューから「終了」が選択されたときの処理"""
 
-		self.exit(event)
+		self.exit(event, from_close_event=False)
 
-	def exit(self, event=None):
+	def exit(self, event=None, from_close_event=False):
+		if self._exit_in_progress:
+			return
+		self._exit_in_progress = True
 		# ログ出力が失敗しても処理を続行
 		try:
 			self.log.info("Attempting to terminate process...")
@@ -263,6 +269,9 @@ class Events(BaseEvents):
 			result = yesNoDialog(_("録音中の終了確認"), message)
 			if result == wx.ID_NO:
 				# いいえが選択された場合は終了しない
+				self._exit_in_progress = False
+				if from_close_event and event and event.CanVeto():
+					event.Veto()
 				return
 		
 		# スケジュールデータの存在確認
@@ -276,6 +285,9 @@ class Events(BaseEvents):
 				result = yesNoDialog(_("予約データ削除の確認"), message)
 				if result == wx.ID_NO:
 					# いいえが選択された場合は終了しない
+					self._exit_in_progress = False
+					if from_close_event and event and event.CanVeto():
+						event.Veto()
 					return
 		
 		# 各ハンドラーのクリーンアップ
@@ -300,7 +312,11 @@ class Events(BaseEvents):
 			pass
 		
 		# メインウィンドウを閉じてアプリケーションを終了
-		self.parent.hFrame.Close(force=True)
+		if from_close_event:
+			if event:
+				event.Skip()
+		else:
+			self.parent.hFrame.Destroy()
 
 	def _cleanup_recording_handler(self):
 		"""録音ハンドラーのクリーンアップ"""
