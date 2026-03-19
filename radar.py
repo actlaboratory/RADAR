@@ -7,8 +7,7 @@ import simpleDialog
 import requests.exceptions
 import traceback
 import winsound
-from soundPlayer import player
-from soundPlayer.constants import *
+from views.mpvPlayer import MPVAudioPlayer
 
 
 #64bitのPythonでは起動させない
@@ -63,7 +62,7 @@ def exchandler(type, exc, tb):
 	except:
 		pass
 	os._exit(1	)
-	player.player().exit()
+	MPVAudioPlayer().exit()
 
 
 sys.excepthook=exchandler

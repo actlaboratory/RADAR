@@ -31,8 +31,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
     def get_streamUrl(self, stationid):
         """ストリームURLを取得"""
         try:
-            url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
-            return self.progs.gettoken.gen_temp_chunk_m3u8_url(url, self.progs.token)
+            return self.progs.get_authenticated_stream_url(stationid)
         except Exception as e:
             self.log.error(f"Failed to get stream URL: {e}")
 

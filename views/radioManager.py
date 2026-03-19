@@ -15,8 +15,7 @@ import constants
 import globalVars
 import urllib
 from simpleDialog import *
-from soundPlayer import player
-from soundPlayer.constants import *
+from views.mpvPlayer import MPVAudioPlayer
 
 
 class RadioManager:
@@ -28,14 +27,20 @@ class RadioManager:
         self.events = parent_view.events
         
         # ラジオ局関連の初期化
-        self._player = player.player()
+        self._player = MPVAudioPlayer()
         self.updateInfoTimer = wx.Timer()
+        self.streamWatchdogTimer = wx.Timer()
         self.tmg = tcutil.TimeManager()
         self.clutl = tcutil.CalendarUtil()
         self.stid = {}
         self.region = region_dic.REGION
         self.area = None
         self.m3u8 = None
+        self.current_station_id = None
+        self.current_progs = None
+        self.stream_watchdog_interval_ms = 5000
+        self._refresh_in_progress = False
+        self.streamWatchdogTimer.Bind(wx.EVT_TIMER, self._on_stream_watchdog_timer)
 
     def setup_radio_ui(self):
         """ラジオ局関連のUIを設定"""
@@ -174,8 +179,57 @@ class RadioManager:
 
     def get_streamUrl(self, stationid, progs):
         """ストリームURLを取得"""
-        url = f'http://f-radiko.smartstream.ne.jp/{stationid}/_definst_/simul-stream.stream/playlist.m3u8'
-        self.m3u8 = progs.gettoken.gen_temp_chunk_m3u8_url(url, progs.token)
+        self.m3u8 = progs.get_authenticated_stream_url(stationid)
+
+    def _refresh_playback_stream(self, max_retries=3, force_reconnect=False):
+        """再生中のストリームURLを再取得してプレイヤーへ反映"""
+        if not self.current_station_id or not self.current_progs:
+            return False
+        if self._refresh_in_progress:
+            return False
+
+        self._refresh_in_progress = True
+        try:
+            for attempt in range(max_retries):
+                try:
+                    self.get_streamUrl(self.current_station_id, self.current_progs)
+                    if not self.m3u8:
+                        raise RuntimeError("empty stream url")
+                    self._player.setSource(self.m3u8)
+                    self._player.play()
+                    return True
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    self.log.warning(f"stream refresh retry {attempt + 1}/{max_retries - 1}: {e}")
+                    if force_reconnect:
+                        try:
+                            self._player.stop()
+                        except Exception:
+                            pass
+                    time.sleep(0.5)
+        finally:
+            self._refresh_in_progress = False
+        return False
+
+    def _on_stream_watchdog_timer(self, event):
+        """再生停止を検知して再認証・再接続する"""
+        if not self.events.playing:
+            return
+        if self._player.isPlaying():
+            return
+        try:
+            last_error = ""
+            if hasattr(self._player, "getLastError"):
+                last_error = self._player.getLastError() or ""
+            if last_error:
+                self.log.warning(f"playback stopped unexpectedly. last player error: {last_error[:300]}")
+            else:
+                self.log.warning("playback stopped unexpectedly. trying forced reconnect")
+            if self._refresh_playback_stream(max_retries=3, force_reconnect=True):
+                self.log.info("forced reconnect succeeded")
+        except Exception as e:
+            self.log.error(f"forced reconnect failed: {e}")
 
     def player(self):
         """再生用関数"""
@@ -187,12 +241,14 @@ class RadioManager:
     def play(self, id, progs):
         """再生開始"""
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
+        self.current_station_id = id
+        self.current_progs = progs
         self.get_streamUrl(id, progs)
         self.player()
         self.update_program_info()
         self.events.playing = True
-        
-        # スクリーンリーダーで再生開始を通知
+        self.streamWatchdogTimer.Start(self.stream_watchdog_interval_ms)
+
         try:
             station_name = self.stid.get(id, id)
             self.parent.app.say(f"再生開始: {station_name}", interrupt=True)
@@ -205,10 +261,12 @@ class RadioManager:
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
         self.log.info("posed")
         self.updateInfoTimer.Stop()
+        self.streamWatchdogTimer.Stop()
+        self.current_station_id = None
+        self.current_progs = None
         self.log.debug("timer is stoped!")
         self.events.playing = False
-        
-        # スクリーンリーダーで再生停止を通知
+
         try:
             self.parent.app.say("再生停止", interrupt=True)
         except Exception as e:
@@ -232,4 +290,6 @@ class RadioManager:
 
     def exit(self):
         """終了処理"""
+        self.streamWatchdogTimer.Stop()
+        self.updateInfoTimer.Stop()
         self._player.exit()

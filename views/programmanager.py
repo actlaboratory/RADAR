@@ -13,23 +13,37 @@ class ProgramManager:
     def __init__(self):
         self.log=getLogger("%s.%s" % (constants.LOG_PREFIX,"ProgramManager"))
         self.log.debug("created!")
+        self.gettoken = None
+        self.token = None
+        self.partialkey = None
         self.jpCode()
         self.tcutil = tcutil.CalendarUtil()
 
-    def getArea(self):
-        """エリアを判定する"""
+    def refresh_auth_session(self):
+        """radiko認証セッションを毎回更新する"""
         self.gettoken = token.Token()
         res = self.gettoken.auth1()
         ret = self.gettoken.get_partial_key(res)
         self.token = ret[1]
         self.partialkey = ret[0]
-        self.gettoken.auth2(self.partialkey, self.token )
+        self.gettoken.auth2(self.partialkey, self.token)
+        return self.token
+
+    def getArea(self):
+        """エリアを判定する"""
+        self.refresh_auth_session()
         area = self.gettoken.area #エイラを取得
         before = re.findall("\s", area)
         replace = area.replace(before[0], ",") #スペースを文字列置換で,に置き換える
         values = replace.split(",") #戻り地をリストにする
         result = values[2]
         return result
+
+    def get_authenticated_stream_url(self, station_id):
+        """認証済みの一時m3u8 URLを取得する"""
+        self.refresh_auth_session()
+        url = f"http://f-radiko.smartstream.ne.jp/{station_id}/_definst_/simul-stream.stream/playlist.m3u8"
+        return self.gettoken.gen_temp_chunk_m3u8_url(url, self.token)
 
     def getprogramlist(self):
         return "http://radiko.jp/v3"

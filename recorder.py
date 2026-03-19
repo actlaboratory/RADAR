@@ -176,7 +176,7 @@ class Recorder:
 
     def _get_ffmpeg_path(self):
         """ffmpegのパスを取得"""
-        ffmpeg_path = os.path.join(os.getcwd(), "bin", "ffmpeg.exe")
+        ffmpeg_path = constants.FFMPEG_PATH
         if not os.path.exists(ffmpeg_path):
             raise RecorderError("ffmpeg.exe not found.")
         return ffmpeg_path
