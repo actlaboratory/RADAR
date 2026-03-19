@@ -32,12 +32,21 @@ class ProgramManager:
     def getArea(self):
         """エリアを判定する"""
         self.refresh_auth_session()
-        area = self.gettoken.area #エイラを取得
-        before = re.findall("\s", area)
-        replace = area.replace(before[0], ",") #スペースを文字列置換で,に置き換える
-        values = replace.split(",") #戻り地をリストにする
-        result = values[2]
-        return result
+        area = (self.gettoken.area or "").strip()  # 例: "JP13,..." or "JP13 Tokyo ..."
+        if not area:
+            raise RuntimeError("Failed to get area from auth2 response")
+
+        # auth2レスポンスの先頭にある JPxx を優先的に抽出
+        match = re.search(r"(JP\d{1,2})", area)
+        if match:
+            return match.group(1)
+
+        # フォールバック: 旧実装互換
+        values = re.split(r"[\s,]+", area)
+        for value in values:
+            if re.match(r"JP\d{1,2}", value):
+                return value
+        raise RuntimeError(f"Could not parse area code from auth2 response: {area}")
 
     def get_authenticated_stream_url(self, station_id):
         """認証済みの一時m3u8 URLを取得する"""

@@ -127,35 +127,65 @@ class RadioManager:
     def setRadioList(self):
         """ラジオ局リストを設定"""
         root = self.tree.GetRootItem()
-        # ラジオ局情報の取得
-        url = "https://radiko.jp/v3/station/region/full.xml"
-        success, result = self.get_radio_stations(url)
-        if not success:
-            errorDialog(_(result))
+        self.stid = {}
+
+        # 認証で得たエリアコードの放送局一覧を取得（再生可能局のみ）
+        if not self.area:
+            errorDialog(_("エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください"))
             self.tree.SetFocus()
             self.tree.Expand(root)
             self.tree.SelectItem(root, select=True)
             return
 
+        url = f"https://radiko.jp/v2/station/list/{self.area}.xml"
+        success, result = self.get_radio_stations(url)
+        if not success:
+            # v2失敗時のみ従来のv3全体リストをフォールバックとして使用
+            self.log.warning(f"Failed to fetch area station list ({self.area}) via v2 API: {result}")
+            fallback_url = "https://radiko.jp/v3/station/region/full.xml"
+            success, result = self.get_radio_stations(fallback_url)
+            if not success:
+                errorDialog(_(result))
+                self.tree.SetFocus()
+                self.tree.Expand(root)
+                self.tree.SelectItem(root, select=True)
+                return
+
         try:
             # XMLのパース
             parsed = ET.fromstring(result.encode('utf-8'))
-            
-            for r in parsed:
-                for station in r:
-                    stream = {r.attrib["ascii_name"]: {}}
-                    stream[r.attrib["ascii_name"]] = {
-                        "radioname": station.find("name").text,
-                        "radioid": station.find("id").text
-                    }
-                    
-                    if "ZENKOKU" in stream:
-                        self.tree.AppendItem(root, stream["ZENKOKU"]["radioname"], data=stream["ZENKOKU"]["radioid"])
-                        self.stid[stream["ZENKOKU"]["radioid"]] = stream["ZENKOKU"]["radioname"]
-                    
-                    if self.region[self.area] in stream:
-                        self.tree.AppendItem(root, stream[self.region[self.area]]["radioname"], data=stream[self.region[self.area]]["radioid"])
-                        self.stid[stream[self.region[self.area]]["radioid"]] = stream[self.region[self.area]]["radioname"]
+
+            stations = parsed.findall(".//station")
+            if stations:
+                # v2/station/list/JPxx.xml 形式
+                for station in stations:
+                    name_element = station.find("name")
+                    id_element = station.find("id")
+                    if name_element is None or id_element is None:
+                        continue
+                    station_name = name_element.text or ""
+                    station_id = id_element.text or ""
+                    if not station_name or not station_id:
+                        continue
+                    self.tree.AppendItem(root, station_name, data=station_id)
+                    self.stid[station_id] = station_name
+            else:
+                # v3/station/region/full.xml 形式（フォールバック）
+                for r in parsed:
+                    for station in r:
+                        stream = {r.attrib["ascii_name"]: {}}
+                        stream[r.attrib["ascii_name"]] = {
+                            "radioname": station.find("name").text,
+                            "radioid": station.find("id").text
+                        }
+
+                        if "ZENKOKU" in stream:
+                            self.tree.AppendItem(root, stream["ZENKOKU"]["radioname"], data=stream["ZENKOKU"]["radioid"])
+                            self.stid[stream["ZENKOKU"]["radioid"]] = stream["ZENKOKU"]["radioname"]
+
+                        if self.region[self.area] in stream:
+                            self.tree.AppendItem(root, stream[self.region[self.area]]["radioname"], data=stream[self.region[self.area]]["radioid"])
+                            self.stid[stream[self.region[self.area]]["radioid"]] = stream[self.region[self.area]]["radioname"]
 
         except ET.ParseError:
             self.log.error("Failed to parse xml!")
