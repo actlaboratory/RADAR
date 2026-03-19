@@ -274,6 +274,7 @@ class RadioManager:
         self.current_station_id = id
         self.current_progs = progs
         self.get_streamUrl(id, progs)
+        self._player.setHttpHeaders(None)
         self.player()
         self.update_program_info()
         self.events.playing = True
@@ -284,6 +285,33 @@ class RadioManager:
             self.parent.app.say(f"再生開始: {station_name}", interrupt=True)
         except Exception as e:
             self.log.error(f"Failed to announce playback start: {e}")
+
+    def play_timefree(self, stream_url, station_id=None, announce_text=None, headers=None):
+        """タイムフリーURLで再生開始"""
+        try:
+            self.stop()
+        except Exception:
+            pass
+        self.log.debug(f"Start timefree playback: station={station_id}, url={stream_url}")
+        self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
+        self.current_station_id = station_id
+        self.current_progs = None
+        self.m3u8 = stream_url
+        self._player.setHttpHeaders(headers or {})
+        self.player()
+        time.sleep(0.9)
+        if not self._player.isPlaying():
+            last_error = self._player.getLastError() or "unknown"
+            self.events.playing = False
+            self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
+            raise RuntimeError(f"タイムフリー再生の開始に失敗しました: {last_error}")
+        self.events.playing = True
+        self.streamWatchdogTimer.Stop()
+        try:
+            if announce_text:
+                self.parent.app.say(announce_text, interrupt=True)
+        except Exception as e:
+            self.log.error(f"Failed to announce timefree playback start: {e}")
 
     def stop(self):
         """再生停止"""

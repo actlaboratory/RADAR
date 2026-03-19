@@ -47,6 +47,7 @@ class MPVAudioPlayer:
     def __init__(self):
         self._log = getLogger(f"{constants.LOG_PREFIX}.MPVAudioPlayer")
         self._source = None
+        self._http_headers = {}
         self._volume = 100
         self._device_id = ""
         self._process = None
@@ -78,6 +79,10 @@ class MPVAudioPlayer:
     def setSource(self, source):
         with self._lock:
             self._source = source
+
+    def setHttpHeaders(self, headers):
+        with self._lock:
+            self._http_headers = dict(headers or {})
 
     def setVolume(self, value):
         with self._lock:
@@ -142,9 +147,13 @@ class MPVAudioPlayer:
             "--cache=yes",
             "--cache-secs=20",
             "--demuxer-readahead-secs=20",
-            "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=2",
+            "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,http_seekable=0,seekable=0",
             self._source,
         ]
+        if self._http_headers:
+            header_str = ",".join([f"{k}: {v}" for k, v in self._http_headers.items() if v])
+            if header_str:
+                cmd.insert(-1, f"--http-header-fields={header_str}")
         if self._device_id:
             cmd.insert(-1, f"--audio-device=wasapi/{self._device_id}")
         return cmd
@@ -162,6 +171,7 @@ class MPVAudioPlayer:
             creationflags = subprocess.CREATE_NO_WINDOW
 
         try:
+            self._log.debug("Starting mpv command: %s", " ".join(self._build_command()))
             self._process = subprocess.Popen(
                 self._build_command(),
                 stdin=subprocess.DEVNULL,
@@ -174,6 +184,19 @@ class MPVAudioPlayer:
             self._last_error = str(e)
             self._process = None
             self._log.error("Failed to start mpv: %s", e)
+            return
+
+        # 起動直後に終了した場合の理由を保持
+        time.sleep(0.6)
+        if self._process and self._process.poll() is not None:
+            return_code = self._process.returncode
+            stderr = self._read_process_stderr_locked()
+            if stderr.strip():
+                self._last_error = stderr.strip()
+            else:
+                self._last_error = f"mpv exited immediately (returncode={return_code})"
+            self._log.error("mpv exited immediately: %s", self._last_error)
+            self._process = None
             return
 
         if self._device_id:

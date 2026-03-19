@@ -40,101 +40,19 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
     def onFinishButton(self, event):
         """録音予約を確定"""
         try:
-            # 選択された日付と時間を取得
-            date_str = self.clutl.getDateValue()[self.selection]
-            if not date_str:
-                simpleDialog.errorDialog("日付が選択されていません。")
-                self.log.error("No date selected")
-                return
-                
-            # 日付文字列を安全にパース（ロケールに依存しない方法）
-            try:
-                # 日付文字列を正規化（月日を2桁に統一）
-                parts = date_str.split("/")
-                if len(parts) == 3:
-                    year, month, day = parts
-                    # 数値に変換して検証
-                    year_int = int(year)
-                    month_int = int(month)
-                    day_int = int(day)
-                    # 日付の妥当性をチェック
-                    if not (1 <= month_int <= 12):
-                        raise ValueError(f"Invalid month: {month_int}")
-                    if not (1 <= day_int <= 31):
-                        raise ValueError(f"Invalid day: {day_int}")
-                    # datetimeオブジェクトを直接作成（ロケールに依存しない）
-                    selected_date = datetime.date(year_int, month_int, day_int)
-                else:
-                    raise ValueError(f"Invalid date format: {date_str}")
-            except (ValueError, TypeError) as e:
-                self.log.error(f"Date parsing error: {e}, date_str: {date_str}")
-                raise ValueError(f"日付の解析に失敗しました: {date_str} (詳細: {e})")
-                
             current = datetime.datetime.now()
-            
-            # 開始・終了時間を取得
-            start_time = self.lst.GetItemText(self.lst.GetFocusedItem(), 2)
-            end_time = self.lst.GetItemText(self.lst.GetFocusedItem(), 3)
-            
-            # 24時間を超える場合の処理
-            if int(start_time[:2]) >= 24:
-                start_time = f"0{int(start_time[:2])-24}:{start_time[3:]}"
-            if int(end_time[:2]) >= 24:
-                end_time = f"0{int(end_time[:2])-24}:{end_time[3:]}"
-            
-            # 日時オブジェクトを作成（ロケールに依存しない方法）
-            try:
-                # 時間文字列を解析
-                start_parts = start_time.split(":")
-                end_parts = end_time.split(":")
-                
-                if len(start_parts) != 2 or len(end_parts) != 2:
-                    raise ValueError("Invalid time format")
-                
-                start_hour = int(start_parts[0])
-                start_minute = int(start_parts[1])
-                end_hour = int(end_parts[0])
-                end_minute = int(end_parts[1])
-                
-                # 時間の妥当性をチェック
-                if not (0 <= start_hour <= 23) or not (0 <= start_minute <= 59):
-                    raise ValueError(f"Invalid start time: {start_time}")
-                if not (0 <= end_hour <= 23) or not (0 <= end_minute <= 59):
-                    raise ValueError(f"Invalid end time: {end_time}")
-                
-                # datetime.timeオブジェクトを直接作成
-                start_time_dt = datetime.time(start_hour, start_minute)
-                end_time_dt = datetime.time(end_hour, end_minute)
-                
-                # datetime.datetimeオブジェクトに変換
-                start_time_dt = datetime.datetime.combine(selected_date, start_time_dt)
-                end_time_dt = datetime.datetime.combine(selected_date, end_time_dt)
-                
-            except (ValueError, TypeError) as e:
-                self.log.error(f"Time parsing error: {e}, start_time: {start_time}, end_time: {end_time}")
-                raise ValueError(f"時間の解析に失敗しました: {start_time} - {end_time} (詳細: {e})")
-            
+            program_title, start_dt, end_dt = self._get_selected_program_range()
+
             # 日時オブジェクトを設定
-            self.stdt = start_time_dt
-            self.endt = end_time_dt
-            
-            # 日付の調整（深夜番組の場合）
-            if self.stdt.time() < datetime.time(4, 59, 59):
-                self.stdt += datetime.timedelta(days=1)
-            if self.endt.time() <= datetime.time(5, 0):
-                self.endt += datetime.timedelta(days=1)
-            
+            self.stdt = start_dt
+            self.endt = end_dt
+
+            current = datetime.datetime.now()
+
             # 過去の番組かチェック
             if self.stdt < current:
                 simpleDialog.errorDialog("過去の番組の録音はできません。番組を選び直してください。")
                 self.log.error(f"Failed to schedule program: Specified time ({self.stdt}) is in the past.")
-                return
-            
-            # 番組タイトルを取得
-            program_title = self.lst.GetItemText(self.lst.GetFocusedItem(), 0)
-            if not program_title:
-                simpleDialog.errorDialog("番組タイトルを取得できませんでした。")
-                self.log.error("Failed to get program title")
                 return
             
             # 出力パスを準備
@@ -197,6 +115,136 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             self.log.error(f"Error in onFinishButton: {e}")
             simpleDialog.errorDialog(f"録音スケジュールに失敗しました: {e}")
 
+    def onPlayTimeFree(self, event):
+        """選択番組を聴き逃し再生"""
+        try:
+            title, start_dt, end_dt = self._get_selected_program_range()
+            now = datetime.datetime.now()
+            if start_dt > now:
+                simpleDialog.errorDialog("未来の番組は聴き逃し再生できません。")
+                return
+            if end_dt > now:
+                simpleDialog.errorDialog("この番組はまだ放送中のため、聴き逃し配信が利用できません。")
+                return
+            main_view = globalVars.app.hMainView
+            announce = f"聴き逃し再生: {self.radioname} {title}"
+            # 優先: type=c
+            try:
+                stream_url, headers = self.progs.get_timefree_playback_source(self.stid, start_dt, end_dt)
+                main_view.radio_manager.play_timefree(
+                    stream_url,
+                    station_id=self.stid,
+                    announce_text=announce,
+                    headers=headers
+                )
+                return
+            except Exception as e:
+                self.log.warning(f"timefree playback primary source failed: {e}")
+
+            # フォールバック: type=b
+            stream_url, headers = self.progs.get_timefree_playback_source_compat(self.stid, start_dt, end_dt)
+            main_view.radio_manager.play_timefree(
+                stream_url,
+                station_id=self.stid,
+                announce_text=announce,
+                headers=headers
+            )
+        except Exception as e:
+            self.log.error(f"Error in onPlayTimeFree: {e}")
+            simpleDialog.errorDialog(f"聴き逃し再生に失敗しました: {e}")
+
+    def onRecordTimeFree(self, event):
+        """選択番組を聴き逃し録音"""
+        try:
+            from recorder import recorder_manager, create_recording_dir
+
+            title, start_dt, end_dt = self._get_selected_program_range()
+            now = datetime.datetime.now()
+            if start_dt > now:
+                simpleDialog.errorDialog("未来の番組は聴き逃し録音できません。")
+                return
+            if end_dt > now:
+                simpleDialog.errorDialog("この番組はまだ放送中のため、聴き逃し録音は開始できません。")
+                return
+
+            duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))
+            stream_url, headers = self.progs.get_timefree_recording_source(self.stid, start_dt, end_dt)
+
+            safe_title = re.sub(r'[<>:"/\\|?*]', '_', title).strip()
+            replace = safe_title.replace(" ", "-")
+            station_dir = self.radioname.replace(" ", "_")
+            dirs = create_recording_dir(station_dir, title)
+            timestamp = start_dt.strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(dirs, f"{timestamp}_{replace}")
+
+            info = f"{self.radioname} {title}"
+            end_time = time.time() + duration_sec + 30
+
+            recorder = recorder_manager.start_recording(
+                stream_url,
+                output_path,
+                info,
+                end_time,
+                self.filetype,
+                station_id=self.stid,
+                program_title=title,
+                recording_seconds=duration_sec,
+                http_headers=headers,
+                input_options=["-http_seekable", "0", "-seekable", "0"]
+            )
+            if recorder:
+                simpleDialog.dialog("完了", f"聴き逃し録音を開始しました。\n{title}")
+            else:
+                detail = recorder_manager.get_last_start_error()
+                msg = "聴き逃し録音の開始に失敗しました。"
+                if detail:
+                    msg += f"\n\n{detail}"
+                simpleDialog.errorDialog(msg)
+        except Exception as e:
+            self.log.error(f"Error in onRecordTimeFree: {e}")
+            simpleDialog.errorDialog(f"聴き逃し録音に失敗しました: {e}")
+
+    def _get_selected_program_range(self):
+        """選択番組のタイトルと開始/終了日時を返す"""
+        idx = self.lst.GetFocusedItem()
+        if idx < 0:
+            raise ValueError("番組を選択してください。")
+
+        date_str = self.clutl.getDateValue()[self.selection]
+        if not date_str:
+            raise ValueError("日付が選択されていません。")
+
+        try:
+            year, month, day = [int(v) for v in date_str.split("/")]
+            base_date = datetime.date(year, month, day)
+        except Exception as e:
+            raise ValueError(f"日付の解析に失敗しました: {date_str} ({e})")
+
+        title = self.lst.GetItemText(idx, 0)
+        if not title:
+            raise ValueError("番組タイトルを取得できませんでした。")
+
+        start_text = self.lst.GetItemText(idx, 2)
+        end_text = self.lst.GetItemText(idx, 3)
+
+        start_dt = self._parse_program_time(base_date, start_text)
+        end_dt = self._parse_program_time(base_date, end_text)
+        if end_dt <= start_dt:
+            end_dt += datetime.timedelta(days=1)
+        return title, start_dt, end_dt
+
+    def _parse_program_time(self, base_date, time_text):
+        """番組時刻(24+時対応)をdatetimeに変換"""
+        parts = time_text.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid time format: {time_text}")
+        hour = int(parts[0])
+        minute = int(parts[1])
+        day_offset = hour // 24
+        hour = hour % 24
+        target_date = base_date + datetime.timedelta(days=day_offset)
+        return datetime.datetime.combine(target_date, datetime.time(hour, minute))
+
     def on_application_close(self, event):
         """アプリケーション終了時の処理"""
         try:
@@ -210,8 +258,9 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
     def InstallControls(self):
         """コントロールを配置"""
         super().InstallControls()
-        
-        # 録音予約ボタンを追加
+
+        # 録音予約/聴き逃し操作ボタン
         self.record_btn = self.creator.button(_("録音予約(&R)"), self.onFinishButton)
-        
+        self.timefree_play_btn = self.creator.button(_("聴き逃し再生(&P)"), self.onPlayTimeFree)
+        self.timefree_record_btn = self.creator.button(_("聴き逃し録音(&T)"), self.onRecordTimeFree)
 

@@ -6,6 +6,8 @@ from logging import getLogger
 import requests
 import constants
 import datetime
+import urllib.parse
+import secrets
 import tcutil
 from views import token
 
@@ -16,6 +18,7 @@ class ProgramManager:
         self.gettoken = None
         self.token = None
         self.partialkey = None
+        self.area_id = ""
         self.jpCode()
         self.tcutil = tcutil.CalendarUtil()
 
@@ -26,33 +29,158 @@ class ProgramManager:
         ret = self.gettoken.get_partial_key(res)
         self.token = ret[1]
         self.partialkey = ret[0]
-        self.gettoken.auth2(self.partialkey, self.token)
+        auth2_text = self.gettoken.auth2(self.partialkey, self.token)
+        self.area_id = self._extract_area_id(auth2_text)
         return self.token
 
     def getArea(self):
         """エリアを判定する"""
         self.refresh_auth_session()
-        area = (self.gettoken.area or "").strip()  # 例: "JP13,..." or "JP13 Tokyo ..."
-        if not area:
+        if not self.area_id:
             raise RuntimeError("Failed to get area from auth2 response")
-
-        # auth2レスポンスの先頭にある JPxx を優先的に抽出
-        match = re.search(r"(JP\d{1,2})", area)
-        if match:
-            return match.group(1)
-
-        # フォールバック: 旧実装互換
-        values = re.split(r"[\s,]+", area)
-        for value in values:
-            if re.match(r"JP\d{1,2}", value):
-                return value
-        raise RuntimeError(f"Could not parse area code from auth2 response: {area}")
+        return self.area_id
 
     def get_authenticated_stream_url(self, station_id):
         """認証済みの一時m3u8 URLを取得する"""
         self.refresh_auth_session()
         url = f"http://f-radiko.smartstream.ne.jp/{station_id}/_definst_/simul-stream.stream/playlist.m3u8"
         return self.gettoken.gen_temp_chunk_m3u8_url(url, self.token)
+
+    def get_timefree_stream_url(self, station_id, ft_dt, to_dt):
+        """互換用: タイムフリー再生URLと同等のURLを返す"""
+        stream_url, _headers = self.get_timefree_playback_source(station_id, ft_dt, to_dt)
+        return stream_url
+
+    def get_timefree_playback_source(self, station_id, ft_dt, to_dt):
+        """タイムフリー再生用 URL と必須ヘッダーを返す"""
+        self.refresh_auth_session()
+        ft = self._format_radiko_time(ft_dt)
+        to = self._format_radiko_time(to_dt)
+        try:
+            chunklist_url = self._resolve_timefree_chunklist_url(station_id, ft, to)
+            return chunklist_url, {"X-Radiko-AuthToken": self.token}
+        except Exception as e:
+            self.log.warning(f"timefree ts API failed, fallback to playlist_create_url(type=b): {e}")
+            fallback_url = self._build_timefree_playlist_create_url(station_id, ft, to, stream_type="b", l_value=15)
+            return fallback_url, {
+                "X-Radiko-AuthToken": self.token,
+                "X-Radiko-AreaId": self.area_id,
+            }
+
+    def get_timefree_playback_source_compat(self, station_id, ft_dt, to_dt):
+        """タイムフリー再生互換URL(type=b)"""
+        self.refresh_auth_session()
+        ft = self._format_radiko_time(ft_dt)
+        to = self._format_radiko_time(to_dt)
+        fallback_url = self._build_timefree_playlist_create_url(station_id, ft, to, stream_type="c", l_value=15)
+        return fallback_url, {
+            "X-Radiko-AuthToken": self.token,
+            "X-Radiko-AreaId": self.area_id,
+        }
+
+    def get_timefree_recording_source(self, station_id, ft_dt, to_dt):
+        """タイムフリー録音用 URL と必須ヘッダーを返す"""
+        self.refresh_auth_session()
+        ft = self._format_radiko_time(ft_dt)
+        to = self._format_radiko_time(to_dt)
+        duration_sec = int(max(15, (to_dt - ft_dt).total_seconds()))
+        l_value = min(duration_sec, 8 * 3600)
+        try:
+            chunklist_url = self._resolve_timefree_chunklist_url(station_id, ft, to)
+            return chunklist_url, {"X-Radiko-AuthToken": self.token}
+        except Exception as e:
+            self.log.warning(f"timefree ts API failed, fallback to playlist_create_url(type=c): {e}")
+            fallback_url = self._build_timefree_playlist_create_url(station_id, ft, to, stream_type="c", l_value=l_value)
+            return fallback_url, {
+                "X-Radiko-AuthToken": self.token,
+                "X-Radiko-AreaId": self.area_id,
+            }
+
+    def _resolve_timefree_chunklist_url(self, station_id, ft, to):
+        """sample実装準拠で ts/playlist.m3u8 から chunklist URL を得る"""
+        params = {
+            "station_id": station_id,
+            "l": "15",
+            "ft": ft,
+            "to": to,
+        }
+        headers = {
+            "X-Radiko-AuthToken": self.token,
+            "X-Radiko-App": "pc_html5",
+            "X-Radiko-App-Version": "0.0.1",
+            "X-Radiko-User": "dummy",
+            "X-Radiko-Device": "pc",
+        }
+        candidates = [
+            "https://radiko.jp/v2/api/ts/playlist.m3u8",
+            "http://radiko.jp/v2/api/ts/playlist.m3u8",
+        ]
+        last_error = None
+        for url in candidates:
+            try:
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                response.raise_for_status()
+                text = response.text
+                m = re.search(r'https://radiko\.jp/v2/api/ts/chunklist/[a-zA-Z0-9_/\-]{1,200}\.m3u8', text)
+                if m:
+                    return m.group()
+                for line in text.splitlines():
+                    line = line.strip()
+                    if line.startswith("http") and ".m3u8" in line:
+                        return line
+                last_error = RuntimeError(f"timefree chunklist URL not found: {text[:200]}")
+            except Exception as e:
+                last_error = e
+                continue
+        raise RuntimeError(last_error)
+
+    def _build_timefree_playlist_create_url(self, station_id, ft, to, stream_type="c", l_value=15):
+        """playlist_create_url ベースのタイムフリーURLを構築"""
+        playlist_base = self._get_timefree_playlist_create_base_url(station_id)
+        lsid = secrets.token_hex(16)
+        query = urllib.parse.urlencode({
+            "station_id": station_id,
+            "start_at": ft,
+            "ft": ft,
+            "seek": ft,
+            "end_at": to,
+            "to": to,
+            "l": str(int(l_value)),
+            "lsid": lsid,
+            "type": stream_type,
+        })
+        return f"{playlist_base}?{query}"
+
+    def _get_timefree_playlist_create_base_url(self, station_id):
+        url = f"https://radiko.jp/v3/station/stream/pc_html5/{station_id}.xml"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+        for item in root.findall(".//url"):
+            if item.get("timefree") != "1":
+                continue
+            playlist = item.find("playlist_create_url")
+            if playlist is not None and playlist.text:
+                return playlist.text.strip()
+        raise RuntimeError("playlist_create_url not found")
+
+    def _format_radiko_time(self, dt_obj):
+        if not isinstance(dt_obj, datetime.datetime):
+            raise TypeError("dt_obj must be datetime")
+        return dt_obj.strftime("%Y%m%d%H%M%S")
+
+    def _extract_area_id(self, auth2_text):
+        """auth2レスポンスから JPxx を抽出"""
+        text = (auth2_text or "").strip()
+        if not text:
+            return ""
+        first_line = text.splitlines()[0]
+        first_token = first_line.split(",")[0].strip()
+        match = re.search(r"(JP\d{1,2})", first_token)
+        if match:
+            return match.group(1)
+        match = re.search(r"(JP\d{1,2})", text)
+        return match.group(1) if match else ""
 
     def getprogramlist(self):
         return "http://radiko.jp/v3"
