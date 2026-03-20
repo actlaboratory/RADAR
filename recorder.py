@@ -57,7 +57,7 @@ class Recorder:
     """
     レコーダー: 指定URLのストリームを指定パスに保存。エラー時はコールバックで管理者に通知。
     """
-    def __init__(self, stream_url, output_path, filetype, on_error=None, logger=None):
+    def __init__(self, stream_url, output_path, filetype, on_error=None, logger=None, recording_seconds=None, http_headers=None, input_options=None):
         self.stream_url = stream_url
         self.output_path = output_path
         self.filetype = filetype
@@ -69,6 +69,9 @@ class Recorder:
         self.last_ffmpeg_cmd = ""
         self._stderr_lines = deque(maxlen=80)
         self._stderr_lock = threading.Lock()
+        self.recording_seconds = recording_seconds
+        self.http_headers = dict(http_headers or {})
+        self.input_options = list(input_options or [])
 
     def start(self):
         """録音を開始"""
@@ -168,6 +171,10 @@ class Recorder:
                         # 正常終了（stop()が呼ばれた場合）
                         self.logger.info(f"Recording process stopped normally: {self.output_path}.{self.filetype}")
                         break
+                    if proc.returncode == 0 and self.recording_seconds:
+                        # -t で予定終了した場合
+                        self.logger.info(f"Recording process finished by duration limit: {self.output_path}.{self.filetype}")
+                        break
                     else:
                         # 異常終了
                         return_code = proc.returncode
@@ -194,6 +201,11 @@ class Recorder:
         """録音用ffmpegコマンドを構築"""
         quality_settings = self._get_quality_settings()
         output_file = f"{self.output_path}.{self.filetype}"
+        header_string = ""
+        if self.http_headers:
+            header_lines = [f"{k}: {v}" for k, v in self.http_headers.items() if v]
+            if header_lines:
+                header_string = "\r\n".join(header_lines) + "\r\n"
         return [
             ffmpeg_path,
             "-hide_banner",
@@ -201,8 +213,13 @@ class Recorder:
             "-y",
             "-loglevel", "error",
             "-fflags", "+discardcorrupt",
+        ] + (
+            ["-headers", header_string] if header_string else []
+        ) + self.input_options + [
             "-i", self.stream_url,
-        ] + quality_settings + [
+        ] + quality_settings + (
+            ["-t", str(int(self.recording_seconds))] if self.recording_seconds else []
+        ) + [
             "-vn",
             output_file
         ]
@@ -364,14 +381,23 @@ class RecorderManager:
         self.max_hours = MAX_RECORDING_HOURS
         self.last_start_error = ""
 
-    def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None, station_id=None, program_title=None):
+    def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None, station_id=None, program_title=None, recording_seconds=None, http_headers=None, input_options=None):
         """録音を開始"""
         try:
             self.last_start_error = ""
             def on_error(rec, error):
-                self._handle_error(rec, error, info, stream_url, output_path, end_time, filetype)
+                self._handle_error(rec, error, info, stream_url, output_path, end_time, filetype, recording_seconds, http_headers, input_options)
             
-            recorder = Recorder(stream_url, output_path, filetype, on_error=on_error, logger=self.logger)
+            recorder = Recorder(
+                stream_url,
+                output_path,
+                filetype,
+                on_error=on_error,
+                logger=self.logger,
+                recording_seconds=recording_seconds,
+                http_headers=http_headers,
+                input_options=input_options
+            )
             with self.lock:
                 self.recorders.append({
                     "recorder": recorder,
@@ -381,7 +407,10 @@ class RecorderManager:
                     "on_complete": on_complete,
                     "station_id": station_id,
                     "program_title": program_title,
-                    "start_time": time.time()
+                    "start_time": time.time(),
+                    "recording_seconds": recording_seconds,
+                    "http_headers": dict(http_headers or {}),
+                    "input_options": list(input_options or [])
                 })
             recorder.start()
             # 終了タイマー
@@ -421,7 +450,7 @@ class RecorderManager:
             except Exception as e:
                 self.logger.error(f"Error in recording completion callback: {e}")
 
-    def _handle_error(self, recorder, error, info, stream_url, output_path, end_time, filetype):
+    def _handle_error(self, recorder, error, info, stream_url, output_path, end_time, filetype, recording_seconds=None, http_headers=None, input_options=None):
         """エラー処理とリトライ"""
         should_retry = False
         retry_path = output_path
@@ -465,7 +494,17 @@ class RecorderManager:
                     self.logger.error(f"Failed to send recording failure notification after max retries: {e}")
         # start_recording は lock の外で実行（デッドロック防止）
         if should_retry:
-            self.start_recording(stream_url, retry_path, info, end_time, filetype, on_complete)
+            self.start_recording(
+                stream_url,
+                retry_path,
+                info,
+                end_time,
+                filetype,
+                on_complete,
+                recording_seconds=recording_seconds,
+                http_headers=http_headers,
+                input_options=input_options
+            )
 
     def _is_recorder_active(self, recorder):
         """録音中判定を安全に実行"""

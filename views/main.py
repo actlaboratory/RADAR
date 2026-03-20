@@ -4,9 +4,6 @@
 # Copyright (C) 2019-2021 yamahubuki <itiro.ishino@gmail.com>
 
 import wx
-import tcutil
-import time
-import locale
 import os
 import win32com.client
 
@@ -21,7 +18,6 @@ from recorder import schedule_manager
 from .base import *
 from simpleDialog import *
 from views import globalKeyConfig
-from views import sample
 from views import settingsDialog
 from views import versionDialog
 from views import programmanager
@@ -48,34 +44,23 @@ class MainView(BaseView):
 		)
 		self.InstallMenuEvent(Menu(self.identifier), self.events.OnMenuSelect)
 
-		# 番組情報の表示/非表示設定を読み込む
 		self.events.displaying = self.app.config.getboolean(self.identifier, "displayProgramInfo", True)
-
-		# outputディレクトリの存在チェックと作成
 		self._ensure_output_directory()
-
-		# プログラム管理の初期化
 		self.progs = programmanager.ProgramManager()
-		
-		# 各ハンドラーの初期化
+
 		self.radio_manager = radioManager.RadioManager(self)
 		self.recording_handler = recordingHandler.RecordingHandler(self)
 		self.program_info_handler = programInfoHandler.ProgramInfoHandler(self)
 		self.volume_handler = volumeHandler.VolumeHandler(self)
-		
-		# エリア判定（放送局リストの初期化）
+
 		self.radio_manager.areaDetermination(self.progs)
-		
-		# 番組キャッシュコントローラーの初期化（放送局リスト初期化後）
+
 		self.program_cache_controller = programCacheController.ProgramCacheController(self.radio_manager)
-		
-		# UIの設定
+
 		self.radio_manager.setup_radio_ui()
-		# 番組情報の表示設定に応じてUIを初期化
 		if self.events.displaying:
 			self.program_info_handler.setup_program_info_ui()
 		else:
-			# 非表示の場合はメニューラベルのみ設定
 			if hasattr(self, 'menu'):
 				self.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示(&P)"))
 
@@ -83,7 +68,6 @@ class MainView(BaseView):
 		"""outputディレクトリの存在をチェックし、存在しない場合は作成する"""
 		output_dir = "output"
 		if not os.path.exists(output_dir):
-			# ディレクトリが存在しない場合のみ作成を試行
 			if not self._create_directory_safely(output_dir):
 				self.log.error("Failed to create output directory")
 				errorDialog(_("outputディレクトリの作成に失敗しました。\nアプリケーションを続行しますが、録音機能が正常に動作しない可能性があります。"))
@@ -113,10 +97,7 @@ class Menu(BaseMenu):
 	def Apply(self, target):
 		"""指定されたウィンドウに、メニューを適用する。"""
 
-		# メニュー内容をいったんクリア
 		self.hMenuBar = wx.MenuBar()
-
-		# メニューの大項目を作る
 		self.hFileMenu = wx.Menu()
 		self.hFunctionMenu = wx.Menu()
 		self.hRecordingMenu = wx.Menu()
@@ -126,26 +107,22 @@ class Menu(BaseMenu):
 		self.hOptionMenu = wx.Menu()
 		self.hHelpMenu = wx.Menu()
 
-		# ファイルメニュー
 		self.RegisterMenuCommand(self.hFileMenu, {
 			"FILE_RELOAD": self.parent.events.onReLoad,
 			"HIDE": self.parent.events.onHide,
 			"EXIT":self.parent.events.onExitMenu,
 		})
 		
-		# メニューが開かれたときに設定に応じてHIDEメニューを無効化
 		self.hFileMenu.Bind(wx.EVT_MENU_OPEN, self.OnMenuOpen)
-
-		# 機能メニュー
 		self.RegisterMenuCommand(self.hFunctionMenu, {
 			"FUNCTION_PLAY_PLAY": self.parent.events.onRadioActivated,
+			"FUNCTION_TIMEFREE_TOGGLE": self.parent.events.onTimefreeToggle,
 			"FUNCTION_VOLUME_UP": self.parent.events.volume_up,
 			"FUNCTION_VOLUME_DOWN": self.parent.events.volume_down,
 			"FUNCTION_PLAY_MUTE": self.parent.events.onMute,
 			"FUNCTION_OUTPUT_CHANGEDEVICE": self.parent.events.changeOutputDevice,
 		})
 
-		# 番組メニュー
 		self.RegisterMenuCommand(self.hProgramListMenu, {
 			"SHOW_PROGRAMLIST": self.parent.events.initializeInfoView,
 			"HIDE_PROGRAMINFO": self.parent.events.switching_programInfo,
@@ -153,33 +130,27 @@ class Menu(BaseMenu):
 			"PROGRAM_SEARCH": self.parent.events.onProgramSearch,
 		})
 
-		# 録音メニュー
 		self.RegisterMenuCommand(self.hRecordingMenu, {
 			"RECORDING_IMMEDIATELY": self.parent.events.record_immediately,
 			"RECORDING_MANAGE": self.parent.events.manage_recordings,
 		})
 
-		# 録音品質選択メニュー
 		self.RegisterMenuCommand(self.hRecordingMenu, "RECORDING_OPTION", subMenu=self.hRecordingFileTypeMenu)
-		# 録音品質選択メニューの中身
 		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_MP3, "mp3")
 		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_WAV, "wav")
 		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_M4A, "m4a")
 
-		# オプションメニュー
 		self.RegisterMenuCommand(self.hOptionMenu, {
 			"OPTION_OPTION": self.parent.events.option,
 			"OPTION_KEY_CONFIG": self.parent.events.keyConfig,
 			"OPTION_STARTUP": self.parent.events.registerStartup,
 		})
 
-		# ヘルプメニュー
 		self.RegisterMenuCommand(self.hHelpMenu, {
 			"HELP_UPDATE": self.parent.events.checkUpdate,
 			"HELP_VERSIONINFO": self.parent.events.version,
 		})
 
-		# メニューバーの生成
 		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F))"))
 		self.hMenuBar.Append(self.hFunctionMenu, _("再生(&P)"))
 		self.hMenuBar.Append(self.hProgramListMenu, _("番組(&A)"))
@@ -190,7 +161,6 @@ class Menu(BaseMenu):
 	
 	def OnMenuOpen(self, event):
 		"""メニューが開かれたときに設定に応じてHIDEメニューを無効化"""
-		# タスクトレイへの最小化が有効な場合、HIDEメニューを無効化
 		if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
 			self.EnableMenu("HIDE", False)
 		else:
@@ -200,16 +170,15 @@ class Menu(BaseMenu):
 class Events(BaseEvents):
 	playing = False
 	mute_status = False
-	displaying = True  # 番組情報表示中
-	current_playing_station_id = None  # 現在再生中の放送局ID
-	current_selected_station_id = None  # 現在選択されている放送局ID
+	displaying = True
+	current_playing_station_id = None
+	current_selected_station_id = None
 	_exit_in_progress = False
 
 
 	def onUpdateProcess(self, event):
 		"""番組情報を定期的に更新"""
 		if self.playing and self.current_playing_station_id:
-			# 現在再生中の放送局の番組情報を更新
 			if hasattr(self.parent, 'program_info_handler'):
 				self.parent.program_info_handler.get_latest_info()
 
@@ -234,9 +203,7 @@ class Events(BaseEvents):
 			event.Skip()
 			return
 		if event.CanVeto():
-			# Alt+F4が押された
 			if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
-				# 最小化する場合は、ウィンドウの閉じるイベントをキャンセル
 				event.Veto()
 				self.hide()
 				return
@@ -252,65 +219,51 @@ class Events(BaseEvents):
 		if self._exit_in_progress:
 			return
 		self._exit_in_progress = True
-		# ログ出力が失敗しても処理を続行
 		try:
 			self.log.info("Attempting to terminate process...")
 		except:
 			pass
-		# 録音中かどうかを確認
 		active_recorders = recorder_manager.get_active_recorders()
 		
 		if active_recorders:
-			# 録音中の場合は確認ダイアログを表示
 			recording_count = len(active_recorders)
 			message = f"現在{recording_count}件の録音が進行中です。\nアプリケーションを終了しますか？\n\n録音を続行する場合は「いいえ」を選択してください。"
 			
 			result = yesNoDialog(_("録音中の終了確認"), message)
 			if result == wx.ID_NO:
-				# いいえが選択された場合は終了しない
 				self._exit_in_progress = False
 				if from_close_event and event and event.CanVeto():
 					event.Veto()
 				return
 		
-		# スケジュールデータの存在確認
 		if self._has_schedule_data():
-			# スケジュールデータが存在する場合は確認ダイアログを表示
 			schedule_count = len(schedule_manager.schedules)
-			# 0件の場合は確認ダイアログを表示しない
 			if schedule_count > 0:
 				message = f"録音予約が{schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
 				
 				result = yesNoDialog(_("予約データ削除の確認"), message)
 				if result == wx.ID_NO:
-					# いいえが選択された場合は終了しない
 					self._exit_in_progress = False
 					if from_close_event and event and event.CanVeto():
 						event.Veto()
 					return
 		
-		# 各ハンドラーのクリーンアップ
 		self._cleanup_recording_handler()
 		self._cleanup_radio_manager()
-		
-		# スケジュール録音データの完全削除
 		self._cleanup_schedule_data()
-		
-		# ログ出力が失敗しても処理を続行
+
 		try:
 			self.log.info("Application cleanup completed")
 		except:
 			pass
 		
 		globalVars.app.tb.Destroy()
-		
-		# ログ出力が失敗しても処理を続行
+
 		try:
 			self.log.info("Exiting...")
 		except:
 			pass
-		
-		# メインウィンドウを閉じてアプリケーションを終了
+
 		if from_close_event:
 			if event:
 				event.Skip()
@@ -323,7 +276,6 @@ class Events(BaseEvents):
 			try:
 				self.parent.recording_handler.cleanup()
 			except Exception as e:
-				# ログ出力が失敗しても処理を続行
 				try:
 					self.log.error(f"Error during recording handler cleanup: {e}")
 				except:
@@ -335,7 +287,6 @@ class Events(BaseEvents):
 			try:
 				self.parent.radio_manager.exit()
 			except Exception as e:
-				# ログ出力が失敗しても処理を続行
 				try:
 					self.log.error(f"Error during radio manager cleanup: {e}")
 				except:
@@ -344,22 +295,17 @@ class Events(BaseEvents):
 	def _has_schedule_data(self):
 		"""スケジュールデータの存在確認"""
 		try:
-			
-			# メモリ上のスケジュールデータを確認
 			if schedule_manager.schedules:
 				return True
-			
-			# JSONファイルの存在確認
+
 			schedule_file = schedule_manager.schedule_file
 			if os.path.exists(schedule_file):
-				# ファイルが空でないか確認
 				if os.path.getsize(schedule_file) > 0:
 					return True
-			
+
 			return False
 			
 		except Exception as e:
-			# ログ出力が失敗しても処理を続行
 			try:
 				self.log.error(f"Error checking schedule data: {e}")
 			except:
@@ -369,39 +315,30 @@ class Events(BaseEvents):
 	def _cleanup_schedule_data(self):
 		"""スケジュール録音データの完全削除"""
 		try:
-			
-			# スケジュールファイルの存在確認
 			schedule_file = schedule_manager.schedule_file
 			if os.path.exists(schedule_file):
-				# スケジュールファイルを削除
 				os.remove(schedule_file)
-				# ログ出力が失敗しても処理を続行
 				try:
 					self.log.info(f"Schedule file deleted: {schedule_file}")
 				except:
 					pass
-			
-			# スケジュールマネージャーのクリーンアップ
+
 			schedule_manager.cleanup()
-			
-			# スケジュールデータを完全にクリア
+
 			with schedule_manager.lock:
 				removed_count = len(schedule_manager.schedules)
 				schedule_manager.schedules.clear()
-				# ログ出力が失敗しても処理を続行
 				try:
 					self.log.info(f"All schedule data cleared: {removed_count} schedules removed")
 				except:
 					pass
-			
-			# ログ出力が失敗しても処理を続行
+
 			try:
 				self.log.info("Schedule data cleanup completed")
 			except:
 				pass
 			
 		except Exception as e:
-			# ログ出力が失敗しても処理を続行
 			try:
 				self.log.error(f"Error during schedule data cleanup: {e}")
 			except:
@@ -415,7 +352,6 @@ class Events(BaseEvents):
 
 	def keyConfig(self, event):
 		if self.setKeymap(self.parent.identifier, _("ショートカットキーの設定"), filter=keymap.KeyFilter().SetDefault(False, False)):
-			# ショートカットキーの変更適用とメニューバーの再描画
 			self.parent.menu.InitShortcut()
 			self.parent.menu.ApplyShortcut(self.parent.hFrame)
 			self.parent.menu.Apply(self.parent.hFrame)
@@ -456,7 +392,6 @@ class Events(BaseEvents):
 
 		keyData, menuData = d.GetValue()
 
-		# キーマップの既存設定を置き換える
 		newMap = ConfigManager.ConfigManager()
 		newMap.read(constants.KEYMAP_FILE_NAME)
 		for name, key in keyData.items():
@@ -503,12 +438,61 @@ class Events(BaseEvents):
 		"""再生停止処理"""
 		self.parent.radio_manager.stop()
 
+	def onTimefreeToggle(self, event):
+		"""聴き逃し再生/停止（グローバル）"""
+		if not hasattr(self.parent, "radio_manager"):
+			return
+
+		radio_manager = self.parent.radio_manager
+		if radio_manager.is_timefree_playing():
+			radio_manager.stop_timefree()
+			return
+
+		if radio_manager.is_live_playing():
+			station_id = self._resolve_timefree_station_id()
+			if not station_id:
+				errorDialog(_("放送局を選択してから聴き逃し再生を実行してください。"))
+				return
+			if hasattr(self.parent, "program_info_handler"):
+				self.parent.program_info_handler.initializeInfoView(station_id)
+			return
+
+		if radio_manager.has_last_timefree_request():
+			try:
+				radio_manager.replay_last_timefree()
+				return
+			except Exception as e:
+				self.log.warning(f"Failed to replay last timefree stream: {e}")
+
+		station_id = self._resolve_timefree_station_id()
+		if not station_id:
+			errorDialog(_("放送局を選択してから聴き逃し再生を実行してください。"))
+			return
+
+		if hasattr(self.parent, "program_info_handler"):
+			self.parent.program_info_handler.initializeInfoView(station_id)
+
+	def _resolve_timefree_station_id(self):
+		"""聴き逃し再生コマンドの対象放送局IDを解決"""
+		if self.current_selected_station_id:
+			return self.current_selected_station_id
+		if self.current_playing_station_id:
+			return self.current_playing_station_id
+		if hasattr(self.parent, "radio_manager") and hasattr(self.parent.radio_manager, "tree"):
+			try:
+				item = self.parent.radio_manager.tree.GetFocusedItem()
+				station_id = self.parent.radio_manager.tree.GetItemData(item)
+				if station_id:
+					return station_id
+			except Exception:
+				return None
+		return None
+
 	def _update_program_info_display(self):
 		"""番組情報表示の更新"""
 		if not hasattr(self.parent, 'program_info_handler'):
 			return
 		
-		# 番組情報が非表示の場合は何もしない
 		if not self.displaying:
 			return
 		
@@ -519,7 +503,6 @@ class Events(BaseEvents):
 		self.show_onair_music()
 		self.show_description()
 
-		# メニュー項目の表示
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
 
 	def show_description(self):
@@ -555,7 +538,6 @@ class Events(BaseEvents):
 		
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("SHOW_PROGRAMLIST"), True)
 		
-		# 選択した放送局の録音状態をチェックしてメニューを更新
 		if hasattr(self.parent, 'recording_handler'):
 			self.parent.recording_handler._update_recording_menu_for_station(self.current_selected_station_id)
 

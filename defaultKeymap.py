@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 #default key map
 #Copyright (C) 2019 Yukio Nozawa <personal@nyanchangames.com>
 
@@ -11,6 +11,7 @@ defaultKeymap["mainView"]={
 	"OPTION_KEY_CONFIG":"",
 	"OPTION_STARTUP":"",
 	"FUNCTION_PLAY_PLAY":"F1",
+	"FUNCTION_TIMEFREE_TOGGLE":"F2",
 	"FUNCTION_VOLUME_UP":"F9",
 	"FUNCTION_VOLUME_DOWN":"F7",
 	"FUNCTION_PLAY_MUTE":"F8",

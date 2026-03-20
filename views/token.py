@@ -79,3 +79,46 @@ class Token:
         # embed()
         return lines[0]
 
+    def gen_timefree_chunk_m3u8_url(self, station_id, ft, to, auth_token):
+        """タイムフリー再生用のチャンクm3u8 URLを生成"""
+        query = urllib.parse.urlencode({
+            "station_id": station_id,
+            "ft": ft,
+            "to": to,
+            "l": "15",
+        })
+        candidates = [
+            f"https://radiko.jp/v2/api/ts/playlist.m3u8?{query}",
+            f"http://radiko.jp/v2/api/ts/playlist.m3u8?{query}",
+        ]
+        headers = {
+            "X-Radiko-AuthToken": auth_token,
+            "User-Agent": "curl/7.56.1",
+            "X-Radiko-App": "pc_html5",
+            "X-Radiko-App-Version": "0.0.1",
+            "X-Radiko-User": "dummy_user",
+            "X-Radiko-Device": "pc",
+        }
+        last_error = None
+        for url in candidates:
+            try:
+                req = urllib.request.Request(url, None, headers)
+                res = urllib.request.urlopen(req)
+                body = res.read().decode(errors="ignore")
+                lines = re.findall(r'^https?://.+m3u8$', body, flags=(re.MULTILINE))
+                if lines:
+                    return lines[0]
+                # 相対パスや改行形式の揺れに備える
+                alt_lines = [
+                    line.strip() for line in body.splitlines()
+                    if line.strip().endswith(".m3u8")
+                ]
+                if alt_lines:
+                    line = alt_lines[0]
+                    if line.startswith("http://") or line.startswith("https://"):
+                        return line
+            except Exception as e:
+                last_error = e
+                continue
+        raise RuntimeError(f"Failed to resolve timefree chunk m3u8 URL: {last_error}")
+
