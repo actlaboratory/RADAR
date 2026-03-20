@@ -50,6 +50,8 @@ class MPVAudioPlayer:
         self._http_headers = {}
         self._volume = 100
         self._device_id = ""
+        self._start_position_sec = 0
+        self._nonseekable_input = True
         self._process = None
         self._last_error = ""
         self._lock = threading.RLock()
@@ -108,6 +110,18 @@ class MPVAudioPlayer:
                 self._restart_locked()
             return True
 
+    def setStartPosition(self, seconds):
+        with self._lock:
+            try:
+                value = int(seconds)
+            except Exception:
+                value = 0
+            self._start_position_sec = max(0, value)
+
+    def setNonSeekableInput(self, enabled):
+        with self._lock:
+            self._nonseekable_input = bool(enabled)
+
     def play(self):
         with self._lock:
             if not self._source:
@@ -136,6 +150,9 @@ class MPVAudioPlayer:
         return False
 
     def _build_command(self):
+        lavf_opts = "reconnect=1,reconnect_streamed=1,reconnect_delay_max=2"
+        if self._nonseekable_input:
+            lavf_opts += ",http_seekable=0,seekable=0"
         cmd = [
             self._mpv_path,
             "--no-video",
@@ -147,7 +164,7 @@ class MPVAudioPlayer:
             "--cache=yes",
             "--cache-secs=20",
             "--demuxer-readahead-secs=20",
-            "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=2,http_seekable=0,seekable=0",
+            f"--stream-lavf-o={lavf_opts}",
             self._source,
         ]
         if self._http_headers:
@@ -156,6 +173,8 @@ class MPVAudioPlayer:
                 cmd.insert(-1, f"--http-header-fields={header_str}")
         if self._device_id:
             cmd.insert(-1, f"--audio-device=wasapi/{self._device_id}")
+        if self._start_position_sec > 0:
+            cmd.insert(-1, f"--start={self._start_position_sec}")
         return cmd
 
     def _start_locked(self):

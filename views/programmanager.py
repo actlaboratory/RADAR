@@ -78,6 +78,33 @@ class ProgramManager:
             "X-Radiko-AreaId": self.area_id,
         }
 
+    def get_timefree_playback_source_with_seek(self, station_id, ft_dt, to_dt, seek_seconds=0, stream_type="b"):
+        """seek位置を指定してタイムフリー再生URLとヘッダーを返す（playlist_create_url方式）"""
+        self.refresh_auth_session()
+        if seek_seconds is None:
+            seek_seconds = 0
+        seek_seconds = max(0, int(seek_seconds))
+        total_duration = max(1, int((to_dt - ft_dt).total_seconds()))
+        seek_seconds = min(seek_seconds, total_duration - 1)
+
+        ft = self._format_radiko_time(ft_dt)
+        to = self._format_radiko_time(to_dt)
+        seek_dt = ft_dt + datetime.timedelta(seconds=seek_seconds)
+        seek_ft = self._format_radiko_time(seek_dt)
+
+        url = self._build_timefree_playlist_create_url(
+            station_id,
+            ft,
+            to,
+            stream_type=stream_type,
+            l_value=15,
+            seek_ft=seek_ft,
+        )
+        return url, {
+            "X-Radiko-AuthToken": self.token,
+            "X-Radiko-AreaId": self.area_id,
+        }
+
     def get_timefree_recording_source(self, station_id, ft_dt, to_dt):
         """タイムフリー録音用 URL と必須ヘッダーを返す"""
         self.refresh_auth_session()
@@ -134,15 +161,17 @@ class ProgramManager:
                 continue
         raise RuntimeError(last_error)
 
-    def _build_timefree_playlist_create_url(self, station_id, ft, to, stream_type="c", l_value=15):
+    def _build_timefree_playlist_create_url(self, station_id, ft, to, stream_type="c", l_value=15, seek_ft=None):
         """playlist_create_url ベースのタイムフリーURLを構築"""
         playlist_base = self._get_timefree_playlist_create_base_url(station_id)
         lsid = secrets.token_hex(16)
+        if not seek_ft:
+            seek_ft = ft
         query = urllib.parse.urlencode({
             "station_id": station_id,
             "start_at": ft,
             "ft": ft,
-            "seek": ft,
+            "seek": seek_ft,
             "end_at": to,
             "to": to,
             "l": str(int(l_value)),

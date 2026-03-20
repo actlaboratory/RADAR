@@ -139,6 +139,7 @@ class Menu(BaseMenu):
 		# 機能メニュー
 		self.RegisterMenuCommand(self.hFunctionMenu, {
 			"FUNCTION_PLAY_PLAY": self.parent.events.onRadioActivated,
+			"FUNCTION_TIMEFREE_TOGGLE": self.parent.events.onTimefreeToggle,
 			"FUNCTION_VOLUME_UP": self.parent.events.volume_up,
 			"FUNCTION_VOLUME_DOWN": self.parent.events.volume_down,
 			"FUNCTION_PLAY_MUTE": self.parent.events.onMute,
@@ -502,6 +503,57 @@ class Events(BaseEvents):
 	def _stop_playback(self):
 		"""再生停止処理"""
 		self.parent.radio_manager.stop()
+
+	def onTimefreeToggle(self, event):
+		"""聴き逃し再生/停止（グローバル）"""
+		if not hasattr(self.parent, "radio_manager"):
+			return
+
+		radio_manager = self.parent.radio_manager
+		if radio_manager.is_timefree_playing():
+			radio_manager.stop_timefree()
+			return
+
+		if radio_manager.is_live_playing():
+			station_id = self._resolve_timefree_station_id()
+			if not station_id:
+				errorDialog(_("放送局を選択してから聴き逃し再生を実行してください。"))
+				return
+			if hasattr(self.parent, "program_info_handler"):
+				self.parent.program_info_handler.initializeInfoView(station_id)
+			return
+
+		# 停止後の再押下では、直前の聴き逃し再生を再開
+		if radio_manager.has_last_timefree_request():
+			try:
+				radio_manager.replay_last_timefree()
+				return
+			except Exception as e:
+				self.log.warning(f"Failed to replay last timefree stream: {e}")
+
+		station_id = self._resolve_timefree_station_id()
+		if not station_id:
+			errorDialog(_("放送局を選択してから聴き逃し再生を実行してください。"))
+			return
+
+		if hasattr(self.parent, "program_info_handler"):
+			self.parent.program_info_handler.initializeInfoView(station_id)
+
+	def _resolve_timefree_station_id(self):
+		"""聴き逃し再生コマンドの対象放送局IDを解決"""
+		if self.current_selected_station_id:
+			return self.current_selected_station_id
+		if self.current_playing_station_id:
+			return self.current_playing_station_id
+		if hasattr(self.parent, "radio_manager") and hasattr(self.parent.radio_manager, "tree"):
+			try:
+				item = self.parent.radio_manager.tree.GetFocusedItem()
+				station_id = self.parent.radio_manager.tree.GetItemData(item)
+				if station_id:
+					return station_id
+			except Exception:
+				return None
+		return None
 
 	def _update_program_info_display(self):
 		"""番組情報表示の更新"""
