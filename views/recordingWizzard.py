@@ -1,7 +1,6 @@
 import wx
 import time
 import datetime
-import locale
 import re
 import threading
 from logging import getLogger
@@ -81,45 +80,30 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self._sync_seek_slider_from_player()
         event.Skip()
 
-    def get_streamUrl(self, stationid):
-        """ストリームURLを取得"""
-        try:
-            return self.progs.get_authenticated_stream_url(stationid)
-        except Exception as e:
-            self.log.error(f"Failed to get stream URL: {e}")
-
     def onFinishButton(self, event):
         """録音予約を確定"""
         try:
             self._refresh_selected_filetype()
-            current = datetime.datetime.now()
             program_title, start_dt, end_dt = self._get_selected_program_range()
 
-            # 日時オブジェクトを設定
             self.stdt = start_dt
             self.endt = end_dt
-
             current = datetime.datetime.now()
 
-            # 過去の番組かチェック
             if self.stdt < current:
                 simpleDialog.errorDialog("過去の番組の録音はできません。番組を選び直してください。")
                 self.log.error(f"Failed to schedule program: Specified time ({self.stdt}) is in the past.")
                 return
             
-            # 出力パスを準備
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
             replace = safe_title.replace(" ", "-")
-            # 設定から出力先フォルダを取得
             from recorder import create_recording_dir
             station_dir = self.radioname.replace(" ", "_")
             dirs = create_recording_dir(station_dir, program_title)
             
-            # タイムスタンプを追加してファイル名重複を回避
             timestamp = self.stdt.strftime("%Y%m%d_%H%M%S")
             output_path = os.path.join(dirs, f"{timestamp}_{replace}")
             
-            # 録音予約を作成
             schedule = RecordingSchedule(
                 station_id=self.stid,
                 station_name=self.radioname,
@@ -130,17 +114,13 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 filetype=self.filetype
             )
             
-            # 予約を追加
             schedule_manager.add_schedule(schedule)
             self.current_schedule = schedule
             
-            # 監視を開始（初回のみ）
             schedule_manager.start_monitoring()
             
-            # 現在のスケジュール数を取得
             total_schedules = len(schedule_manager.schedules)
             
-            # UI更新
             if total_schedules == 1:
                 message = f'録音がスケジュールされました。録音は、{self.stdt}に開始されます。'
             else:
@@ -158,12 +138,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 self.log.error(f"Failed to send recording schedule notification: {e}")
             
             self.log.info(f"Recording scheduled successfully: {program_title}")
-            # ダイアログを閉じてメイン画面に戻る
             self.Destroy()
             return
 
         except Exception as e:
-            #raise e
             self.log.error(f"Error in onFinishButton: {e}")
             simpleDialog.errorDialog(f"録音スケジュールに失敗しました: {e}")
 
@@ -203,7 +181,6 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 "stream_type": "b",
                 "duration_sec": duration_sec,
             }
-            # 優先: type=b
             try:
                 stream_url, headers = self.progs.get_timefree_playback_source(self.stid, start_dt, end_dt)
                 main_view.radio_manager.play_timefree(
@@ -222,7 +199,6 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             except Exception as e:
                 self.log.warning(f"timefree playback primary source failed: {e}")
 
-            # フォールバック: type=c
             stream_url, headers = self.progs.get_timefree_playback_source_compat(self.stid, start_dt, end_dt)
             main_view.radio_manager.play_timefree(
                 stream_url,
@@ -283,7 +259,6 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 f"{self._format_hhmmss(position)} / {self._format_hhmmss(duration)}"
             )
         except RuntimeError:
-            # 破棄中/破棄後のウィジェット参照を無視
             self._stop_seek_timer()
             return
         finally:
@@ -299,7 +274,6 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         if not hasattr(globalVars.app.hMainView, "radio_manager"):
             return
         target = int(self.timefree_seek_slider.GetValue())
-        # まず表示だけ即更新し、実seekはデバウンスして1回だけ適用
         duration = int(max(self.timefree_seek_slider.GetMax(), self._current_timefree_duration_sec, 1))
         self.timefree_seek_label.SetLabel(
             f"{self._format_hhmmss(target)} / {self._format_hhmmss(duration)}"
@@ -482,7 +456,6 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         """コントロールを配置"""
         super().InstallControls()
 
-        # 録音予約/聴き逃し操作ボタン
         self.record_btn = self.creator.button(_("録音予約(&R)"), self.onFinishButton)
         self.timefree_play_btn = self.creator.button(_("聴き逃し再生(&P)"), self.onPlayTimeFree)
         self.timefree_record_btn = self.creator.button(_("聴き逃し録音(&T)"), self.onRecordTimeFree)
@@ -495,7 +468,6 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             x=400,
             sizerFlag=wx.ALL | wx.EXPAND
         )
-        # 音量スライダーと同様に、wx.Slider 標準のページ移動で操作する
         self.timefree_seek_slider.SetPageSize(10)
         self.timefree_seek_slider.Enable(False)
         self.timefree_seek_label.SetLabel("00:00:00 / 00:00:00")

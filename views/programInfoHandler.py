@@ -3,7 +3,6 @@
 
 import wx
 from views import recordingWizzard
-from simpleDialog import *
 
 
 class ProgramInfoHandler:
@@ -28,13 +27,11 @@ class ProgramInfoHandler:
 
     def description(self):
         """番組の説明の表示部分を作る"""
-        # 番組の説明の表示部分をつくる
-        self.DSCBOX, self.dscboxLabel = self.creator.inputbox(_("説明"), style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_PROCESS_ENTER)  # 読み取り専用のテキストボックス
-        self.DSCBOX.Disable()  # 初期状態は無効
+        self.DSCBOX, self.dscboxLabel = self.creator.inputbox(_("説明"), style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_PROCESS_ENTER)
+        self.DSCBOX.Disable()
 
     def get_latest_info(self):
         """ctrl+f5によるリロード処理のときに呼ばれる"""
-        # 番組情報が非表示の場合は何もしない
         if not self.events.displaying:
             return
 
@@ -102,7 +99,6 @@ class ProgramInfoHandler:
 
     def show_description(self, station_id):
         """番組の説明を表示"""
-        # 番組情報が非表示の場合は何もしない
         if not self.events.displaying:
             return
         
@@ -114,7 +110,6 @@ class ProgramInfoHandler:
 
     def show_program_info(self, station_id):
         """番組情報を表示"""
-        # 番組情報が非表示の場合は何もしない
         if not self.events.displaying:
             return
         
@@ -123,14 +118,12 @@ class ProgramInfoHandler:
         program_pfm = self.parent.progs.getnowProgramPfm(station_id)
         station_name = self.parent.radio_manager.stid.get(station_id, station_id)
 
-        # リストビューにアペンド
         self.nplist.Append(("放送局", station_name))
         self.nplist.Append(("番組名", program_title))
         self.nplist.Append(("出演者", program_pfm))
 
     def show_onair_music(self, station_id):
         """オンエア曲情報を表示"""
-        # 番組情報が非表示の場合は何もしない
         if not self.events.displaying:
             return
         

@@ -8,7 +8,6 @@ import constants
 import datetime
 import urllib.parse
 import secrets
-import tcutil
 from views import token
 
 class ProgramManager:
@@ -20,7 +19,6 @@ class ProgramManager:
         self.partialkey = None
         self.area_id = ""
         self.jpCode()
-        self.tcutil = tcutil.CalendarUtil()
 
     def refresh_auth_session(self):
         """radiko認証セッションを毎回更新する"""

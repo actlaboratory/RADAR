@@ -4,13 +4,10 @@
 import wx
 import tcutil
 import time
-import locale
-import winsound
 import region_dic
 import re
 import lxml.etree as ET
 import socket
-import subprocess
 import constants
 import globalVars
 import urllib
@@ -39,7 +36,7 @@ class RadioManager:
         self.m3u8 = None
         self.current_station_id = None
         self.current_progs = None
-        self.playback_mode = None  # "live" or "timefree"
+        self.playback_mode = None
         self._last_timefree_request = None
         self._timefree_started_monotonic = None
         self._timefree_resume_position_sec = 0
@@ -343,8 +340,6 @@ class RadioManager:
             "to_dt": (timefree_info or {}).get("to_dt"),
             "stream_type": (timefree_info or {}).get("stream_type", "b"),
         }
-        # radiko timefree は環境によって seekable を有効にすると無音化するため、
-        # 再生安定性を優先して非シーク入力モードを維持する
         self._player.setNonSeekableInput(True)
         self._player.setHttpHeaders(headers or {})
         self._player.setStartPosition(0)
@@ -441,7 +436,6 @@ class RadioManager:
             )
             return
 
-        # 旧形式データしかない場合は保存URLで再生
         self.play_timefree(
             req.get("stream_url"),
             station_id=station_id,
@@ -498,7 +492,7 @@ class RadioManager:
 
     def update_program_info(self):
         """番組情報更新タイマーを開始"""
-        self.updateInfoTimer.Start(self.tmg.replace_milliseconds(3))  # 設定した頻度で番組情報を更新
+        self.updateInfoTimer.Start(self.tmg.replace_milliseconds(3))
         self.updateInfoTimer.Bind(wx.EVT_TIMER, self.events.onUpdateProcess)
 
     def get_latest_programList(self, progs):
