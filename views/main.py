@@ -236,17 +236,16 @@ class Events(BaseEvents):
 					event.Veto()
 				return
 		
-		if self._has_schedule_data():
-			schedule_count = len(schedule_manager.schedules)
-			if schedule_count > 0:
-				message = f"録音予約が{schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
-				
-				result = yesNoDialog(_("予約データ削除の確認"), message)
-				if result == wx.ID_NO:
-					self._exit_in_progress = False
-					if from_close_event and event and event.CanVeto():
-						event.Veto()
-					return
+		pending_schedule_count = schedule_manager.count_pending_schedules_for_exit_warning()
+		if pending_schedule_count > 0:
+			message = f"録音予約が{pending_schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
+			
+			result = yesNoDialog(_("予約データ削除の確認"), message)
+			if result == wx.ID_NO:
+				self._exit_in_progress = False
+				if from_close_event and event and event.CanVeto():
+					event.Veto()
+				return
 		
 		self._cleanup_recording_handler()
 		self._cleanup_radio_manager()
@@ -291,26 +290,6 @@ class Events(BaseEvents):
 					self.log.error(f"Error during radio manager cleanup: {e}")
 				except:
 					pass
-
-	def _has_schedule_data(self):
-		"""スケジュールデータの存在確認"""
-		try:
-			if schedule_manager.schedules:
-				return True
-
-			schedule_file = schedule_manager.schedule_file
-			if os.path.exists(schedule_file):
-				if os.path.getsize(schedule_file) > 0:
-					return True
-
-			return False
-			
-		except Exception as e:
-			try:
-				self.log.error(f"Error checking schedule data: {e}")
-			except:
-				pass
-			return False
 
 	def _cleanup_schedule_data(self):
 		"""スケジュール録音データの完全削除"""

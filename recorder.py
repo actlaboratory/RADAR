@@ -774,6 +774,15 @@ class ScheduleManager:
         with self.lock:
             return self.schedules.copy()
 
+    def count_pending_schedules_for_exit_warning(self):
+        """終了確認用。未実行・録音中のみを数え、完了・取消・失敗などの履歴は含めない。"""
+        with self.lock:
+            return sum(
+                1
+                for s in self.schedules
+                if s.status in (RECORDING_STATUS_SCHEDULED, RECORDING_STATUS_RECORDING)
+            )
+
     def start_monitoring(self):
         """監視を開始"""
         if self.running:
