@@ -161,20 +161,12 @@ class ProgramCacheManager:
                 if search_criteria.get('date'):
                     where_conditions.append("date = ?")
                     params.append(search_criteria['date'])
-                # 日付が指定されていない場合は、日付条件を追加しない
-                # _filter_past_programsで過去の番組を除外するため、すべての日付を検索対象にする
-                
-                # 検索クエリの構築
+
                 where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-                # 日付が指定されていない場合は、LIMITを大幅に増やして
-                # _filter_past_programsで過去の番組を除外した後も十分な結果が得られるようにする
                 requested_limit = search_criteria.get('limit', 100)
                 if search_criteria.get('date'):
-                    # 日付指定時は通常のLIMITを使用
                     query_limit = requested_limit
                 else:
-                    # 日付未指定時は、未来の番組を十分に取得できるようにLIMITを増やす
-                    # 過去の番組を除外した後も十分な結果が得られるようにする
                     query_limit = max(requested_limit * 50, 10000)
                 
                 query = f'''
@@ -204,16 +196,10 @@ class ProgramCacheManager:
                         'date': row['date']
                     })
                 
-                # 過去の番組を除外（日付と時間を組み合わせて現在時刻と比較）
-                programs = self._filter_past_programs(programs)
+                programs = self._filter_search_time_window(programs)
                 
-                # 過去の番組を除外した後、要求されたLIMITを適用
-                # ただし、日付未指定の場合はLIMITを適用しない（すべての結果を返す）
-                if search_criteria.get('date'):
-                    # 日付指定時のみLIMITを適用
-                    if len(programs) > requested_limit:
-                        programs = programs[:requested_limit]
-                # 日付未指定時はLIMITを適用しない（すべての未来の番組を返す）
+                if len(programs) > requested_limit:
+                    programs = programs[:requested_limit]
                 
                 self.log.info(f"Search completed: {len(programs)} results found (requested limit: {requested_limit}, date specified: {bool(search_criteria.get('date'))})")
                 return programs
@@ -222,89 +208,38 @@ class ProgramCacheManager:
                 self.log.error(f"Search failed: {e}")
                 return []
     
-    def _filter_past_programs(self, programs):
-        """過去の番組を除外（ラジオの日付ルールに従う：5時未満は前日として扱う）"""
-        import datetime
-        
+    def _filter_search_time_window(self, programs):
+        """
+        番組表の表記日(date=YYYYMMDD)が古すぎる行を除く。
+        ラジオ日付(5時切替)の「今日」から見て7日前の日付より前は除外する。
+        ※ 開始時刻と「現在-7日時刻」を比較すると、同一日の午前番組まで落ちるため日付のみで比較する。
+        """
+        import datetime as dt
+
         if not programs:
             return programs
-        
-        # ラジオの日付ルールに従った現在時刻を取得
-        # 5時未満の場合は前日の日付として扱う
-        current = datetime.datetime.now()
-        if current.hour < 5:
-            # 5時未満の場合は、前日の日付として扱う（時刻はそのまま）
-            # 例：現在が1月2日3:00の場合、1月1日3:00として扱う
-            current = current - datetime.timedelta(days=1)
-        # 秒とマイクロ秒を0に設定して比較の精度を統一
-        current = current.replace(second=0, microsecond=0)
-        
-        filtered_programs = []
+
+        now = dt.datetime.now()
+        if now.hour < 5:
+            now -= dt.timedelta(days=1)
+        reference_date = now.date()
+        oldest_allowed_date = reference_date - dt.timedelta(days=7)
+
+        out = []
         for program in programs:
-            try:
-                date_str = program.get('date', '')
-                start_time_str = program.get('start_time', '')
-                
-                if not date_str or not start_time_str:
-                    # 日付または時間が不明な場合は除外
-                    continue
-                
-                # 日付をパース
-                if len(date_str) == 8:
-                    year = int(date_str[:4])
-                    month = int(date_str[4:6])
-                    day = int(date_str[6:8])
-                    program_date = datetime.date(year, month, day)
-                else:
-                    continue
-                
-                # 時間をパース（HH:MM:SS形式またはHH:MM形式）
-                start_parts = start_time_str.split(':')
-                if len(start_parts) >= 2:
-                    start_hour = int(start_parts[0])
-                    start_minute = int(start_parts[1])
-                    # 秒の処理（秒が指定されている場合は取得、されていない場合は0）
-                    start_second = int(start_parts[2]) if len(start_parts) >= 3 else 0
-                else:
-                    continue
-                
-                # 24時以降の時間を処理（例：25:00 → 翌日1:00、28:00 → 翌日4:00）
-                days_offset = 0
-                is_24h_over = False
-                original_hour = start_hour
-                if start_hour >= 24:
-                    is_24h_over = True
-                    days_offset = start_hour // 24
-                    start_hour = start_hour % 24
-                
-                # datetimeオブジェクトを作成
-                program_datetime = datetime.datetime.combine(
-                    program_date,
-                    datetime.time(start_hour, start_minute, start_second)
-                )
-                
-                # 24時以降の時間の場合は日付を進める
-                if days_offset > 0:
-                    program_datetime += datetime.timedelta(days=days_offset)
-                
-                # 深夜番組の処理（ラジオの日付ルール：5時未満は前日として扱う）
-                # ただし、24時以降の時間（28時など）は既に日付を進めているので、このチェックをスキップ
-                # 例：1月1日の28:00（1月2日の4:00）は、そのまま1月2日の4:00として扱う
-                # 例：1月2日の3:00開始の番組は、1月1日の3:00として扱う
-                if not is_24h_over and program_datetime.time() < datetime.time(5, 0, 0):
-                    # 前日の日付として扱う（時刻はそのまま）
-                    program_datetime = program_datetime - datetime.timedelta(days=1)
-                
-                # 現在時刻より後の番組のみを含める
-                if program_datetime >= current:
-                    filtered_programs.append(program)
-                    
-            except (ValueError, TypeError) as e:
-                # パースエラーの場合は除外
-                self.log.debug(f"Failed to parse program date/time, excluding: {e}")
+            date_str = program.get("date", "") or ""
+            if len(date_str) != 8:
                 continue
-        
-        return filtered_programs
+            try:
+                y = int(date_str[:4])
+                m = int(date_str[4:6])
+                d = int(date_str[6:8])
+                listing_date = dt.date(y, m, d)
+            except (ValueError, TypeError):
+                continue
+            if listing_date >= oldest_allowed_date:
+                out.append(program)
+        return out
     
     def get_program_count(self, date=None):
         """キャッシュされた番組数を取得"""
@@ -378,15 +313,14 @@ class ProgramCacheManager:
             return False
     
     def get_weekly_data_summary(self):
-        """1週間分のデータサマリーを取得"""
+        """キャッシュ対象日付帯（過去7日〜先6日）のサマリーを取得"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                
-                # 今日から1週間分の日付範囲を計算
-                today = datetime.datetime.now()
+
+                today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 week_dates = []
-                for i in range(7):
+                for i in range(-7, 7):
                     target_date = today + datetime.timedelta(days=i)
                     week_dates.append(target_date.strftime('%Y%m%d'))
                 
@@ -417,22 +351,23 @@ class ProgramCacheManager:
                 return None
     
     def is_weekly_cache_complete(self):
-        """1週間分のキャッシュが完全かチェック"""
+        """過去7日〜先6日の各日に最低件数あるか（簡易チェック）"""
         try:
             summary = self.get_weekly_data_summary()
             if not summary:
                 return False
-            
-            # 各日付に最低限のデータがあるかチェック
-            min_programs_per_day = 10  # 最低限の番組数
+
+            min_programs_per_day = 10
             for date_str, count in summary['weekly_summary'].items():
                 if count < min_programs_per_day:
                     self.log.debug(f"Insufficient data for {date_str}: {count} programs")
                     return False
-            
-            self.log.info(f"Weekly cache is complete: {summary['total_programs']} programs across {summary['total_stations']} stations")
+
+            self.log.info(
+                f"Program cache window complete: {summary['total_programs']} programs, {summary['total_stations']} stations"
+            )
             return True
-            
+
         except Exception as e:
             self.log.error(f"Failed to check weekly cache completeness: {e}")
             return False

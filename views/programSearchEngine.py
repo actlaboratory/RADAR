@@ -146,16 +146,10 @@ class ProgramSearchEngine:
                     'date': row['date']
                 })
             
-            # 過去の番組を除外
-            programs = self.cache_manager._filter_past_programs(programs)
-            
-            # 過去の番組を除外した後、要求されたLIMITを適用
-            # ただし、日付未指定の場合はLIMITを適用しない（すべての結果を返す）
-            if search_criteria.get('date'):
-                # 日付指定時のみLIMITを適用
-                if len(programs) > requested_limit:
-                    programs = programs[:requested_limit]
-            # 日付未指定時はLIMITを適用しない（すべての未来の番組を返す）
+            programs = self.cache_manager._filter_search_time_window(programs)
+
+            if len(programs) > requested_limit:
+                programs = programs[:requested_limit]
             
             self.log.info(f"Time range search completed: {len(programs)} results found (requested limit: {requested_limit}, date specified: {bool(search_criteria.get('date'))})")
             return programs

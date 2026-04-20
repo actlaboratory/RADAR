@@ -97,13 +97,14 @@ class ProgramDataCollector:
             today = datetime.datetime.now()
             start_date = today.replace(hour=0, minute=0, second=0, microsecond=0)
         
-        # 1週間分の日付リストを生成
+        # 過去7日 + 今日から6日先まで（計14日、聴き逃し用の過去番組表を含む）
+        first_day = start_date - datetime.timedelta(days=7)
         date_list = []
-        for i in range(7):
-            target_date = start_date + datetime.timedelta(days=i)
+        for i in range(14):
+            target_date = first_day + datetime.timedelta(days=i)
             date_list.append(target_date.strftime('%Y%m%d'))
-        
-        self.log.info(f"Starting weekly data collection from {date_list[0]} to {date_list[-1]}")
+
+        self.log.info(f"Starting program cache collection from {date_list[0]} to {date_list[-1]} ({len(date_list)} days)")
         
         # 全放送局のIDを取得
         if not self.radio_manager or not hasattr(self.radio_manager, 'stid') or not self.radio_manager.stid:
@@ -111,7 +112,7 @@ class ProgramDataCollector:
             return False
         
         station_ids = list(self.radio_manager.stid.keys())
-        self.log.info(f"Collecting data for {len(station_ids)} stations across 7 days")
+        self.log.info(f"Collecting data for {len(station_ids)} stations across {len(date_list)} days")
         
         success_count = 0
         total_days = len(date_list)
@@ -286,7 +287,7 @@ class ProgramDataCollector:
                 self.collect_all_stations_data(tomorrow)
                 
                 # 古いデータをクリーンアップ
-                self.cache_manager.cleanup_old_data(days=7)
+                self.cache_manager.cleanup_old_data(days=21)
                 
                 # 次の収集まで待機
                 time.sleep(self.collection_interval)

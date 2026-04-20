@@ -161,8 +161,7 @@ class ProgramCacheController:
             else:
                 self.log.warning("Weekly database update failed, but continuing with existing data")
             
-            # 古いデータをクリーンアップ（14日以上古いデータを削除）
-            self.cache_manager.cleanup_old_data(days=14)
+            self.cache_manager.cleanup_old_data(days=21)
             
             # サービスを初期化
             self._initialize_services()
