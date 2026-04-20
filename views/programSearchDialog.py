@@ -225,10 +225,10 @@ class ProgramSearchDialog(BaseDialog):
             while current_date <= end_date:
                 # エンコーディングエラーを避けるため、英語形式で表示
                 try:
-                    date_str = current_date.strftime('%Y-%m-%d')
+                    date_str = current_date.strftime('%Y/%m/%d')
                 except (ValueError, OSError):
                     # ロケールエラーの場合は代替形式を使用
-                    date_str = f"{current_date.year:04d}-{current_date.month:02d}-{current_date.day:02d}"
+                    date_str = f"{current_date.year:04d}/{current_date.month:02d}/{current_date.day:02d}"
                 
                 date_value = current_date.strftime('%Y%m%d')
                 date_options.append(f"{date_str} ({date_value})")
@@ -254,7 +254,7 @@ class ProgramSearchDialog(BaseDialog):
                 for i in range(7):
                     target_date = start_date + datetime.timedelta(days=i)
                     date_value = target_date.strftime('%Y%m%d')
-                    date_options.append(f"{date_value}")
+                    date_options.append(f"{target_date.strftime('%Y/%m/%d')} ({date_value})")
                 self._base_date_options = list(date_options)
                 self._apply_date_options()
                 self.log.info(f"Fallback date options set: {date_options}")
@@ -547,11 +547,20 @@ class ProgramSearchDialog(BaseDialog):
         return now.date()
 
     def _build_past_week_date_options(self):
+        sample = ""
+        if self._base_date_options and len(self._base_date_options) > 1:
+            sample = self._base_date_options[1]
+
+        def _format_option(date_obj):
+            if "(" in sample and ")" in sample:
+                return f"{date_obj.strftime('%Y/%m/%d')} ({date_obj.strftime('%Y%m%d')})"
+            return date_obj.strftime("%Y%m%d")
+
         base = self._get_radio_base_date()
         past_entries = []
         for days in range(7, 0, -1):
             d = base - datetime.timedelta(days=days)
-            past_entries.append(f"{d.strftime('%Y-%m-%d')} ({d.strftime('%Y%m%d')})")
+            past_entries.append(_format_option(d))
         return past_entries
 
     def _extract_date_token(self, option_text):
