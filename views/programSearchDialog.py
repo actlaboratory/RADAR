@@ -59,7 +59,7 @@ class ProgramSearchDialog(BaseDialog):
         
         # 検索結果
         self.search_results = []
-        self._past_week_dates_appended = False
+        self._base_date_options = []
         self._refresh_worker = None
         self._refresh_state = None
         self._refresh_wait_dialog = None
@@ -126,7 +126,8 @@ class ProgramSearchDialog(BaseDialog):
 
         self.date_combo, date_label = date_creator.combobox(_("日付"), [], textLayout=None)
         self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
-        self.append_past_week_btn = date_creator.button(_("過去1週間の日付を表示"), self.on_append_past_week_dates)
+        self.show_past_week_chk = date_creator.checkbox(_("過去1週間の日付を表示"), event=self.on_toggle_past_week_dates)
+        self.show_past_week_chk.SetValue(constants.SHOW_PAST_WEEK_DATES_DEFAULT)
 
         self.start_hour_spin, _label = date_creator.spinCtrl(_("開始時間（時）"), min=5, max=28, defaultValue=5, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
@@ -233,8 +234,8 @@ class ProgramSearchDialog(BaseDialog):
                 date_options.append(f"{date_str} ({date_value})")
                 current_date += datetime.timedelta(days=1)
             
-            self.date_combo.SetItems(date_options)
-            self.date_combo.SetSelection(0)  # 「指定なし（全日付）」を選択
+            self._base_date_options = list(date_options)
+            self._apply_date_options()
             
             self.log.info(f"Date options set: {len(date_options)} dates from {date_options[0]} to {date_options[-1]}")
             
@@ -254,8 +255,8 @@ class ProgramSearchDialog(BaseDialog):
                     target_date = start_date + datetime.timedelta(days=i)
                     date_value = target_date.strftime('%Y%m%d')
                     date_options.append(f"{date_value}")
-                self.date_combo.SetItems(date_options)
-                self.date_combo.SetSelection(0)  # 「指定なし（全日付）」を選択
+                self._base_date_options = list(date_options)
+                self._apply_date_options()
                 self.log.info(f"Fallback date options set: {date_options}")
             except Exception as e2:
                 self.log.error(f"Fallback date setup also failed: {e2}")
@@ -545,25 +546,46 @@ class ProgramSearchDialog(BaseDialog):
             return now.date() - datetime.timedelta(days=1)
         return now.date()
 
-    def on_append_past_week_dates(self, event):
-        if self._past_week_dates_appended:
-            return
-        items = list(self.date_combo.GetStrings())
-        if not items:
-            return
+    def _build_past_week_date_options(self):
         base = self._get_radio_base_date()
         past_entries = []
         for days in range(7, 0, -1):
             d = base - datetime.timedelta(days=days)
             past_entries.append(f"{d.strftime('%Y-%m-%d')} ({d.strftime('%Y%m%d')})")
-        new_items = [items[0]] + past_entries + items[1:]
-        self.date_combo.SetItems(new_items)
-        sel = self.date_combo.GetSelection()
-        if sel < 0:
-            sel = 0
-        self.date_combo.SetSelection(sel + len(past_entries))
-        self._past_week_dates_appended = True
-        self.append_past_week_btn.Disable()
+        return past_entries
+
+    def _extract_date_token(self, option_text):
+        text = option_text or ""
+        if '(' in text and ')' in text:
+            return text.split('(')[1].split(')')[0].strip()
+        return text.strip()
+
+    def _apply_date_options(self):
+        items = list(self._base_date_options) if self._base_date_options else [_("指定なし（全日付）")]
+        selected_token = None
+        current_selection = self.date_combo.GetSelection()
+        if 0 <= current_selection < self.date_combo.GetCount():
+            selected_token = self._extract_date_token(self.date_combo.GetString(current_selection))
+
+        include_past = hasattr(self, "show_past_week_chk") and self.show_past_week_chk.GetValue()
+        if include_past and items:
+            past_entries = self._build_past_week_date_options()
+            items = [items[0]] + past_entries + items[1:]
+
+        self.date_combo.SetItems(items)
+
+        if selected_token:
+            for idx, opt in enumerate(items):
+                if self._extract_date_token(opt) == selected_token:
+                    self.date_combo.SetSelection(idx)
+                    break
+            else:
+                self.date_combo.SetSelection(0 if items else -1)
+        else:
+            self.date_combo.SetSelection(0 if items else -1)
+
+    def on_toggle_past_week_dates(self, event):
+        self._apply_date_options()
 
     def _parse_clock_on_listing_date(self, base_date, time_str):
         if not time_str:
