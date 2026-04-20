@@ -1,11 +1,14 @@
+import json
 import os
 import subprocess
 import threading
 import time
+import uuid
 from logging import getLogger
 
 import constants
 import globalVars
+from views.audio_output_devices import getDeviceList
 
 try:
     from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
@@ -14,33 +17,6 @@ except Exception:
     AudioUtilities = None
     ISimpleAudioVolume = None
     HAS_PYCAW = False
-
-
-def getDeviceList():
-    """アクティブな再生デバイス一覧を返す。戻り値: [{id, name}]"""
-    if not HAS_PYCAW:
-        return []
-
-    devices = []
-    try:
-        for d in AudioUtilities.GetAllDevices():
-            dev_id = str(getattr(d, "id", ""))
-            state = str(getattr(d, "state", ""))
-            name = getattr(d, "FriendlyName", "")
-            if dev_id.startswith("{0.0.0.") and "Active" in state and name:
-                devices.append({"id": dev_id, "name": name})
-    except Exception:
-        return []
-
-    unique = []
-    seen = set()
-    for d in devices:
-        key = (d["id"], d["name"])
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(d)
-    return unique
 
 
 class MPVAudioPlayer:
@@ -55,7 +31,7 @@ class MPVAudioPlayer:
         self._process = None
         self._last_error = ""
         self._lock = threading.RLock()
-        self._mpv_path = constants.MPV_PATH
+        self._ipc_pipe_name = f"radar_mpv_{uuid.uuid4().hex}" if os.name == "nt" else ""
         self._load_device_from_config()
 
     def _load_device_from_config(self):
@@ -97,12 +73,7 @@ class MPVAudioPlayer:
         with self._lock:
             requested = device_id or ""
             if requested and not self._is_active_device_id(requested):
-                self._log.warning("Selected output device is not active: %s", requested)
-                self._device_id = ""
-                self._save_device_to_config()
-                if self._is_running_locked():
-                    self._restart_locked()
-                return False
+                raise ValueError("指定した再生出力は利用できません。")
 
             self._device_id = requested
             self._save_device_to_config()
@@ -149,12 +120,17 @@ class MPVAudioPlayer:
                 return True
         return False
 
+    def _ipc_pipe_path(self):
+        if not self._ipc_pipe_name:
+            return ""
+        return rf"\\.\pipe\{self._ipc_pipe_name}"
+
     def _build_command(self):
         lavf_opts = "reconnect=1,reconnect_streamed=1,reconnect_delay_max=2"
         if self._nonseekable_input:
             lavf_opts += ",http_seekable=0,seekable=0"
         cmd = [
-            self._mpv_path,
+            constants.MPV_PATH,
             "--no-video",
             "--force-window=no",
             "--no-terminal",
@@ -171,6 +147,9 @@ class MPVAudioPlayer:
             header_str = ",".join([f"{k}: {v}" for k, v in self._http_headers.items() if v])
             if header_str:
                 cmd.insert(-1, f"--http-header-fields={header_str}")
+        if self._ipc_pipe_name:
+            cmd.insert(-1, f"--input-ipc-server={self._ipc_pipe_path()}")
+        cmd.insert(-1, f"--volume={int(self._volume)}")
         if self._device_id:
             cmd.insert(-1, f"--audio-device=wasapi/{self._device_id}")
         if self._start_position_sec > 0:
@@ -205,7 +184,6 @@ class MPVAudioPlayer:
             self._log.error("Failed to start mpv: %s", e)
             return
 
-        # 起動直後に終了した場合の理由を保持
         time.sleep(0.6)
         if self._process and self._process.poll() is not None:
             return_code = self._process.returncode
@@ -222,24 +200,10 @@ class MPVAudioPlayer:
             time.sleep(0.8)
             if self._process.poll() is not None:
                 stderr = self._read_process_stderr_locked()
-                self._last_error = stderr
-                self._log.warning("mpv exited after device selection. fallback to default: %s", stderr[:300])
-                self._device_id = ""
-                self._save_device_to_config()
-                try:
-                    self._process = subprocess.Popen(
-                        self._build_command(),
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.PIPE,
-                        startupinfo=startupinfo,
-                        creationflags=creationflags,
-                    )
-                except Exception as e:
-                    self._last_error = str(e)
-                    self._process = None
-                    self._log.error("Failed to restart mpv with default device: %s", e)
-                    return
+                self._last_error = stderr.strip() or "mpv exited after device selection"
+                self._log.error("mpv exited after device selection: %s", self._last_error[:500])
+                self._process = None
+                return
 
         self._apply_runtime_volume_async()
 
@@ -280,8 +244,27 @@ class MPVAudioPlayer:
         except Exception:
             return ""
 
+    def _apply_mpv_ipc_volume_locked(self):
+        if not self._ipc_pipe_name or not self._is_running_locked():
+            return False
+        path = self._ipc_pipe_path()
+        vol = max(0, min(100, int(self._volume)))
+        line = json.dumps({"command": ["set_property", "volume", vol]}) + "\n"
+        for _ in range(30):
+            try:
+                with open(path, "w", encoding="utf-8", newline="\n") as pipe:
+                    pipe.write(line)
+                return True
+            except OSError:
+                time.sleep(0.05)
+        return False
+
     def _apply_runtime_volume_locked(self):
-        if not HAS_PYCAW or not self._is_running_locked():
+        if not self._is_running_locked():
+            return False
+        if self._apply_mpv_ipc_volume_locked():
+            return True
+        if not HAS_PYCAW or ISimpleAudioVolume is None:
             return False
         pid = self._process.pid
         target = max(0.0, min(1.0, self._volume / 100.0))
@@ -298,9 +281,6 @@ class MPVAudioPlayer:
         return False
 
     def _apply_runtime_volume_async(self):
-        if not HAS_PYCAW:
-            return
-
         def _worker():
             for _ in range(12):
                 with self._lock:
