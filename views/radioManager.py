@@ -4,6 +4,7 @@
 import wx
 import tcutil
 import time
+import threading
 import region_dic
 import re
 import lxml.etree as ET
@@ -48,6 +49,9 @@ class RadioManager:
         self._refresh_in_progress = False
         self._timefree_seek_updating_ui = False
         self._pending_seek_seconds = None
+        self._seek_apply_lock = threading.Lock()
+        self._seek_apply_running = False
+        self._seek_apply_latest = None
         self.streamWatchdogTimer.Bind(wx.EVT_TIMER, self._on_stream_watchdog_timer)
         self.timefreeSeekTimer.Bind(wx.EVT_TIMER, self._on_timefree_seek_timer)
         self.timefreeSeekApplyTimer.Bind(wx.EVT_TIMER, self._on_timefree_seek_apply_timer)
@@ -70,7 +74,11 @@ class RadioManager:
             x=400,
             sizerFlag=wx.ALL | wx.EXPAND
         )
-        self.timefree_seek_slider.SetPageSize(10)
+        # ViewCreatorの既定バインド(EVT_SCROLL_CHANGED)に加え、
+        # キー操作中にも即座に反応できるようEVT_SLIDERを追加で受ける。
+        self.timefree_seek_slider.Bind(wx.EVT_SLIDER, self.onTimefreeSeekChanged)
+        self.timefree_seek_slider.Bind(wx.EVT_KEY_DOWN, self.onTimefreeSeekKeyDown)
+        self.timefree_seek_slider.SetPageSize(60)
         self.timefree_seek_label.SetLabel("00:00:00 / 00:00:00")
         self._set_timefree_seek_ui_visible(False)
         
@@ -428,7 +436,8 @@ class RadioManager:
         self._last_timefree_request["resume_seconds"] = target
         self._timefree_resume_position_sec = target
         self._timefree_started_monotonic = time.monotonic()
-        self._replay_timefree_at(target, announce=False)
+        if not self._player.seekToSeconds(target):
+            raise RuntimeError("タイムフリーシークに失敗しました。")
 
     def _replay_timefree_at(self, target_seconds, announce=False):
         """seek秒位置でURLを再生成してタイムフリー再生"""
@@ -605,23 +614,68 @@ class RadioManager:
             f"{self._format_hhmmss(self._pending_seek_seconds)} / "
             f"{self._format_hhmmss(max(self.timefree_seek_slider.GetMax(), 1))}"
         )
-        self.timefreeSeekApplyTimer.Start(120, oneShot=True)
+        self.timefreeSeekApplyTimer.Start(40, oneShot=True)
+
+    def _apply_timefree_seek_target(self, target):
+        if target is None or not self.is_timefree_playing():
+            return
+        self._schedule_timefree_seek_apply(int(target))
+
+    def _schedule_timefree_seek_apply(self, target):
+        with self._seek_apply_lock:
+            self._seek_apply_latest = int(target)
+            if self._seek_apply_running:
+                return
+            self._seek_apply_running = True
+        threading.Thread(target=self._timefree_seek_apply_worker, daemon=True).start()
+
+    def _timefree_seek_apply_worker(self):
+        while True:
+            with self._seek_apply_lock:
+                target = self._seek_apply_latest
+                self._seek_apply_latest = None
+            if target is None:
+                with self._seek_apply_lock:
+                    self._seek_apply_running = False
+                return
+            try:
+                self.seek_timefree(int(target))
+            except Exception as e:
+                self.log.error(f"Failed to seek timefree playback: {e}")
+                continue
+            wx.CallAfter(self._sync_timefree_seek_ui_from_player)
+
+    def onTimefreeSeekKeyDown(self, event):
+        if not self.is_timefree_playing():
+            event.Skip()
+            return
+        key = event.GetKeyCode()
+        if key not in (wx.WXK_PAGEUP, wx.WXK_PAGEDOWN):
+            event.Skip()
+            return
+
+        step = 60
+        current = int(self.timefree_seek_slider.GetValue())
+        max_value = int(max(self.timefree_seek_slider.GetMax(), 0))
+        if key == wx.WXK_PAGEUP:
+            target = max(0, current - step)
+        else:
+            target = min(max_value, current + step)
+
+        self.timefree_seek_slider.SetValue(target)
+        self._pending_seek_seconds = target
+        self.timefree_seek_label.SetLabel(
+            f"{self._format_hhmmss(target)} / "
+            f"{self._format_hhmmss(max(max_value, 1))}"
+        )
+        # PgUp/PgDn は即時反映（タイマー待ちなし）
+        self._pending_seek_seconds = None
+        self._apply_timefree_seek_target(target)
 
     def _on_timefree_seek_apply_timer(self, event):
         target = self._pending_seek_seconds
         self._pending_seek_seconds = None
-        if target is None or not self.is_timefree_playing():
-            return
-        try:
-            self.seek_timefree(int(target))
-            self._sync_timefree_seek_ui_from_player()
-            if hasattr(self.parent, "program_info_handler"):
-                try:
-                    self.parent.program_info_handler.get_latest_info()
-                except Exception:
-                    pass
-        except Exception as e:
-            self.log.error(f"Failed to seek timefree playback: {e}")
+        self._apply_timefree_seek_target(target)
 
     def is_live_playing(self):
         """ライブ再生中かどうか"""
