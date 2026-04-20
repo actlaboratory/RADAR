@@ -384,6 +384,17 @@ class Events(BaseEvents):
 	def onRadioActivated(self, event):
 		if not hasattr(self.parent, 'radio_manager'):
 			return
+		if self.parent.radio_manager.is_timefree_playing():
+			result = yesNoDialog(
+				_("聴き逃し再生中"),
+				_("現在、聴き逃し配信を再生中です。\nライブ再生へ切り替えますか？")
+			)
+			if result != wx.ID_YES:
+				return
+			try:
+				self.parent.radio_manager.stop_timefree()
+			except Exception as e:
+				self.log.error(f"Failed to stop timefree before live playback: {e}")
 		
 		self.current_playing_station_id = self.parent.radio_manager.tree.GetItemData(
 			self.parent.radio_manager.tree.GetFocusedItem()

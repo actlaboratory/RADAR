@@ -529,21 +529,84 @@ class ProgramManager:
         url = f'http://radiko.jp/v3/feed/pc/noa/{id}.xml'
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        
-        root = ET.parse(url)
+        root = ET.fromstring(response.content)
         items = root.xpath(".//item")
-        
-        if items and len(items) > 0:
-            title = items[0].get("title", "")
-            artist = items[0].get("artist", "")
-            if title and artist:
-                return f"{artist} - {title}"
-            elif title:
-                return title
-            else:
-                return ""
-        else:
+        return self._select_onair_music_from_items(items)
+
+    def get_onair_music_at(self, station_id, target_dt=None):
+        """オンエア曲を取得。target_dt が与えられた場合は最も近い過去の曲を返す。"""
+        url = f'http://radiko.jp/v3/feed/pc/noa/{station_id}.xml'
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+        items = root.xpath(".//item")
+        return self._select_onair_music_from_items(items, target_dt=target_dt)
+
+    def _select_onair_music_from_items(self, items, target_dt=None):
+        if not items:
             return ""
+        if target_dt is None:
+            return self._format_onair_item(items[0])
+
+        best = None
+        best_dt = None
+        for item in items:
+            item_dt = self._parse_onair_item_datetime(item)
+            if item_dt is None:
+                continue
+            if item_dt <= target_dt and (best_dt is None or item_dt > best_dt):
+                best = item
+                best_dt = item_dt
+        if best is not None:
+            return self._format_onair_item(best)
+
+        return self._format_onair_item(items[0])
+
+    def _format_onair_item(self, item):
+        title = item.get("title", "")
+        artist = item.get("artist", "")
+        if title and artist:
+            return f"{artist} - {title}"
+        if title:
+            return title
+        return ""
+
+    def _parse_onair_item_datetime(self, item):
+        """noa feedの時刻属性を可能な範囲で解釈する。"""
+        candidates = [
+            item.get("time"),
+            item.get("date"),
+            item.get("onair_date"),
+            item.get("timestamp"),
+            item.get("start_time"),
+        ]
+        for value in candidates:
+            dt_obj = self._parse_datetime_flex(value)
+            if dt_obj is not None:
+                return dt_obj
+        return None
+
+    def _parse_datetime_flex(self, value):
+        if not value:
+            return None
+        text = str(value).strip()
+        formats = (
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y%m%d%H%M%S",
+            "%Y%m%d%H%M",
+        )
+        for fmt in formats:
+            try:
+                dt_obj = datetime.datetime.strptime(text, fmt)
+                if dt_obj.tzinfo is not None:
+                    dt_obj = dt_obj.astimezone().replace(tzinfo=None)
+                return dt_obj
+            except Exception:
+                continue
+        return None
 
     def getDescriptions(self):
         try:
