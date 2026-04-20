@@ -6,6 +6,8 @@ import wx
 import datetime
 import os
 import re
+import time
+import threading
 from logging import getLogger
 import constants
 import simpleDialog
@@ -14,8 +16,9 @@ import views.ViewCreator
 from views.programCacheManager import ProgramCacheManager
 from views.programSearchEngine import ProgramSearchEngine
 from views.programDataCollector import ProgramDataCollector
+from views import programmanager
 from searchHistoryManager import SearchHistoryManager
-from recorder import schedule_manager, RecordingSchedule
+from recorder import schedule_manager, RecordingSchedule, recorder_manager, create_recording_dir, get_file_type_from_config
 from notification_util import notify as notification_notify
 
 class ProgramSearchDialog(BaseDialog):
@@ -56,7 +59,12 @@ class ProgramSearchDialog(BaseDialog):
         
         # 検索結果
         self.search_results = []
-        
+        self._past_week_dates_appended = False
+        self._refresh_worker = None
+        self._refresh_state = None
+        self._refresh_wait_dialog = None
+        self._refresh_poller = None
+
         # 検索履歴管理
         self.history_manager = SearchHistoryManager()
         self.history_enabled = False  # デフォルトは無効
@@ -118,6 +126,7 @@ class ProgramSearchDialog(BaseDialog):
 
         self.date_combo, date_label = date_creator.combobox(_("日付"), [], textLayout=None)
         self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
+        self.append_past_week_btn = date_creator.button(_("過去1週間の日付を表示"), self.on_append_past_week_dates)
 
         self.start_hour_spin, _label = date_creator.spinCtrl(_("開始時間（時）"), min=5, max=28, defaultValue=5, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
@@ -163,8 +172,12 @@ class ProgramSearchDialog(BaseDialog):
         button_area_creator = views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.creator.GetSizer(),wx.HORIZONTAL, style=wx.EXPAND)
         # 予約録音ボタン
         self.schedule_btn = button_area_creator.button(_("予約録音(&R)"), event=self.onScheduleRecording)
-        self.schedule_btn.Enable(False)  # 初期状態は無効（番組が選択されていないため）
-        
+        self.schedule_btn.Enable(False)
+        self.timefree_play_btn = button_area_creator.button(_("聴き逃し再生(&F)"), event=self.on_play_timefree)
+        self.timefree_rec_btn = button_area_creator.button(_("聴き逃し録音(&T)"), event=self.on_record_timefree)
+        self.timefree_play_btn.Enable(False)
+        self.timefree_rec_btn.Enable(False)
+
         # 見た目の調整
         button_area_creator.AddSpace(-1)
         
@@ -444,9 +457,9 @@ class ProgramSearchDialog(BaseDialog):
         self.result_list.clear()
         
         if not self.search_results:
-            # 結果がない場合のメッセージ
             self.result_list.Append((_("検索結果がありません"), "", "", "", ""))
             self.result_count_label.SetLabel(_("検索結果: 0件"))
+            self._update_recording_action_buttons(-1)
             try:
                 globalVars.app.say(_("結果 0件"), interrupt=True)
             except Exception:
@@ -495,12 +508,10 @@ class ProgramSearchDialog(BaseDialog):
             self.result_list.Focus(0)
             try:
                 self.result_list.Select(0)
-                # 最初のアイテムが選択されたので予約録音ボタンを有効化
-                self.schedule_btn.Enable(True)
+                self._update_recording_action_buttons(0)
                 globalVars.app.say(_(f"結果 {count}件"), interrupt=True)
             except Exception:
                 pass
-            # 結果数をログ出力
             self.log.info(f"Displayed {count} search results")
         
     
@@ -515,22 +526,233 @@ class ProgramSearchDialog(BaseDialog):
             self.log.error(f"Failed to show program detail: {e}")
     
     def onItemSelected(self, event):
-        """リストアイテムが選択された時の処理"""
         try:
             index = event.GetIndex()
-            if 0 <= index < len(self.search_results) and len(self.search_results) > 0:
-                # 予約録音ボタンを有効化
-                self.schedule_btn.Enable(True)
+            self._update_recording_action_buttons(index)
         except Exception as e:
             self.log.error(f"Failed to handle item selection: {e}")
-    
+
     def onItemDeselected(self, event):
-        """リストアイテムの選択が解除された時の処理"""
         try:
-            # 予約録音ボタンを無効化
-            self.schedule_btn.Enable(False)
+            if self.result_list.GetSelectedItemCount() == 0:
+                self._update_recording_action_buttons(-1)
         except Exception as e:
             self.log.error(f"Failed to handle item deselection: {e}")
+
+    def _get_radio_base_date(self):
+        now = datetime.datetime.now()
+        if now.hour < 5:
+            return now.date() - datetime.timedelta(days=1)
+        return now.date()
+
+    def on_append_past_week_dates(self, event):
+        if self._past_week_dates_appended:
+            return
+        items = list(self.date_combo.GetStrings())
+        if not items:
+            return
+        base = self._get_radio_base_date()
+        past_entries = []
+        for days in range(7, 0, -1):
+            d = base - datetime.timedelta(days=days)
+            past_entries.append(f"{d.strftime('%Y-%m-%d')} ({d.strftime('%Y%m%d')})")
+        new_items = [items[0]] + past_entries + items[1:]
+        self.date_combo.SetItems(new_items)
+        sel = self.date_combo.GetSelection()
+        if sel < 0:
+            sel = 0
+        self.date_combo.SetSelection(sel + len(past_entries))
+        self._past_week_dates_appended = True
+        self.append_past_week_btn.Disable()
+
+    def _parse_clock_on_listing_date(self, base_date, time_str):
+        if not time_str:
+            return None
+        parts = str(time_str).split(":")
+        if len(parts) < 2:
+            return None
+        hour = int(parts[0])
+        minute = int(parts[1])
+        day_offset = hour // 24
+        hour = hour % 24
+        d = base_date + datetime.timedelta(days=day_offset)
+        return datetime.datetime.combine(d, datetime.time(hour, minute))
+
+    def _program_start_end_dt(self, program):
+        date_str = program.get("date", "") or ""
+        start_time_str = program.get("start_time", "") or ""
+        end_time_str = program.get("end_time", "") or ""
+        if len(date_str) != 8 or not start_time_str or not end_time_str:
+            return None, None
+        year = int(date_str[:4])
+        month = int(date_str[4:6])
+        day = int(date_str[6:8])
+        base_date = datetime.date(year, month, day)
+        start_dt = self._parse_clock_on_listing_date(base_date, start_time_str)
+        end_dt = self._parse_clock_on_listing_date(base_date, end_time_str)
+        if not start_dt or not end_dt:
+            return None, None
+        if start_dt.time() < datetime.time(4, 59, 59):
+            start_dt += datetime.timedelta(days=1)
+        if end_dt.time() <= datetime.time(5, 0):
+            end_dt += datetime.timedelta(days=1)
+        if end_dt <= start_dt:
+            end_dt += datetime.timedelta(days=1)
+        return start_dt, end_dt
+
+    def _update_recording_action_buttons(self, index):
+        self.schedule_btn.Enable(False)
+        self.timefree_play_btn.Enable(False)
+        self.timefree_rec_btn.Enable(False)
+        if index < 0 or index >= len(self.search_results):
+            return
+        program = self.search_results[index]
+        start_dt, end_dt = self._program_start_end_dt(program)
+        if start_dt is None:
+            return
+        now = datetime.datetime.now()
+        mv = globalVars.app.hMainView
+        rm = getattr(mv, "radio_manager", None)
+        live = rm.is_live_playing() if rm else False
+
+        if start_dt >= now:
+            self.schedule_btn.Enable(True)
+        elif end_dt <= now and not live:
+            self.timefree_play_btn.Enable(True)
+            self.timefree_rec_btn.Enable(True)
+
+    def on_play_timefree(self, event):
+        try:
+            index = self.result_list.GetFocusedItem()
+            if index < 0:
+                index = self.result_list.GetFirstSelected()
+            if index < 0 or index >= len(self.search_results):
+                simpleDialog.errorDialog(_("番組を選択してください。"))
+                return
+            program = self.search_results[index]
+            start_dt, end_dt = self._program_start_end_dt(program)
+            if not start_dt or not end_dt:
+                simpleDialog.errorDialog(_("番組の日時を解釈できませんでした。"))
+                return
+            now = datetime.datetime.now()
+            if start_dt > now:
+                simpleDialog.errorDialog(_("未来の番組は聴き逃し再生できません。"))
+                return
+            if end_dt > now:
+                simpleDialog.errorDialog(_("放送中の番組は聴き逃し再生できません。"))
+                return
+            stid = program.get("station_id")
+            if not stid:
+                simpleDialog.errorDialog(_("放送局情報がありません。"))
+                return
+            progs = getattr(globalVars.app.hMainView, "progs", None) or programmanager.ProgramManager()
+            title = program.get("title", "")
+            station_name = program.get("station_name", "")
+            announce = f"聴き逃し再生: {station_name} {title}"
+            duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))
+            timefree_info = {
+                "station_id": stid,
+                "station_name": station_name,
+                "title": title,
+                "performer": program.get("performer", ""),
+                "description": (program.get("description") or "")[:500],
+                "start_time": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "end_time": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "ft_dt": start_dt,
+                "to_dt": end_dt,
+                "stream_type": "b",
+                "duration_sec": duration_sec,
+            }
+            mv = globalVars.app.hMainView
+            rm = mv.radio_manager
+            try:
+                stream_url, headers = progs.get_timefree_playback_source(stid, start_dt, end_dt)
+                rm.play_timefree(
+                    stream_url,
+                    station_id=stid,
+                    announce_text=announce,
+                    headers=headers,
+                    resume_seconds=0,
+                    timefree_info=timefree_info,
+                )
+            except Exception as e1:
+                self.log.warning(f"timefree playback primary failed: {e1}")
+                stream_url, headers = progs.get_timefree_playback_source_compat(stid, start_dt, end_dt)
+                rm.play_timefree(
+                    stream_url,
+                    station_id=stid,
+                    announce_text=announce,
+                    headers=headers,
+                    resume_seconds=0,
+                    timefree_info={**timefree_info, "stream_type": "c"},
+                )
+            if hasattr(mv, "program_info_handler"):
+                mv.program_info_handler.show_timefree_program_info(timefree_info)
+        except Exception as e:
+            self.log.error(f"on_play_timefree: {e}")
+            simpleDialog.errorDialog(_("聴き逃し再生に失敗しました。") + f"\n{e}")
+
+    def on_record_timefree(self, event):
+        try:
+            index = self.result_list.GetFocusedItem()
+            if index < 0:
+                index = self.result_list.GetFirstSelected()
+            if index < 0 or index >= len(self.search_results):
+                simpleDialog.errorDialog(_("番組を選択してください。"))
+                return
+            program = self.search_results[index]
+            start_dt, end_dt = self._program_start_end_dt(program)
+            if not start_dt or not end_dt:
+                simpleDialog.errorDialog(_("番組の日時を解釈できませんでした。"))
+                return
+            now = datetime.datetime.now()
+            if start_dt > now:
+                simpleDialog.errorDialog(_("未来の番組は聴き逃し録音できません。"))
+                return
+            if end_dt > now:
+                simpleDialog.errorDialog(_("放送中の番組は聴き逃し録音できません。"))
+                return
+            stid = program.get("station_id")
+            if not stid:
+                simpleDialog.errorDialog(_("放送局情報がありません。"))
+                return
+            progs = getattr(globalVars.app.hMainView, "progs", None) or programmanager.ProgramManager()
+            title = program.get("title", "")
+            station_name = program.get("station_name", "")
+            duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))
+            stream_url, headers = progs.get_timefree_recording_source(stid, start_dt, end_dt)
+            filetype = get_file_type_from_config()
+            safe_title = re.sub(r'[<>:"/\\|?*]', "_", title).strip()
+            replace = safe_title.replace(" ", "-")
+            station_dir = station_name.replace(" ", "_")
+            dirs = create_recording_dir(station_dir, title)
+            timestamp = start_dt.strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(dirs, f"{timestamp}_{replace}")
+            info = f"{station_name} {title}"
+            end_time = time.time() + duration_sec + 30
+            rec = recorder_manager.start_recording(
+                stream_url,
+                output_path,
+                info,
+                end_time,
+                filetype,
+                station_id=stid,
+                program_title=title,
+                recording_seconds=duration_sec,
+                http_headers=headers,
+                input_options=["-http_seekable", "0", "-seekable", "0"],
+            )
+            if rec:
+                simpleDialog.dialog(_("完了"), _("聴き逃し録音を開始しました。") + f"\n{title}")
+            else:
+                detail = recorder_manager.get_last_start_error()
+                msg = _("聴き逃し録音の開始に失敗しました。")
+                if detail:
+                    msg += f"\n\n{detail}"
+                simpleDialog.errorDialog(msg)
+        except Exception as e:
+            self.log.error(f"on_record_timefree: {e}")
+            simpleDialog.errorDialog(_("聴き逃し録音に失敗しました。") + f"\n{e}")
     
     def show_program_detail(self, program):
         """番組詳細を表示"""
@@ -568,7 +790,8 @@ class ProgramSearchDialog(BaseDialog):
         
         self.result_list.clear()
         self.result_count_label.SetLabel(_("検索結果: 0件"))
-    
+        self._update_recording_action_buttons(-1)
+
     def onStationChanged(self, event):
         """放送局が変更された時の処理"""
         # 必要に応じて実装
@@ -642,15 +865,25 @@ class ProgramSearchDialog(BaseDialog):
     def onRefresh(self, event):
         """データ更新"""
         try:
+            if self._refresh_worker and self._refresh_worker.is_alive():
+                simpleDialog.dialog(_("情報"), _("データ更新を実行中です。完了までお待ちください。"))
+                return
+            confirm_message = _(
+                "検索に使用する番組データベースを更新します。\n"
+                "更新にはしばらく時間がかかる場合があります。\n\n"
+                "更新を開始しますか？"
+            )
+            result = simpleDialog.yesNoDialog(_("データ更新の確認"), confirm_message)
+            if result != wx.ID_YES:
+                return
             self._perform_data_refresh()
         except Exception as e:
             self.log.error(f"Operation failed: {e}")
             simpleDialog.errorDialog(_("操作中にエラーが発生しました。"))
-    
-    def _perform_data_refresh(self):
-        """データ更新の実際の処理"""
-        # 起動時コントローラに更新を委譲
+
+    def _perform_data_refresh_worker(self, state):
         success = False
+        error_text = None
         try:
             controller = getattr(globalVars.app.hMainView, 'program_cache_controller', None)
             if controller and hasattr(controller, 'force_weekly_update'):
@@ -658,6 +891,7 @@ class ProgramSearchDialog(BaseDialog):
                 success = controller.force_weekly_update()
         except Exception as e:
             self.log.warning(f"Controller update failed: {e}")
+            error_text = str(e)
 
         # フォールバック: 最低限の当日データを収集（必要時のみ）
         if not success:
@@ -670,12 +904,100 @@ class ProgramSearchDialog(BaseDialog):
                 success = self.data_collector.collect_all_stations_data(force_refresh=True)
             except Exception as e:
                 self.log.error(f"Fallback data collection failed: {e}")
-        
-        if success:
+                error_text = str(e)
+
+        state["success"] = success
+        state["error"] = error_text
+
+    def _cleanup_refresh_ui(self):
+        if self._refresh_poller:
+            try:
+                self._refresh_poller.Stop()
+            except Exception:
+                pass
+        self._refresh_poller = None
+        if self._refresh_wait_dialog:
+            try:
+                if self._refresh_wait_dialog.IsShown():
+                    self._refresh_wait_dialog.Destroy()
+            except Exception:
+                pass
+        self._refresh_wait_dialog = None
+
+    def _show_refresh_wait_dialog(self):
+        if self._refresh_wait_dialog:
+            return
+        dlg = wx.Dialog(
+            self.wnd,
+            title=_("データ更新中"),
+            style=wx.CAPTION | wx.STAY_ON_TOP,
+        )
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        text = wx.StaticText(dlg, label=_("データベースを更新しています。しばらくお待ちください。"))
+        sizer.Add(text, 0, wx.ALL | wx.ALIGN_CENTER, 20)
+        dlg.SetSizerAndFit(sizer)
+        dlg.CentreOnParent()
+        dlg.Show()
+        self._refresh_wait_dialog = dlg
+
+    def _restore_focus_to_search_box(self):
+        """更新完了後に検索ボックスへフォーカスを戻す。"""
+        try:
+            self.wnd.Raise()
+            self.wnd.SetFocus()
+            if hasattr(self, "title_combo") and self.title_combo:
+                self.title_combo.SetFocus()
+                if hasattr(self.title_combo, "SetInsertionPointEnd"):
+                    self.title_combo.SetInsertionPointEnd()
+                if hasattr(self.title_combo, "GetMainWindow"):
+                    main = self.title_combo.GetMainWindow()
+                    if main:
+                        main.SetFocus()
+        except Exception:
+            pass
+
+    def _poll_data_refresh_completion(self):
+        if not self._refresh_worker:
+            self._cleanup_refresh_ui()
+            return
+
+        if self._refresh_worker.is_alive():
+            self._refresh_poller = wx.CallLater(200, self._poll_data_refresh_completion)
+            return
+
+        state = self._refresh_state or {"success": False}
+        self._cleanup_refresh_ui()
+        self._refresh_worker = None
+        self._refresh_state = None
+
+        if state.get("success"):
             simpleDialog.dialog(_("完了"), _("データの更新が完了しました。"))
             self.update_station_list()
+            wx.CallAfter(self._restore_focus_to_search_box)
+            wx.CallLater(80, self._restore_focus_to_search_box)
+            wx.CallLater(180, self._restore_focus_to_search_box)
+            return
+
+        error_text = state.get("error")
+        if error_text:
+            simpleDialog.errorDialog(_("データの更新に失敗しました。") + f"\n{error_text}")
         else:
             simpleDialog.errorDialog(_("データの更新に失敗しました。"))
+        wx.CallAfter(self._restore_focus_to_search_box)
+        wx.CallLater(80, self._restore_focus_to_search_box)
+        wx.CallLater(180, self._restore_focus_to_search_box)
+
+    def _perform_data_refresh(self):
+        """データ更新の実際の処理"""
+        self._refresh_state = {"success": False, "error": None}
+        self._show_refresh_wait_dialog()
+        self._refresh_worker = threading.Thread(
+            target=self._perform_data_refresh_worker,
+            args=(self._refresh_state,),
+            daemon=True,
+        )
+        self._refresh_worker.start()
+        self._poll_data_refresh_completion()
     
     def onScheduleRecording(self, event):
         """選択された番組を予約録音"""
