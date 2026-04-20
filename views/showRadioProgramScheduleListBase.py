@@ -1,6 +1,7 @@
 
 import wx
 import globalVars
+import constants
 from views import token
 import views.ViewCreator
 from views import programmanager
@@ -26,7 +27,7 @@ class ShowSchedule(BaseDialog):
         self.enlst = []
         self.lst = None
         self.date_values = []
-        self._past_dates_appended = False
+        self._default_date_values = []
 
     def Initialize(self):
         self.log.debug("created")
@@ -55,11 +56,17 @@ class ShowSchedule(BaseDialog):
 
     def calendarSelector(self):
         """日時指定用コンボボックスを作成し、内容を設定"""
-        self.date_values = list(self.clutl.getDateValue())
+        self._default_date_values = list(self.clutl.getDateValue())
+        self.date_values = list(self._default_date_values)
         self.cmb,label = self.creator.combobox(_("日付指定"), self.date_values, textLayout=wx.HORIZONTAL)
         self.cmb.SetSelection(0)
         self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
-        self.show_past_btn = self.creator.button(_("過去の番組表を表示"), self.onShowPastProgramDates)
+        self.show_past_chk = self.creator.checkbox(
+            _("過去1週間の日付を表示"),
+            event=self.onTogglePastProgramDates
+        )
+        self.show_past_chk.SetValue(constants.SHOW_PAST_WEEK_DATES_DEFAULT)
+        self._rebuild_date_values(self.show_past_chk.GetValue())
 
     def _get_radio_base_date(self):
         """ラジオ日付ルール(5時切替)に従った基準日を返す"""
@@ -68,31 +75,39 @@ class ShowSchedule(BaseDialog):
             return now.date() - datetime.timedelta(days=1)
         return now.date()
 
-    def onShowPastProgramDates(self, event):
-        """タイムフリー視聴可能期間の過去日付をコンボへ追記"""
-        if self._past_dates_appended:
-            return
-
+    def _build_past_dates(self):
         base_date = self._get_radio_base_date()
-        # タイムフリー最古日まで（7日前まで）を追記
         past_dates = []
         for days in range(7, 0, -1):
             d = base_date - datetime.timedelta(days=days)
             date_str = f"{d.year}/{d.month}/{d.day}"
-            if date_str not in self.date_values:
+            if date_str not in self._default_date_values:
                 past_dates.append(date_str)
+        return past_dates
 
-        if past_dates:
-            current_selection = self.cmb.GetSelection()
-            if current_selection < 0:
-                current_selection = 0
-            merged_dates = past_dates + self.date_values
-            self.cmb.SetItems(merged_dates)
-            self.date_values = merged_dates
-            self.cmb.SetSelection(current_selection + len(past_dates))
+    def _rebuild_date_values(self, include_past):
+        selected_value = None
+        current_selection = self.cmb.GetSelection()
+        if 0 <= current_selection < len(self.date_values):
+            selected_value = self.date_values[current_selection]
 
-        self._past_dates_appended = True
-        self.show_past_btn.Disable()
+        if include_past:
+            merged_dates = self._build_past_dates() + list(self._default_date_values)
+        else:
+            merged_dates = list(self._default_date_values)
+
+        self.date_values = merged_dates
+        self.cmb.SetItems(self.date_values)
+
+        if selected_value and selected_value in self.date_values:
+            self.cmb.SetSelection(self.date_values.index(selected_value))
+        else:
+            self.cmb.SetSelection(0 if self.date_values else -1)
+
+    def onTogglePastProgramDates(self, event):
+        include_past = self.show_past_chk.GetValue()
+        self._rebuild_date_values(include_past)
+        self.show_programlist()
 
     def show_programlist(self, event=None):
         self.lst.clear()

@@ -28,6 +28,9 @@ KEYMAP_FILE_NAME="keymap.ini"
 FFMPEG_LOG_FILE = "ffmpeg_log.txt"
 PROGRAM_CACHE_DB_NAME = "program_cache.db"
 
+# 過去1週間の日付表示チェック 初期値
+SHOW_PAST_WEEK_DATES_DEFAULT = False
+
 
 
 #フォントの設定可能サイズ範囲

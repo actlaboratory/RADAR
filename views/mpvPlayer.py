@@ -89,6 +89,23 @@ class MPVAudioPlayer:
                 value = 0
             self._start_position_sec = max(0, value)
 
+    def seekToSeconds(self, seconds):
+        """mpv IPC で絶対位置シーク。成功時 True。"""
+        with self._lock:
+            if not self._is_running_locked():
+                return False
+            target = max(0, int(seconds or 0))
+            # 入力中の応答性を優先し、短いリトライで複数コマンドを試す
+            commands = [
+                ["seek", target, "absolute"],
+                ["seek", target, "absolute+exact"],
+                ["set_property", "time-pos", target],
+            ]
+            for cmd in commands:
+                if self._send_mpv_ipc_command_locked(cmd, retries=4, delay_sec=0.01):
+                    return True
+            return False
+
     def setNonSeekableInput(self, enabled):
         with self._lock:
             self._nonseekable_input = bool(enabled)
@@ -245,18 +262,21 @@ class MPVAudioPlayer:
             return ""
 
     def _apply_mpv_ipc_volume_locked(self):
+        vol = max(0, min(100, int(self._volume)))
+        return self._send_mpv_ipc_command_locked(["set_property", "volume", vol])
+
+    def _send_mpv_ipc_command_locked(self, command, retries=30, delay_sec=0.05):
         if not self._ipc_pipe_name or not self._is_running_locked():
             return False
         path = self._ipc_pipe_path()
-        vol = max(0, min(100, int(self._volume)))
-        line = json.dumps({"command": ["set_property", "volume", vol]}) + "\n"
-        for _ in range(30):
+        line = json.dumps({"command": command}) + "\n"
+        for _ in range(max(1, int(retries))):
             try:
                 with open(path, "w", encoding="utf-8", newline="\n") as pipe:
                     pipe.write(line)
                 return True
             except OSError:
-                time.sleep(0.05)
+                time.sleep(max(0.0, float(delay_sec)))
         return False
 
     def _apply_runtime_volume_locked(self):

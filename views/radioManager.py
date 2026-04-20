@@ -4,6 +4,7 @@
 import wx
 import tcutil
 import time
+import threading
 import region_dic
 import re
 import lxml.etree as ET
@@ -28,6 +29,8 @@ class RadioManager:
         self._player = MPVAudioPlayer()
         self.updateInfoTimer = wx.Timer()
         self.streamWatchdogTimer = wx.Timer()
+        self.timefreeSeekTimer = wx.Timer()
+        self.timefreeSeekApplyTimer = wx.Timer()
         self.tmg = tcutil.TimeManager()
         self.clutl = tcutil.CalendarUtil()
         self.stid = {}
@@ -44,7 +47,14 @@ class RadioManager:
         self._timefree_info = None
         self.stream_watchdog_interval_ms = 5000
         self._refresh_in_progress = False
+        self._timefree_seek_updating_ui = False
+        self._pending_seek_seconds = None
+        self._seek_apply_lock = threading.Lock()
+        self._seek_apply_running = False
+        self._seek_apply_latest = None
         self.streamWatchdogTimer.Bind(wx.EVT_TIMER, self._on_stream_watchdog_timer)
+        self.timefreeSeekTimer.Bind(wx.EVT_TIMER, self._on_timefree_seek_timer)
+        self.timefreeSeekApplyTimer.Bind(wx.EVT_TIMER, self._on_timefree_seek_apply_timer)
 
     def setup_radio_ui(self):
         """ラジオ局関連のUIを設定"""
@@ -55,6 +65,22 @@ class RadioManager:
             textLayout=None
         )
         self.volume.SetValue(self.app.config.getint("play", "volume"))
+        self.timefree_seek_slider, self.timefree_seek_label = self.creator.slider(
+            _("聴き逃しシーク"),
+            min=0,
+            max=1,
+            defaultValue=0,
+            event=self.onTimefreeSeekChanged,
+            x=400,
+            sizerFlag=wx.ALL | wx.EXPAND
+        )
+        # ViewCreatorの既定バインド(EVT_SCROLL_CHANGED)に加え、
+        # キー操作中にも即座に反応できるようEVT_SLIDERを追加で受ける。
+        self.timefree_seek_slider.Bind(wx.EVT_SLIDER, self.onTimefreeSeekChanged)
+        self.timefree_seek_slider.Bind(wx.EVT_KEY_DOWN, self.onTimefreeSeekKeyDown)
+        self.timefree_seek_slider.SetPageSize(60)
+        self.timefree_seek_label.SetLabel("00:00:00 / 00:00:00")
+        self._set_timefree_seek_ui_visible(False)
         
         self.AreaTreeCtrl()
         self.setupradio()
@@ -297,6 +323,8 @@ class RadioManager:
         self.player()
         self.update_program_info()
         self.events.playing = True
+        self._stop_timefree_seek_timer()
+        self._set_timefree_seek_ui_visible(False)
         self.streamWatchdogTimer.Start(self.stream_watchdog_interval_ms)
         self.update_timefree_command_ui()
         if hasattr(self.parent, "program_info_handler"):
@@ -354,6 +382,9 @@ class RadioManager:
             self.update_timefree_command_ui()
             raise RuntimeError(f"タイムフリー再生の開始に失敗しました: {last_error}")
         self.events.playing = False
+        self._set_timefree_seek_ui_visible(True)
+        self._sync_timefree_seek_ui_from_player()
+        self._start_timefree_seek_timer()
         self.update_timefree_command_ui()
         if hasattr(self.parent, "program_info_handler"):
             self.parent.program_info_handler.show_timefree_program_info(self._timefree_info)
@@ -405,7 +436,8 @@ class RadioManager:
         self._last_timefree_request["resume_seconds"] = target
         self._timefree_resume_position_sec = target
         self._timefree_started_monotonic = time.monotonic()
-        self._replay_timefree_at(target, announce=False)
+        if not self._player.seekToSeconds(target):
+            raise RuntimeError("タイムフリーシークに失敗しました。")
 
     def _replay_timefree_at(self, target_seconds, announce=False):
         """seek秒位置でURLを再生成してタイムフリー再生"""
@@ -459,6 +491,8 @@ class RadioManager:
         self.current_progs = None
         self.playback_mode = None
         self.events.playing = False
+        self._stop_timefree_seek_timer()
+        self._set_timefree_seek_ui_visible(False)
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
         self.update_timefree_command_ui()
         if hasattr(self.parent, "program_info_handler"):
@@ -481,6 +515,8 @@ class RadioManager:
         self._timefree_started_monotonic = None
         self.log.debug("timer is stoped!")
         self.events.playing = False
+        self._stop_timefree_seek_timer()
+        self._set_timefree_seek_ui_visible(False)
         self.update_timefree_command_ui()
         if hasattr(self.parent, "program_info_handler"):
             self.parent.program_info_handler.clear_timefree_program_info()
@@ -510,7 +546,136 @@ class RadioManager:
         """終了処理"""
         self.streamWatchdogTimer.Stop()
         self.updateInfoTimer.Stop()
+        self._stop_timefree_seek_timer()
         self._player.exit()
+
+    def _format_hhmmss(self, seconds):
+        total = int(max(0, seconds))
+        hh = total // 3600
+        mm = (total % 3600) // 60
+        ss = total % 60
+        return f"{hh:02d}:{mm:02d}:{ss:02d}"
+
+    def _set_timefree_seek_ui_visible(self, visible):
+        if not hasattr(self, "timefree_seek_slider"):
+            return
+        self.timefree_seek_slider.Show(visible)
+        self.timefree_seek_label.Show(visible)
+        self.timefree_seek_slider.Enable(visible)
+        try:
+            self.parent.hPanel.Layout()
+            self.parent.sizer.Layout()
+        except Exception:
+            pass
+
+    def _sync_timefree_seek_ui_from_player(self):
+        if not hasattr(self, "timefree_seek_slider"):
+            return
+        if not self.is_timefree_playing():
+            return
+        duration = self.get_timefree_duration_seconds()
+        position = self.get_timefree_position_seconds()
+        if duration <= 0:
+            duration = max(position, 1)
+        position = max(0, min(position, duration))
+        self._timefree_seek_updating_ui = True
+        try:
+            self.timefree_seek_slider.SetRange(0, int(duration))
+            self.timefree_seek_slider.SetValue(int(position))
+            self.timefree_seek_label.SetLabel(
+                f"{self._format_hhmmss(position)} / {self._format_hhmmss(duration)}"
+            )
+        finally:
+            self._timefree_seek_updating_ui = False
+
+    def _start_timefree_seek_timer(self):
+        if not self.timefreeSeekTimer.IsRunning():
+            self.timefreeSeekTimer.Start(1000)
+
+    def _stop_timefree_seek_timer(self):
+        if self.timefreeSeekTimer.IsRunning():
+            self.timefreeSeekTimer.Stop()
+        if self.timefreeSeekApplyTimer.IsRunning():
+            self.timefreeSeekApplyTimer.Stop()
+
+    def _on_timefree_seek_timer(self, event):
+        if self.is_timefree_playing():
+            self._sync_timefree_seek_ui_from_player()
+        else:
+            self._stop_timefree_seek_timer()
+
+    def onTimefreeSeekChanged(self, event):
+        if self._timefree_seek_updating_ui:
+            return
+        if not self.is_timefree_playing():
+            return
+        self._pending_seek_seconds = int(self.timefree_seek_slider.GetValue())
+        self.timefree_seek_label.SetLabel(
+            f"{self._format_hhmmss(self._pending_seek_seconds)} / "
+            f"{self._format_hhmmss(max(self.timefree_seek_slider.GetMax(), 1))}"
+        )
+        self.timefreeSeekApplyTimer.Start(40, oneShot=True)
+
+    def _apply_timefree_seek_target(self, target):
+        if target is None or not self.is_timefree_playing():
+            return
+        self._schedule_timefree_seek_apply(int(target))
+
+    def _schedule_timefree_seek_apply(self, target):
+        with self._seek_apply_lock:
+            self._seek_apply_latest = int(target)
+            if self._seek_apply_running:
+                return
+            self._seek_apply_running = True
+        threading.Thread(target=self._timefree_seek_apply_worker, daemon=True).start()
+
+    def _timefree_seek_apply_worker(self):
+        while True:
+            with self._seek_apply_lock:
+                target = self._seek_apply_latest
+                self._seek_apply_latest = None
+            if target is None:
+                with self._seek_apply_lock:
+                    self._seek_apply_running = False
+                return
+            try:
+                self.seek_timefree(int(target))
+            except Exception as e:
+                self.log.error(f"Failed to seek timefree playback: {e}")
+                continue
+            wx.CallAfter(self._sync_timefree_seek_ui_from_player)
+
+    def onTimefreeSeekKeyDown(self, event):
+        if not self.is_timefree_playing():
+            event.Skip()
+            return
+        key = event.GetKeyCode()
+        if key not in (wx.WXK_PAGEUP, wx.WXK_PAGEDOWN):
+            event.Skip()
+            return
+
+        step = 60
+        current = int(self.timefree_seek_slider.GetValue())
+        max_value = int(max(self.timefree_seek_slider.GetMax(), 0))
+        if key == wx.WXK_PAGEUP:
+            target = max(0, current - step)
+        else:
+            target = min(max_value, current + step)
+
+        self.timefree_seek_slider.SetValue(target)
+        self._pending_seek_seconds = target
+        self.timefree_seek_label.SetLabel(
+            f"{self._format_hhmmss(target)} / "
+            f"{self._format_hhmmss(max(max_value, 1))}"
+        )
+        # PgUp/PgDn は即時反映（タイマー待ちなし）
+        self._pending_seek_seconds = None
+        self._apply_timefree_seek_target(target)
+
+    def _on_timefree_seek_apply_timer(self, event):
+        target = self._pending_seek_seconds
+        self._pending_seek_seconds = None
+        self._apply_timefree_seek_target(target)
 
     def is_live_playing(self):
         """ライブ再生中かどうか"""

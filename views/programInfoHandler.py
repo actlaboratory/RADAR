@@ -64,38 +64,17 @@ class ProgramInfoHandler:
         performer = info.get("performer", "")
         description = info.get("description", "")
 
-        position_sec = 0
-        duration_sec = int(max(0, info.get("duration_sec", 0) or 0))
-        if hasattr(self.parent, "radio_manager"):
-            try:
-                position_sec = self.parent.radio_manager.get_timefree_position_seconds()
-                duration_sec = self.parent.radio_manager.get_timefree_duration_seconds() or duration_sec
-            except Exception:
-                pass
-
         self.nplist.Enable()
         self.nplist.clear()
         self.nplist.Append(("放送局", station_name))
         self.nplist.Append(("番組名", title))
         self.nplist.Append(("出演者", performer))
-        if duration_sec > 0:
-            self.nplist.Append(("再生位置", f"{self._format_hhmmss(position_sec)} / {self._format_hhmmss(duration_sec)}"))
-        else:
-            self.nplist.Append(("再生位置", self._format_hhmmss(position_sec)))
-        self.nplist.Append(("オンエア曲", ""))
 
         if description:
             self.DSCBOX.Enable()
             self.DSCBOX.SetValue(description)
         else:
             self.DSCBOX.SetValue("")
-
-    def _format_hhmmss(self, seconds):
-        total = int(max(0, seconds))
-        hh = total // 3600
-        mm = (total % 3600) // 60
-        ss = total % 60
-        return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
     def show_description(self, station_id):
         """番組の説明を表示"""
@@ -140,6 +119,7 @@ class ProgramInfoHandler:
         except Exception as e:
             self.log.warning(f"Failed to get online music: {e}")
             return None
+
 
     def initializeInfoView(self, station_id):
         """番組一覧表示"""
