@@ -7,6 +7,7 @@ import datetime
 import os
 import re
 import time
+import threading
 from logging import getLogger
 import constants
 import simpleDialog
@@ -59,6 +60,10 @@ class ProgramSearchDialog(BaseDialog):
         # 検索結果
         self.search_results = []
         self._past_week_dates_appended = False
+        self._refresh_worker = None
+        self._refresh_state = None
+        self._refresh_wait_dialog = None
+        self._refresh_poller = None
 
         # 検索履歴管理
         self.history_manager = SearchHistoryManager()
@@ -860,15 +865,25 @@ class ProgramSearchDialog(BaseDialog):
     def onRefresh(self, event):
         """データ更新"""
         try:
+            if self._refresh_worker and self._refresh_worker.is_alive():
+                simpleDialog.dialog(_("情報"), _("データ更新を実行中です。完了までお待ちください。"))
+                return
+            confirm_message = _(
+                "検索に使用する番組データベースを更新します。\n"
+                "更新にはしばらく時間がかかる場合があります。\n\n"
+                "更新を開始しますか？"
+            )
+            result = simpleDialog.yesNoDialog(_("データ更新の確認"), confirm_message)
+            if result != wx.ID_YES:
+                return
             self._perform_data_refresh()
         except Exception as e:
             self.log.error(f"Operation failed: {e}")
             simpleDialog.errorDialog(_("操作中にエラーが発生しました。"))
-    
-    def _perform_data_refresh(self):
-        """データ更新の実際の処理"""
-        # 起動時コントローラに更新を委譲
+
+    def _perform_data_refresh_worker(self, state):
         success = False
+        error_text = None
         try:
             controller = getattr(globalVars.app.hMainView, 'program_cache_controller', None)
             if controller and hasattr(controller, 'force_weekly_update'):
@@ -876,6 +891,7 @@ class ProgramSearchDialog(BaseDialog):
                 success = controller.force_weekly_update()
         except Exception as e:
             self.log.warning(f"Controller update failed: {e}")
+            error_text = str(e)
 
         # フォールバック: 最低限の当日データを収集（必要時のみ）
         if not success:
@@ -888,12 +904,100 @@ class ProgramSearchDialog(BaseDialog):
                 success = self.data_collector.collect_all_stations_data(force_refresh=True)
             except Exception as e:
                 self.log.error(f"Fallback data collection failed: {e}")
-        
-        if success:
+                error_text = str(e)
+
+        state["success"] = success
+        state["error"] = error_text
+
+    def _cleanup_refresh_ui(self):
+        if self._refresh_poller:
+            try:
+                self._refresh_poller.Stop()
+            except Exception:
+                pass
+        self._refresh_poller = None
+        if self._refresh_wait_dialog:
+            try:
+                if self._refresh_wait_dialog.IsShown():
+                    self._refresh_wait_dialog.Destroy()
+            except Exception:
+                pass
+        self._refresh_wait_dialog = None
+
+    def _show_refresh_wait_dialog(self):
+        if self._refresh_wait_dialog:
+            return
+        dlg = wx.Dialog(
+            self.wnd,
+            title=_("データ更新中"),
+            style=wx.CAPTION | wx.STAY_ON_TOP,
+        )
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        text = wx.StaticText(dlg, label=_("データベースを更新しています。しばらくお待ちください。"))
+        sizer.Add(text, 0, wx.ALL | wx.ALIGN_CENTER, 20)
+        dlg.SetSizerAndFit(sizer)
+        dlg.CentreOnParent()
+        dlg.Show()
+        self._refresh_wait_dialog = dlg
+
+    def _restore_focus_to_search_box(self):
+        """更新完了後に検索ボックスへフォーカスを戻す。"""
+        try:
+            self.wnd.Raise()
+            self.wnd.SetFocus()
+            if hasattr(self, "title_combo") and self.title_combo:
+                self.title_combo.SetFocus()
+                if hasattr(self.title_combo, "SetInsertionPointEnd"):
+                    self.title_combo.SetInsertionPointEnd()
+                if hasattr(self.title_combo, "GetMainWindow"):
+                    main = self.title_combo.GetMainWindow()
+                    if main:
+                        main.SetFocus()
+        except Exception:
+            pass
+
+    def _poll_data_refresh_completion(self):
+        if not self._refresh_worker:
+            self._cleanup_refresh_ui()
+            return
+
+        if self._refresh_worker.is_alive():
+            self._refresh_poller = wx.CallLater(200, self._poll_data_refresh_completion)
+            return
+
+        state = self._refresh_state or {"success": False}
+        self._cleanup_refresh_ui()
+        self._refresh_worker = None
+        self._refresh_state = None
+
+        if state.get("success"):
             simpleDialog.dialog(_("完了"), _("データの更新が完了しました。"))
             self.update_station_list()
+            wx.CallAfter(self._restore_focus_to_search_box)
+            wx.CallLater(80, self._restore_focus_to_search_box)
+            wx.CallLater(180, self._restore_focus_to_search_box)
+            return
+
+        error_text = state.get("error")
+        if error_text:
+            simpleDialog.errorDialog(_("データの更新に失敗しました。") + f"\n{error_text}")
         else:
             simpleDialog.errorDialog(_("データの更新に失敗しました。"))
+        wx.CallAfter(self._restore_focus_to_search_box)
+        wx.CallLater(80, self._restore_focus_to_search_box)
+        wx.CallLater(180, self._restore_focus_to_search_box)
+
+    def _perform_data_refresh(self):
+        """データ更新の実際の処理"""
+        self._refresh_state = {"success": False, "error": None}
+        self._show_refresh_wait_dialog()
+        self._refresh_worker = threading.Thread(
+            target=self._perform_data_refresh_worker,
+            args=(self._refresh_state,),
+            daemon=True,
+        )
+        self._refresh_worker.start()
+        self._poll_data_refresh_completion()
     
     def onScheduleRecording(self, event):
         """選択された番組を予約録音"""
