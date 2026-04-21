@@ -52,7 +52,7 @@ class ProgramDataCollector:
                 return False
                 
             station_ids = list(self.radio_manager.stid.keys())
-            self.log.info(f"Found {len(station_ids)} stations to collect: {station_ids[:5]}...")  # 最初の5つを表示
+            self.log.info(f"Found {len(station_ids)} stations to collect: {station_ids[:5]}...")  # first 5
             
             # 各放送局のデータを収集
             collected_data = {}
@@ -320,7 +320,8 @@ class ProgramDataCollector:
     
     def cleanup(self):
         """リソースのクリーンアップ"""
+        self.log.info("ProgramDataCollector.cleanup: stopping background collection and closing DB")
         self.stop_background_collection()
         if self.cache_manager:
             self.cache_manager.close()
-        self.log.info("ProgramDataCollector cleanup completed")
+        self.log.info("ProgramDataCollector.cleanup: done")

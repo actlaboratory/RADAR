@@ -121,7 +121,9 @@ class MPVAudioPlayer:
             self._stop_locked()
 
     def exit(self):
+        self._log.info("MPVAudioPlayer.exit: starting shutdown")
         self.stop()
+        self._log.info("MPVAudioPlayer.exit: shutdown complete")
 
     def isPlaying(self):
         with self._lock:
@@ -226,18 +228,42 @@ class MPVAudioPlayer:
 
     def _stop_locked(self):
         if not self._is_running_locked():
+            self._log.info("mpv shutdown: no running process (skip)")
             self._process = None
             return
+        proc = self._process
+        pid = proc.pid if proc else None
+        self._log.info("mpv shutdown: starting pid=%s ipc=%s", pid, self._ipc_pipe_name or "(none)")
+        used_kill = False
         try:
-            self._process.terminate()
-            self._process.wait(timeout=2)
-        except Exception:
+            proc.terminate()
+            rc = proc.wait(timeout=2)
+            self._log.info("mpv shutdown: exited after terminate pid=%s returncode=%s", pid, rc)
+        except Exception as e_term:
+            self._log.warning(
+                "mpv shutdown: terminate/wait failed pid=%s: %s; trying kill",
+                pid,
+                e_term,
+            )
             try:
-                self._process.kill()
-                self._process.wait(timeout=2)
-            except Exception:
-                pass
+                proc.kill()
+                used_kill = True
+                rc = proc.wait(timeout=2)
+                self._log.info("mpv shutdown: exited after kill pid=%s returncode=%s", pid, rc)
+            except Exception as e_kill:
+                self._log.error("mpv shutdown: kill failed pid=%s: %s", pid, e_kill)
         finally:
+            try:
+                if proc and proc.poll() is None:
+                    self._log.error(
+                        "mpv still running: pid=%s kill_attempted=%s",
+                        pid,
+                        used_kill,
+                    )
+                else:
+                    self._log.info("mpv shutdown: verified pid=%s poll=%s", pid, proc.poll())
+            except Exception as e_poll:
+                self._log.warning("mpv shutdown: exception while verifying exit pid=%s: %s", pid, e_poll)
             self._process = None
 
     def _restart_locked(self):

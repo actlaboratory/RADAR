@@ -132,7 +132,10 @@ class RadioManager:
                 if result != 0:
                     if attempt < max_retries - 1:
                         wait_time = (attempt + 1) * 2
-                        self.log.debug(f"接続エラー。{wait_time}秒後にリトライします。(試行 {attempt + 1}/{max_retries})")
+                        self.log.debug(
+                            f"Connection error; retrying after {wait_time}s "
+                            f"(attempt {attempt + 1}/{max_retries})"
+                        )
                         time.sleep(wait_time)
                         continue
                     return False, "接続に失敗しました。インターネットの接続状況をご確認ください。"
@@ -146,13 +149,13 @@ class RadioManager:
             except socket.timeout:
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 2
-                    self.log.debug(f"タイムアウトが発生しました。{wait_time}秒後にリトライします。")
+                    self.log.debug(f"Timeout; retrying after {wait_time}s")
                     time.sleep(wait_time)
                 else:
                     return False, "タイムアウトによりデータの取得に失敗しました。"
                 
             except Exception as e:
-                self.log.error(f"予期せぬエラーが発生しました: {str(e)}")
+                self.log.error(f"Unexpected error: {str(e)}")
                 return False, f"予期せぬエラーが発生しました: {str(e)}"
 
     def setRadioList(self):
@@ -544,10 +547,15 @@ class RadioManager:
 
     def exit(self):
         """終了処理"""
+        self.log.info("RadioManager.exit: stopping timers and shutting down mpv")
         self.streamWatchdogTimer.Stop()
         self.updateInfoTimer.Stop()
         self._stop_timefree_seek_timer()
         self._player.exit()
+        self.log.info(
+            "RadioManager.exit: mpv shutdown complete "
+            "(timefree seek daemon thread interrupted by mpv stop)"
+        )
 
     def _format_hhmmss(self, seconds):
         total = int(max(0, seconds))

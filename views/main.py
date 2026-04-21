@@ -27,6 +27,7 @@ from views import programInfoHandler
 from views import volumeHandler
 from views import programCacheController
 from views import programSearchDialog
+import shutdown_log
 
 
 class MainView(BaseView):
@@ -216,13 +217,13 @@ class Events(BaseEvents):
 		self.exit(event, from_close_event=False)
 
 	def exit(self, event=None, from_close_event=False):
+		sd = shutdown_log.get_shutdown_logger()
 		if self._exit_in_progress:
+			sd.warning("Shutdown already in progress; ignoring duplicate exit request")
 			return
 		self._exit_in_progress = True
-		try:
-			self.log.info("Attempting to terminate process...")
-		except:
-			pass
+		self.log.info("Application shutdown sequence started")
+		sd.info("[Shutdown] Phase 1: Confirm exit (recording in progress / pending schedules)")
 		active_recorders = recorder_manager.get_active_recorders()
 		
 		if active_recorders:
@@ -232,6 +233,7 @@ class Events(BaseEvents):
 			result = yesNoDialog(_("録音中の終了確認"), message)
 			if result == wx.ID_NO:
 				self._exit_in_progress = False
+				sd.info("[Shutdown] User cancelled exit (recording in progress)")
 				if from_close_event and event and event.CanVeto():
 					event.Veto()
 				return
@@ -243,85 +245,71 @@ class Events(BaseEvents):
 			result = yesNoDialog(_("予約データ削除の確認"), message)
 			if result == wx.ID_NO:
 				self._exit_in_progress = False
+				sd.info("[Shutdown] User cancelled exit (pending schedules)")
 				if from_close_event and event and event.CanVeto():
 					event.Veto()
 				return
 		
+		sd.info("[Shutdown] Phase 2: Cleanup (recording handler, radio/mpv, schedule data)")
 		self._cleanup_recording_handler()
 		self._cleanup_radio_manager()
 		self._cleanup_schedule_data()
-
-		try:
-			self.log.info("Application cleanup completed")
-		except:
-			pass
-		
+		sd.info(
+			"[Shutdown] Phase 2 complete (program cache sqlite closes after MainLoop returns)"
+		)
+		self.log.info("Tearing down UI resources")
 		globalVars.app.tb.Destroy()
+		shutdown_log.flush_app_log_handlers()
 
-		try:
-			self.log.info("Exiting...")
-		except:
-			pass
+		sd.info("[Shutdown] Phase 3: Close main window (MainLoop will end)")
 
 		if from_close_event:
 			if event:
 				event.Skip()
 		else:
 			self.parent.hFrame.Destroy()
+		shutdown_log.flush_app_log_handlers()
 
 	def _cleanup_recording_handler(self):
 		"""録音ハンドラーのクリーンアップ"""
 		if hasattr(self.parent, 'recording_handler'):
 			try:
+				shutdown_log.get_shutdown_logger().info("[Shutdown] Running recording_handler.cleanup")
 				self.parent.recording_handler.cleanup()
 			except Exception as e:
-				try:
-					self.log.error(f"Error during recording handler cleanup: {e}")
-				except:
-					pass
+				self.log.error("recording_handler cleanup failed: %s", e, exc_info=True)
 
 	def _cleanup_radio_manager(self):
 		"""ラジオマネージャーのクリーンアップ"""
 		if hasattr(self.parent, 'radio_manager'):
 			try:
+				shutdown_log.get_shutdown_logger().info("[Shutdown] Running radio_manager.exit (mpv)")
 				self.parent.radio_manager.exit()
 			except Exception as e:
-				try:
-					self.log.error(f"Error during radio manager cleanup: {e}")
-				except:
-					pass
+				self.log.error("radio_manager cleanup failed: %s", e, exc_info=True)
 
 	def _cleanup_schedule_data(self):
 		"""スケジュール録音データの完全削除"""
 		try:
+			shutdown_log.get_shutdown_logger().info(
+				"[Shutdown] Removing schedule file and in-memory schedules"
+			)
 			schedule_file = schedule_manager.schedule_file
 			if os.path.exists(schedule_file):
 				os.remove(schedule_file)
-				try:
-					self.log.info(f"Schedule file deleted: {schedule_file}")
-				except:
-					pass
+				self.log.info("Deleted schedule file: %s", schedule_file)
 
 			schedule_manager.cleanup()
 
 			with schedule_manager.lock:
 				removed_count = len(schedule_manager.schedules)
 				schedule_manager.schedules.clear()
-				try:
-					self.log.info(f"All schedule data cleared: {removed_count} schedules removed")
-				except:
-					pass
+				self.log.info("Cleared %s schedule entries from memory", removed_count)
 
-			try:
-				self.log.info("Schedule data cleanup completed")
-			except:
-				pass
-			
+			self.log.info("Schedule data cleanup completed")
+
 		except Exception as e:
-			try:
-				self.log.error(f"Error during schedule data cleanup: {e}")
-			except:
-				pass
+			self.log.error("Schedule data cleanup failed: %s", e, exc_info=True)
 
 
 	def option(self, event):

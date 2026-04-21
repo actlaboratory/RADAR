@@ -36,7 +36,13 @@ def exchandler(type, exc, tb):
 			if hasattr(globalVars.app.hMainView, 'program_cache_controller'):
 				globalVars.app.hMainView.program_cache_controller.cleanup()
 	except Exception as cache_cleanup_error:
-		print(f"Error during cache cleanup: {cache_cleanup_error}")
+		try:
+			shutdown_log.get_shutdown_logger().error(
+				"Fatal: program cache cleanup failed: %s", cache_cleanup_error, exc_info=True
+			)
+			shutdown_log.flush_app_log_handlers()
+		except Exception:
+			print(f"Error during cache cleanup: {cache_cleanup_error}")
 	
 	if type == requests.exceptions.ConnectionError:
 		simpleDialog.errorDialog(_("通信に失敗しました。インターネット接続を確認してください。プログラムを終了します。"))
@@ -75,6 +81,7 @@ if sys.version_info.major>=3 and sys.version_info.minor>=8:
 
 import app as application
 import globalVars
+import shutdown_log
 
 def main():
 	try:
@@ -86,14 +93,28 @@ def main():
 	globalVars.app=app
 	app.initialize()
 	app.MainLoop()
+	_sd = shutdown_log.get_shutdown_logger()
+	_sd.info(
+		"[Shutdown] Returned from MainLoop (wx.App.OnExit already ran); saving settings and closing DB"
+	)
 	app.config.write()
-	
-	# 正常終了時のクリーンアップ処理
+	_sd.info("[Shutdown] Settings file saved")
 	try:
 		if hasattr(app, 'hMainView') and hasattr(app.hMainView, 'program_cache_controller'):
+			_sd.info("[Shutdown] Calling ProgramCacheController.cleanup (sqlite)")
 			app.hMainView.program_cache_controller.cleanup()
+		else:
+			_sd.warning("[Shutdown] program_cache_controller missing; skipping DB close")
 	except Exception as cleanup_error:
-		print(f"Error during normal cleanup: {cleanup_error}")
+		_sd.error(
+			"[Shutdown] Program cache cleanup failed on normal exit: %s",
+			cleanup_error,
+			exc_info=True,
+		)
+	_sd.info("[Shutdown] Flushing log handlers")
+	shutdown_log.flush_app_log_handlers()
+	_sd.info("[Shutdown] Shutdown log complete (atexit recording cleanup follows)")
+	shutdown_log.flush_app_log_handlers()
 
 #global schope
 if __name__ == "__main__": main()

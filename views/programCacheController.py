@@ -499,17 +499,21 @@ class ProgramCacheController:
     
     def cleanup(self):
         """リソースのクリーンアップ"""
+        self.log.info("ProgramCacheController.cleanup: starting (stop collection, close DB)")
         try:
             if self.data_collector:
                 self.data_collector.cleanup()
-            
+
             if self.cache_manager:
+                self.log.info("ProgramCacheController: closing sqlite connection db=%s", self.db_path)
                 self.cache_manager.close()
-            
-            self.log.info("ProgramCacheController cleanup completed")
-            
+            else:
+                self.log.info("ProgramCacheController: cache_manager not initialized; skipping DB")
+
+            self.log.info("ProgramCacheController.cleanup: completed")
+
         except Exception as e:
-            self.log.error(f"Cleanup failed: {e}")
+            self.log.error("ProgramCacheController.cleanup: failed: %s", e, exc_info=True)
     
     def __del__(self):
         """デストラクタ"""

@@ -395,10 +395,19 @@ class ProgramCacheManager:
                 return None
     
     def close(self):
-        """データベース接続を閉じる"""
-        if self.conn:
+        """データベース接続を閉じる（複数回呼んでも安全）"""
+        if not self.conn:
+            self.log.info("Program cache DB: connection already closed path=%s", self.db_path)
+            return
+        path = self.db_path
+        try:
             self.conn.close()
-            self.log.info("Database connection closed")
+            self.log.info("Program cache DB: sqlite connection closed path=%s", path)
+        except Exception as e:
+            self.log.error("Program cache DB: failed to close path=%s error=%s", path, e)
+            raise
+        finally:
+            self.conn = None
     
     def __del__(self):
         """デストラクタ"""
