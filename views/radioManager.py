@@ -537,10 +537,11 @@ class RadioManager:
     def get_latest_programList(self, progs):
         """番組リストを最新に更新"""
         self.tree.DeleteAllItems()
-        # 番組情報が表示されている場合のみクリア
-        if self.events.displaying:
-            self.parent.program_info_handler.nplist.clear()
-            self.parent.program_info_handler.DSCBOX.Disable()
+        # 放送局リスト更新時は番組情報UIを破棄し、メニューも実行不可にする。
+        # 既に非表示/未生成の場合でも同じ処理に統一して状態不整合を防ぐ。
+        self.parent.program_info_handler.destroy_program_info_ui(disable_menu=True)
+        self.events.displaying = False
+        self.creator.GetSizer().Layout()
         self.areaDetermination(progs)
         self.setupradio()
         self.setRadioList()

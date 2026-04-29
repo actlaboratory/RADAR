@@ -475,6 +475,7 @@ class Events(BaseEvents):
 			return
 		
 		handler = self.parent.program_info_handler
+		handler.ensure_program_info_ui()
 		handler.nplist.Enable()
 		handler.nplist.clear()
 		self.show_program_info()
