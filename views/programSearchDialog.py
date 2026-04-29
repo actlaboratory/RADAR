@@ -1168,7 +1168,10 @@ class ProgramSearchDialog(BaseDialog):
             )
             
             # 予約を追加
-            schedule_manager.add_schedule(schedule)
+            added = schedule_manager.add_schedule(schedule)
+            if not added:
+                simpleDialog.dialog(_("情報"), _("同一番組の予約が既に存在します。"))
+                return
             
             # 監視を開始（初回のみ）
             schedule_manager.start_monitoring()

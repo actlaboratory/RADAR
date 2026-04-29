@@ -17,6 +17,7 @@ import threading
 import time
 import json
 import datetime
+import uuid
 from collections import deque
 from accessible_output2.outputs.base import OutputError
 from concurrent.futures import ThreadPoolExecutor
@@ -620,7 +621,8 @@ class RecordingSchedule:
     """録音予約"""
     def __init__(self, station_id, station_name, program_title, start_time, end_time, 
                  output_path, filetype="mp3", repeat_type="none", repeat_days=None):
-        self.id = f"{station_id}_{start_time.strftime('%Y%m%d_%H%M%S')}"
+        # 同一開始時刻の予約でも個別に扱えるようIDは常に一意にする
+        self.id = f"{station_id}_{start_time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         self.station_id = station_id
         self.station_name = station_name
         self.program_title = program_title
@@ -721,9 +723,31 @@ class ScheduleManager:
     def add_schedule(self, schedule):
         """予約を追加"""
         with self.lock:
+            if self._has_duplicate_schedule_locked(schedule):
+                self.logger.info(
+                    "Duplicate schedule ignored: "
+                    f"{schedule.station_id} {schedule.program_title} {schedule.start_time} - {schedule.end_time}"
+                )
+                return False
             self.schedules.append(schedule)
         self.save_schedules()
         self.logger.info(f"Schedule added: {schedule.program_title}")
+        return True
+
+    def _has_duplicate_schedule_locked(self, new_schedule):
+        """同一番組・同一時間帯の重複予約を判定（lock取得中専用）"""
+        active_statuses = {RECORDING_STATUS_SCHEDULED, RECORDING_STATUS_RECORDING}
+        for existing in self.schedules:
+            if existing.status not in active_statuses:
+                continue
+            if (
+                existing.station_id == new_schedule.station_id and
+                existing.program_title == new_schedule.program_title and
+                existing.start_time == new_schedule.start_time and
+                existing.end_time == new_schedule.end_time
+            ):
+                return True
+        return False
 
     def remove_schedule(self, schedule_id):
         """予約を削除"""

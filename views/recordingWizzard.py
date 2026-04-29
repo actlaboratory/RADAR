@@ -99,7 +99,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 filetype=self.filetype
             )
             
-            schedule_manager.add_schedule(schedule)
+            added = schedule_manager.add_schedule(schedule)
+            if not added:
+                simpleDialog.dialog(_("情報"), _("同一番組の予約が既に存在します。"))
+                return
             self.current_schedule = schedule
             
             schedule_manager.start_monitoring()
