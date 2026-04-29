@@ -128,6 +128,8 @@ class ProgramSearchDialog(BaseDialog):
         self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
         self.show_past_week_chk = date_creator.checkbox(_("過去1週間の日付を表示"), event=self.on_toggle_past_week_dates)
         self.show_past_week_chk.SetValue(constants.SHOW_PAST_WEEK_DATES_DEFAULT)
+        self.include_past_when_no_date_chk = date_creator.checkbox(_("日付指定なし時に過去番組を含める"))
+        self.include_past_when_no_date_chk.SetValue(False)
 
         self.start_hour_spin, _label = date_creator.spinCtrl(_("開始時間（時）"), min=5, max=28, defaultValue=5, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
@@ -369,11 +371,16 @@ class ProgramSearchDialog(BaseDialog):
             self._debug_date_in_database(search_criteria['date'])
         
         # 検索実行
+        include_past_when_no_date = search_criteria.pop('include_past_when_no_date', False)
         use_time_range = search_criteria.pop('use_time_range_search', False)
         self.search_results = self.search_engine.search_combined(
             use_time_range_search=use_time_range,
             **search_criteria
         )
+
+        # 日付未指定時は、必要な場合のみ過去番組を含める
+        if not search_criteria.get('date') and not include_past_when_no_date:
+            self.search_results = self._filter_future_or_live_programs(self.search_results)
         
         # 検索結果のデバッグ情報
         self.log.info(f"Search completed: {len(self.search_results)} results found")
@@ -422,6 +429,8 @@ class ProgramSearchDialog(BaseDialog):
                     criteria['date'] = date_value
                 else:
                     criteria['date'] = date_text
+        if 'date' not in criteria:
+            criteria['include_past_when_no_date'] = self.include_past_when_no_date_chk.GetValue()
 
         # 時間範囲（スピンコントロールから取得）
         start_hour = self.start_hour_spin.GetValue()
@@ -452,6 +461,20 @@ class ProgramSearchDialog(BaseDialog):
         criteria['use_time_range_search'] = True
         
         return criteria
+
+    def _filter_future_or_live_programs(self, programs):
+        """日付未指定時に過去番組を除外（放送中/未来のみ残す）"""
+        if not programs:
+            return programs
+        now = datetime.datetime.now()
+        out = []
+        for program in programs:
+            _start_dt, end_dt = self._program_start_end_dt(program)
+            if end_dt is None:
+                continue
+            if end_dt > now:
+                out.append(program)
+        return out
     
     def display_results(self):
         """検索結果を表示"""
