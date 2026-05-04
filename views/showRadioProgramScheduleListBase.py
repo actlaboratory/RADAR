@@ -46,8 +46,6 @@ class ShowSchedule(BaseDialog):
         self.lst.AppendColumn(_("開始時間"),0,100)
         self.lst.AppendColumn(_("終了時間"),0,100)
         self.lst.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.show_detail)
-        self.lst.Focus(0)
-        self.lst.SetFocus()
 
         self.cls = self.creator.closebutton(_("閉じる(&C)"), self.onCloseBtn)
         self.cls.SetDefault()
@@ -142,6 +140,25 @@ class ShowSchedule(BaseDialog):
                 self.pfmlst.append("")
             self.stlst.append(ftl[:2]+":"+ftl[2:4])
             self.enlst.append(tol[:2]+":"+tol[2:4])
+
+        wx.CallAfter(self._ensure_first_program_row_focused)
+
+    def _ensure_first_program_row_focused(self):
+        """番組一覧の先頭行を選択し、リストにキーボードフォーカスを置く"""
+        if self.lst is None:
+            return
+        try:
+            if self.lst.GetItemCount() <= 0:
+                return
+        except Exception:
+            return
+        try:
+            self.lst.Focus(0)
+            self.lst.Select(0)
+            self.lst.EnsureVisible(0)
+            self.lst.SetFocus()
+        except Exception:
+            pass
 
     def onCloseBtn(self, event):
         event.Skip()
