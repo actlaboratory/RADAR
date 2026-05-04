@@ -50,10 +50,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             self.timefree_play_btn.Enable(True)
         else:
             self.timefree_play_btn.SetLabel(_("聴き逃し再生(&P)"))
-            is_live_playing = False
-            if hasattr(main_view, "radio_manager"):
-                is_live_playing = main_view.radio_manager.is_live_playing()
-            self.timefree_play_btn.Enable(not is_live_playing)
+            self.timefree_play_btn.Enable(True)
         if hasattr(main_view, "radio_manager"):
             main_view.radio_manager.update_timefree_command_ui()
 
@@ -151,6 +148,13 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             if end_dt > now:
                 simpleDialog.errorDialog("この番組はまだ放送中のため、聴き逃し配信が利用できません。")
                 return
+            if hasattr(main_view, "radio_manager") and main_view.radio_manager.is_live_playing():
+                if simpleDialog.yesNoDialog(
+                    _("確認"),
+                    _("ライブ再生を終了し、聴き逃し再生を開始しますか？"),
+                    self.wnd,
+                ) != wx.ID_YES:
+                    return
             announce = f"聴き逃し再生: {self.radioname} {title}"
             duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))
             performer = self.pfmlst[idx] if 0 <= idx < len(self.pfmlst) else ""
