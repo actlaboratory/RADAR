@@ -317,10 +317,36 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self._cleanup_dialog_resources()
         event.Skip()
 
+    def on_program_list_selection(self, event):
+        """過去番組行を選んだとき、ライブ×別局時のメニュー再開許可フラグを更新"""
+        self._notify_past_program_focus_if_applicable()
+        event.Skip()
+
+    def _notify_past_program_focus_if_applicable(self):
+        """現在フォーカスが「過去の放送済み番組」なら聴き逃しメニュー用 ACK を立てる"""
+        try:
+            idx = self.lst.GetFocusedItem()
+            if idx < 0:
+                return
+            _, start_dt, end_dt = self._get_selected_program_range()
+            now = datetime.datetime.now()
+            if start_dt > now or end_dt > now:
+                return
+            main_view = globalVars.app.hMainView
+            if not hasattr(main_view, "radio_manager"):
+                return
+            rm = main_view.radio_manager
+            rm.set_timefree_menu_live_ack(self.stid)
+            rm.update_timefree_command_ui()
+        except Exception:
+            pass
 
     def InstallControls(self):
         """コントロールを配置"""
         super().InstallControls()
+
+        self.lst.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_program_list_selection)
+        wx.CallAfter(self._notify_past_program_focus_if_applicable)
 
         self.record_btn = self.creator.button(_("録音予約(&R)"), self.onFinishButton)
         self.timefree_play_btn = self.creator.button(_("聴き逃し再生(&P)"), self.onPlayTimeFree)

@@ -52,6 +52,8 @@ class RadioManager:
         self._seek_apply_lock = threading.Lock()
         self._seek_apply_running = False
         self._seek_apply_latest = None
+        # ライブ再生中に「番組表で過去番組を選択した」ことを示す局 ID（メニュー再開可否用）
+        self._timefree_menu_live_ack_station_id = None
         self.streamWatchdogTimer.Bind(wx.EVT_TIMER, self._on_stream_watchdog_timer)
         self.timefreeSeekTimer.Bind(wx.EVT_TIMER, self._on_timefree_seek_timer)
         self.timefreeSeekApplyTimer.Bind(wx.EVT_TIMER, self._on_timefree_seek_apply_timer)
@@ -311,6 +313,7 @@ class RadioManager:
                 self._player.stop()
             except Exception:
                 pass
+        self.clear_timefree_menu_live_ack()
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
         self.current_station_id = id
         self.current_progs = progs
@@ -507,6 +510,7 @@ class RadioManager:
 
     def stop(self):
         """再生停止"""
+        self.clear_timefree_menu_live_ack()
         self._player.stop()
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
         self.log.info("posed")
@@ -690,16 +694,48 @@ class RadioManager:
         """ライブ再生中かどうか"""
         return self.playback_mode == "live" and self.events.playing
 
+    def clear_timefree_menu_live_ack(self):
+        """ライブ×別局聴き逃し再開用の「番組表で過去番組を選んだ」フラグを消す"""
+        self._timefree_menu_live_ack_station_id = None
+
+    def set_timefree_menu_live_ack(self, station_id):
+        """番組表で過去番組を選択したとき、対象局を記録する"""
+        self._timefree_menu_live_ack_station_id = station_id
+
+    def should_enable_timefree_menu_command(self):
+        """
+        メニュー「聴き逃し配信の再生/停止」と F2 の有効条件。
+        - 聴き逃し再生中: 停止のため有効
+        - 再開情報なし: 無効（新規開始は番組表ダイアログから）
+        - 無再生かつ再開情報あり: 前回停止位置からの再開が可能なため有効
+        - ライブ再生中かつ再開情報あり:
+            - ライブの局と前回聴き逃しの局が同一 → 有効（確認後に再開）
+            - 異なる局のライブ中 → 現在ライブの局の番組表で過去番組を選択するまで無効
+        """
+        if self.is_timefree_playing():
+            return True
+        if not self.has_last_timefree_request():
+            return False
+        if not self.is_live_playing():
+            return True
+        live_sid = self.current_station_id
+        last_sid = (self._last_timefree_request or {}).get("station_id")
+        if live_sid and last_sid == live_sid:
+            return True
+        ack = self._timefree_menu_live_ack_station_id
+        return bool(live_sid and ack == live_sid)
+
     def update_timefree_command_ui(self):
-        """聴き逃し再生コマンドの有効状態とラベルを更新"""
+        """聴き逃し配信メニュー・ショートカット(F2)のラベルと有効状態を更新"""
         if not hasattr(self.parent, "menu"):
             return
         try:
-            is_timefree = self.is_timefree_playing()
-            is_live = self.is_live_playing()
-            label = _("聴き逃し停止") if is_timefree else _("聴き逃し再生")
+            is_tf = self.is_timefree_playing()
+            label = _("聴き逃し停止") if is_tf else _("聴き逃し再生")
             self.parent.menu.SetMenuLabel("FUNCTION_TIMEFREE_TOGGLE", label)
-            # ライブ再生中(F1で放送中番組再生中)は無効
-            self.parent.menu.EnableMenu("FUNCTION_TIMEFREE_TOGGLE", not is_live)
+            self.parent.menu.EnableMenu(
+                "FUNCTION_TIMEFREE_TOGGLE",
+                self.should_enable_timefree_menu_command(),
+            )
         except Exception as e:
             self.log.error(f"Failed to update timefree command UI: {e}")
