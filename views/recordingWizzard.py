@@ -7,6 +7,7 @@ from notification_util import notify as notification_notify
 import globalVars
 import simpleDialog
 from views import showRadioProgramScheduleListBase
+import views.ViewCreator
 from views import programmanager
 import tcutil
 from recorder import schedule_manager, RecordingSchedule
@@ -352,9 +353,17 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self.lst.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_program_list_selection)
         wx.CallAfter(self._notify_past_program_focus_if_applicable)
 
-        self.record_btn = self.creator.button(_("録音予約(&R)"), self.onFinishButton)
-        self.timefree_play_btn = self.creator.button(_("聴き逃し再生(&P)"), self.onPlayTimeFree)
-        self.timefree_record_btn = self.creator.button(_("聴き逃し録音(&T)"), self.onRecordTimeFree)
+        btn_creator = views.ViewCreator.ViewCreator(
+            self.viewMode,
+            self.creator.GetPanel(),
+            self.creator.GetSizer(),
+            wx.HORIZONTAL,
+            style=wx.ALL,
+            margin=5
+        )
+        self.record_btn = btn_creator.button(_("録音予約(&R)"), self.onFinishButton)
+        self.timefree_play_btn = btn_creator.button(_("聴き逃し再生(&P)"), self.onPlayTimeFree)
+        self.timefree_record_btn = btn_creator.button(_("聴き逃し録音(&T)"), self.onRecordTimeFree)
         self._update_timefree_button_label()
         self.wnd.Bind(wx.EVT_ACTIVATE, self.onDialogActivated)
 

@@ -56,10 +56,19 @@ class ShowSchedule(BaseDialog):
         """日時指定用コンボボックスを作成し、内容を設定"""
         self._default_date_values = list(self.clutl.getDateValue())
         self.date_values = list(self._default_date_values)
-        self.cmb,label = self.creator.combobox(_("日付指定"), self.date_values, textLayout=wx.HORIZONTAL)
+        row_creator = views.ViewCreator.ViewCreator(
+            self.viewMode,
+            self.creator.GetPanel(),
+            self.creator.GetSizer(),
+            wx.HORIZONTAL,
+            style=wx.ALL,
+            margin=5
+        )
+        self.cmb, label = row_creator.combobox(_("日付指定"), self.date_values, textLayout=wx.HORIZONTAL)
         self.cmb.SetSelection(0)
         self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
-        self.show_past_chk = self.creator.checkbox(
+        row_creator.AddSpace(20)
+        self.show_past_chk = row_creator.checkbox(
             _("過去1週間の日付を表示"),
             event=self.onTogglePastProgramDates
         )
