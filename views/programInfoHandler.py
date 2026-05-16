@@ -3,6 +3,7 @@
 
 import wx
 from views import recordingWizzard
+import menuItemsStore
 
 
 class ProgramInfoHandler:
@@ -12,11 +13,54 @@ class ProgramInfoHandler:
         self.creator = parent_view.creator
         self.events = parent_view.events
         self._timefree_program_info = None
+        self.nplist = None
+        self.nowprograminfo = None
+        self.DSCBOX = None
+        self.dscboxLabel = None
 
     def setup_program_info_ui(self):
         """番組情報関連のUIを設定"""
+        self.ensure_program_info_ui()
+
+    def _is_program_info_ui_alive(self):
+        """番組情報UIが生成済みかを返す"""
+        return (
+            self.nplist is not None and
+            self.nowprograminfo is not None and
+            self.DSCBOX is not None and
+            self.dscboxLabel is not None
+        )
+
+    def ensure_program_info_ui(self):
+        """番組情報UIが無ければ再生成する"""
+        if self._is_program_info_ui_alive():
+            return
         self.description()
         self.SHOW_NOW_PROGRAMLIST()
+
+    def _set_program_info_menu_enabled(self, enabled):
+        """番組情報表示/非表示メニューの有効状態を更新"""
+        try:
+            self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), enabled)
+        except Exception:
+            pass
+
+    def destroy_program_info_ui(self, disable_menu=False):
+        """番組情報UIを破棄する"""
+        if self.nowprograminfo is not None:
+            self.nowprograminfo.Destroy()
+        if self.nplist is not None:
+            self.nplist.Destroy()
+        if self.dscboxLabel is not None:
+            self.dscboxLabel.Destroy()
+        if self.DSCBOX is not None:
+            self.DSCBOX.Destroy()
+        self.nowprograminfo = None
+        self.nplist = None
+        self.dscboxLabel = None
+        self.DSCBOX = None
+        if disable_menu:
+            self._set_program_info_menu_enabled(False)
 
     def SHOW_NOW_PROGRAMLIST(self):
         """現在再生中の番組リストを作成"""
@@ -34,6 +78,7 @@ class ProgramInfoHandler:
         """ctrl+f5によるリロード処理のときに呼ばれる"""
         if not self.events.displaying:
             return
+        self.ensure_program_info_ui()
 
         if self._timefree_program_info and hasattr(self.parent, "radio_manager"):
             if self.parent.radio_manager.is_timefree_playing():
@@ -58,6 +103,7 @@ class ProgramInfoHandler:
     def _render_timefree_program_info(self):
         if not self.events.displaying:
             return
+        self.ensure_program_info_ui()
         info = self._timefree_program_info or {}
         station_name = info.get("station_name", "")
         title = info.get("title", "")
@@ -80,6 +126,7 @@ class ProgramInfoHandler:
         """番組の説明を表示"""
         if not self.events.displaying:
             return
+        self.ensure_program_info_ui()
         
         if self.parent.progs.getNowProgramDsc(station_id):
             self.DSCBOX.Enable()
@@ -91,6 +138,7 @@ class ProgramInfoHandler:
         """番組情報を表示"""
         if not self.events.displaying:
             return
+        self.ensure_program_info_ui()
         
         self.nplist.Enable()
         program_title = self.parent.progs.getNowProgram(station_id)
@@ -105,6 +153,7 @@ class ProgramInfoHandler:
         """オンエア曲情報を表示"""
         if not self.events.displaying:
             return
+        self.ensure_program_info_ui()
         
         onair_music = self._get_onair_music_safely(station_id)
         if onair_music:
@@ -131,23 +180,16 @@ class ProgramInfoHandler:
         """番組情報の表示/非表示を切り替え"""
         if self.events.displaying:
             self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示(&P)"))
-            self.nowprograminfo.Destroy()
-            self.nplist.Destroy()
-            self.dscboxLabel.Destroy()
-            self.DSCBOX.Destroy()
+            self.destroy_program_info_ui()
             self.events.displaying = False
             self.creator.GetSizer().Layout()
         else:
             self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示(&H)"))
-            self.description()
-            self.SHOW_NOW_PROGRAMLIST()
-            if hasattr(self.events, 'current_playing_station_id') and self.events.current_playing_station_id:
-
-                self.show_description(self.events.current_playing_station_id)
-                self.show_program_info(self.events.current_playing_station_id)
-                self.show_onair_music(self.events.current_playing_station_id)
-            self.creator.GetSizer().Layout()
+            self.ensure_program_info_ui()
+            self._set_program_info_menu_enabled(True)
             self.events.displaying = True
+            self.get_latest_info()
+            self.creator.GetSizer().Layout()
         
         # 設定をiniファイルに保存
         import globalVars

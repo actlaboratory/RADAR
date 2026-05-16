@@ -417,7 +417,7 @@ class Events(BaseEvents):
 		self.parent.radio_manager.stop()
 
 	def onTimefreeToggle(self, event):
-		"""聴き逃し再生/停止（グローバル）"""
+		"""聴き逃し停止、または前回停止した聴き逃しを再開（無再生時は確認なし・ライブ中は確認あり）"""
 		if not hasattr(self.parent, "radio_manager"):
 			return
 
@@ -426,45 +426,26 @@ class Events(BaseEvents):
 			radio_manager.stop_timefree()
 			return
 
+		if not radio_manager.should_enable_timefree_menu_command():
+			return
+
+		if not radio_manager.has_last_timefree_request():
+			return
+
 		if radio_manager.is_live_playing():
-			station_id = self._resolve_timefree_station_id()
-			if not station_id:
-				errorDialog(_("放送局を選択してから聴き逃し再生を実行してください。"))
+			result = yesNoDialog(
+				_("確認"),
+				_("ライブ再生を終了し、前回停止した聴き逃し再生を再開しますか？"),
+				self.parent.hFrame,
+			)
+			if result != wx.ID_YES:
 				return
-			if hasattr(self.parent, "program_info_handler"):
-				self.parent.program_info_handler.initializeInfoView(station_id)
-			return
 
-		if radio_manager.has_last_timefree_request():
-			try:
-				radio_manager.replay_last_timefree()
-				return
-			except Exception as e:
-				self.log.warning(f"Failed to replay last timefree stream: {e}")
-
-		station_id = self._resolve_timefree_station_id()
-		if not station_id:
-			errorDialog(_("放送局を選択してから聴き逃し再生を実行してください。"))
-			return
-
-		if hasattr(self.parent, "program_info_handler"):
-			self.parent.program_info_handler.initializeInfoView(station_id)
-
-	def _resolve_timefree_station_id(self):
-		"""聴き逃し再生コマンドの対象放送局IDを解決"""
-		if self.current_selected_station_id:
-			return self.current_selected_station_id
-		if self.current_playing_station_id:
-			return self.current_playing_station_id
-		if hasattr(self.parent, "radio_manager") and hasattr(self.parent.radio_manager, "tree"):
-			try:
-				item = self.parent.radio_manager.tree.GetFocusedItem()
-				station_id = self.parent.radio_manager.tree.GetItemData(item)
-				if station_id:
-					return station_id
-			except Exception:
-				return None
-		return None
+		try:
+			radio_manager.replay_last_timefree()
+		except Exception as e:
+			self.log.warning(f"Failed to replay last timefree stream: {e}")
+			errorDialog(_("聴き逃し再生の再開に失敗しました。\n%(detail)s") % {"detail": str(e)}, self.parent.hFrame)
 
 	def _update_program_info_display(self):
 		"""番組情報表示の更新"""
@@ -475,6 +456,7 @@ class Events(BaseEvents):
 			return
 		
 		handler = self.parent.program_info_handler
+		handler.ensure_program_info_ui()
 		handler.nplist.Enable()
 		handler.nplist.clear()
 		self.show_program_info()

@@ -127,8 +127,16 @@ class ProgramSearchDialog(BaseDialog):
 
         self.date_combo, date_label = date_creator.combobox(_("日付"), [], textLayout=None)
         self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
-        self.show_past_week_chk = date_creator.checkbox(_("過去1週間の日付を表示"), event=self.on_toggle_past_week_dates)
-        self.show_past_week_chk.SetValue(constants.SHOW_PAST_WEEK_DATES_DEFAULT)
+        scope_choices = [
+            _("未来・放送中のみ"),
+            _("全期間（過去含む）"),
+            _("日付で絞り込み"),
+        ]
+        self.search_scope_combo, _scope_label = date_creator.combobox(
+            _("検索範囲"), scope_choices, style=wx.CB_READONLY, textLayout=None
+        )
+        self.search_scope_combo.SetSelection(0)
+        self.search_scope_combo.Bind(wx.EVT_COMBOBOX, self.on_search_scope_changed)
 
         self.start_hour_spin, _label = date_creator.spinCtrl(_("開始時間（時）"), min=5, max=28, defaultValue=5, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
@@ -345,11 +353,23 @@ class ProgramSearchDialog(BaseDialog):
             self._debug_date_in_database(search_criteria['date'])
         
         # 検索実行
+        include_past_when_no_date = search_criteria.pop('include_past_when_no_date', False)
         use_time_range = search_criteria.pop('use_time_range_search', False)
+        requested_limit = search_criteria.get('limit', 100)
         self.search_results = self.search_engine.search_combined(
             use_time_range_search=use_time_range,
             **search_criteria
         )
+
+        # 日付未指定時は、必要な場合のみ過去番組を含める
+        if not search_criteria.get('date') and not include_past_when_no_date:
+            self.search_results = self._filter_future_or_live_programs(self.search_results)
+
+        self.search_results.sort(
+            key=lambda p: (p.get('date') or '', p.get('start_time') or '')
+        )
+        if len(self.search_results) > requested_limit:
+            self.search_results = self.search_results[:requested_limit]
         
         # 検索結果のデバッグ情報
         self.log.info(f"Search completed: {len(self.search_results)} results found")
@@ -362,6 +382,10 @@ class ProgramSearchDialog(BaseDialog):
     def get_search_criteria(self):
         """検索条件を取得"""
         criteria = {}
+        scope = self.search_scope_combo.GetSelection()
+        if scope < 0:
+            scope = 0
+        SCOPE_BY_DATE = 2
         
         # 番組タイトル
         title = self.title_combo.GetValue().strip()
@@ -387,6 +411,7 @@ class ProgramSearchDialog(BaseDialog):
         
         # 日付（コンボボックスから取得）
         date_selection = self.date_combo.GetSelection()
+        selected_date_value = None
         if date_selection >= 0:
             date_text = self.date_combo.GetString(date_selection)
             self.log.debug(f"Selected date text: '{date_text}'")
@@ -394,10 +419,23 @@ class ProgramSearchDialog(BaseDialog):
             # 「指定なし（全日付）」が選択されている場合は日付条件を追加しない
             if date_text != _("指定なし（全日付）"):
                 if '(' in date_text and ')' in date_text:
-                    date_value = date_text.split('(')[1].split(')')[0]
-                    criteria['date'] = date_value
+                    selected_date_value = date_text.split('(')[1].split(')')[0].strip()
                 else:
-                    criteria['date'] = date_text
+                    selected_date_value = date_text.strip()
+
+        if scope == SCOPE_BY_DATE:
+            if not selected_date_value:
+                simpleDialog.dialog(
+                    _("警告"),
+                    _("「日付で絞り込み」のときは、日付リストから日付を選んでください。"),
+                )
+                return {}
+            criteria['date'] = selected_date_value
+        elif selected_date_value:
+            criteria['date'] = selected_date_value
+
+        if 'date' not in criteria:
+            criteria['include_past_when_no_date'] = scope == 1
 
         # 時間範囲（スピンコントロールから取得）
         start_hour = self.start_hour_spin.GetValue()
@@ -428,6 +466,20 @@ class ProgramSearchDialog(BaseDialog):
         criteria['use_time_range_search'] = True
         
         return criteria
+
+    def _filter_future_or_live_programs(self, programs):
+        """日付未指定時に過去番組を除外（放送中/未来のみ残す）"""
+        if not programs:
+            return programs
+        now = datetime.datetime.now()
+        out = []
+        for program in programs:
+            _start_dt, end_dt = self._program_start_end_dt(program)
+            if end_dt is None:
+                continue
+            if end_dt > now:
+                out.append(program)
+        return out
     
     def display_results(self):
         """検索結果を表示"""
@@ -552,8 +604,9 @@ class ProgramSearchDialog(BaseDialog):
         if 0 <= current_selection < self.date_combo.GetCount():
             selected_token = self._extract_date_token(self.date_combo.GetString(current_selection))
 
-        include_past = hasattr(self, "show_past_week_chk") and self.show_past_week_chk.GetValue()
-        if include_past and items:
+        # 「日付で絞り込み」のときだけ日付リストに過去1週間を含める
+        include_past_week_dates = self.search_scope_combo.GetSelection() == 2
+        if include_past_week_dates and items:
             past_entries = self._build_past_week_date_options()
             items = [items[0]] + past_entries + items[1:]
 
@@ -569,7 +622,7 @@ class ProgramSearchDialog(BaseDialog):
         else:
             self.date_combo.SetSelection(0 if items else -1)
 
-    def on_toggle_past_week_dates(self, event):
+    def on_search_scope_changed(self, event):
         self._apply_date_options()
 
     def _parse_clock_on_listing_date(self, base_date, time_str):
@@ -787,6 +840,8 @@ class ProgramSearchDialog(BaseDialog):
         self.title_combo.SetValue("")
         self.performer_combo.SetValue("")
         self.station_combo.SetSelection(0)  # 「指定なし」を選択
+        self.search_scope_combo.SetSelection(0)
+        self._apply_date_options()
         self.date_combo.SetSelection(0)  # 「指定なし（全日付）」を選択
         
         # スピンコントロールをリセット（ラジオ形式：5-29時、分は0分から）
@@ -1121,7 +1176,10 @@ class ProgramSearchDialog(BaseDialog):
             )
             
             # 予約を追加
-            schedule_manager.add_schedule(schedule)
+            added = schedule_manager.add_schedule(schedule)
+            if not added:
+                simpleDialog.dialog(_("情報"), _("同一番組の予約が既に存在します。"))
+                return
             
             # 監視を開始（初回のみ）
             schedule_manager.start_monitoring()

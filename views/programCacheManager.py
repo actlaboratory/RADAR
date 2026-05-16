@@ -166,15 +166,19 @@ class ProgramCacheManager:
                 requested_limit = search_criteria.get('limit', 100)
                 if search_criteria.get('date'):
                     query_limit = requested_limit
+                    order_clause = "ORDER BY date, start_time"
                 else:
+                    # 日付未指定時は新しい表記日を優先して取得し、呼び出し側の
+                    # 「未来のみ」等の後処理で枯渇しないようにする
                     query_limit = max(requested_limit * 50, 10000)
+                    order_clause = "ORDER BY date DESC, start_time DESC"
                 
                 query = f'''
                     SELECT station_id, station_name, title, performer, 
                            start_time, end_time, description, date
                     FROM programs 
                     WHERE {where_clause}
-                    ORDER BY date, start_time
+                    {order_clause}
                     LIMIT ?
                 '''
                 params.append(query_limit)
@@ -198,7 +202,8 @@ class ProgramCacheManager:
                 
                 programs = self._filter_search_time_window(programs)
                 
-                if len(programs) > requested_limit:
+                # 日付指定時のみここで件数制限。日付未指定は呼び出し側が絞り込み後に limit する。
+                if search_criteria.get('date') and len(programs) > requested_limit:
                     programs = programs[:requested_limit]
                 
                 self.log.info(f"Search completed: {len(programs)} results found (requested limit: {requested_limit}, date specified: {bool(search_criteria.get('date'))})")

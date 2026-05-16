@@ -119,12 +119,16 @@ class ProgramSearchEngine:
                 # 過去の番組を除外した後も十分な結果が得られるようにする
                 query_limit = max(requested_limit * 50, 10000)
             
+            if search_criteria.get('date'):
+                overlap_order = "ORDER BY start_time"
+            else:
+                overlap_order = "ORDER BY date DESC, start_time DESC"
             query = f'''
                 SELECT station_id, station_name, title, performer, 
                        start_time, end_time, description, date
                 FROM programs 
                 WHERE {where_clause}
-                ORDER BY start_time
+                {overlap_order}
                 LIMIT ?
             '''
             params.append(query_limit)
@@ -148,7 +152,7 @@ class ProgramSearchEngine:
             
             programs = self.cache_manager._filter_search_time_window(programs)
 
-            if len(programs) > requested_limit:
+            if search_criteria.get('date') and len(programs) > requested_limit:
                 programs = programs[:requested_limit]
             
             self.log.info(f"Time range search completed: {len(programs)} results found (requested limit: {requested_limit}, date specified: {bool(search_criteria.get('date'))})")

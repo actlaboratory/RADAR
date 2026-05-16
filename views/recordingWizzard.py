@@ -7,6 +7,7 @@ from notification_util import notify as notification_notify
 import globalVars
 import simpleDialog
 from views import showRadioProgramScheduleListBase
+import views.ViewCreator
 from views import programmanager
 import tcutil
 from recorder import schedule_manager, RecordingSchedule
@@ -50,10 +51,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             self.timefree_play_btn.Enable(True)
         else:
             self.timefree_play_btn.SetLabel(_("聴き逃し再生(&P)"))
-            is_live_playing = False
-            if hasattr(main_view, "radio_manager"):
-                is_live_playing = main_view.radio_manager.is_live_playing()
-            self.timefree_play_btn.Enable(not is_live_playing)
+            self.timefree_play_btn.Enable(True)
         if hasattr(main_view, "radio_manager"):
             main_view.radio_manager.update_timefree_command_ui()
 
@@ -99,7 +97,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 filetype=self.filetype
             )
             
-            schedule_manager.add_schedule(schedule)
+            added = schedule_manager.add_schedule(schedule)
+            if not added:
+                simpleDialog.dialog(_("情報"), _("同一番組の予約が既に存在します。"))
+                return
             self.current_schedule = schedule
             
             schedule_manager.start_monitoring()
@@ -148,6 +149,13 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             if end_dt > now:
                 simpleDialog.errorDialog("この番組はまだ放送中のため、聴き逃し配信が利用できません。")
                 return
+            if hasattr(main_view, "radio_manager") and main_view.radio_manager.is_live_playing():
+                if simpleDialog.yesNoDialog(
+                    _("確認"),
+                    _("ライブ再生を終了し、聴き逃し再生を開始しますか？"),
+                    self.wnd,
+                ) != wx.ID_YES:
+                    return
             announce = f"聴き逃し再生: {self.radioname} {title}"
             duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))
             performer = self.pfmlst[idx] if 0 <= idx < len(self.pfmlst) else ""
@@ -314,14 +322,48 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self._cleanup_dialog_resources()
         event.Skip()
 
+    def on_program_list_selection(self, event):
+        """過去番組行を選んだとき、ライブ×別局時のメニュー再開許可フラグを更新"""
+        self._notify_past_program_focus_if_applicable()
+        event.Skip()
+
+    def _notify_past_program_focus_if_applicable(self):
+        """現在フォーカスが「過去の放送済み番組」なら聴き逃しメニュー用 ACK を立てる"""
+        try:
+            idx = self.lst.GetFocusedItem()
+            if idx < 0:
+                return
+            _, start_dt, end_dt = self._get_selected_program_range()
+            now = datetime.datetime.now()
+            if start_dt > now or end_dt > now:
+                return
+            main_view = globalVars.app.hMainView
+            if not hasattr(main_view, "radio_manager"):
+                return
+            rm = main_view.radio_manager
+            rm.set_timefree_menu_live_ack(self.stid)
+            rm.update_timefree_command_ui()
+        except Exception:
+            pass
 
     def InstallControls(self):
         """コントロールを配置"""
         super().InstallControls()
 
-        self.record_btn = self.creator.button(_("録音予約(&R)"), self.onFinishButton)
-        self.timefree_play_btn = self.creator.button(_("聴き逃し再生(&P)"), self.onPlayTimeFree)
-        self.timefree_record_btn = self.creator.button(_("聴き逃し録音(&T)"), self.onRecordTimeFree)
+        self.lst.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_program_list_selection)
+        wx.CallAfter(self._notify_past_program_focus_if_applicable)
+
+        btn_creator = views.ViewCreator.ViewCreator(
+            self.viewMode,
+            self.creator.GetPanel(),
+            self.creator.GetSizer(),
+            wx.HORIZONTAL,
+            style=wx.ALL,
+            margin=5
+        )
+        self.record_btn = btn_creator.button(_("録音予約(&R)"), self.onFinishButton)
+        self.timefree_play_btn = btn_creator.button(_("聴き逃し再生(&P)"), self.onPlayTimeFree)
+        self.timefree_record_btn = btn_creator.button(_("聴き逃し録音(&T)"), self.onRecordTimeFree)
         self._update_timefree_button_label()
         self.wnd.Bind(wx.EVT_ACTIVATE, self.onDialogActivated)
 
