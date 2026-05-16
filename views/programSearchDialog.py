@@ -125,18 +125,10 @@ class ProgramSearchDialog(BaseDialog):
             wx.HORIZONTAL, 20, style=wx.EXPAND|wx.ALL, margin=20
         )
 
-        self.date_combo, date_label = date_creator.combobox(_("日付"), [], textLayout=None)
-        self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
-        scope_choices = [
-            _("未来・放送中のみ"),
-            _("全期間（過去含む）"),
-            _("日付で絞り込み"),
-        ]
-        self.search_scope_combo, _scope_label = date_creator.combobox(
-            _("検索範囲"), scope_choices, style=wx.CB_READONLY, textLayout=None
+        self.date_combo, date_label = date_creator.combobox(
+            _("日付"), [], textLayout=None, style=wx.CB_READONLY
         )
-        self.search_scope_combo.SetSelection(0)
-        self.search_scope_combo.Bind(wx.EVT_COMBOBOX, self.on_search_scope_changed)
+        self.date_combo.Bind(wx.EVT_COMBOBOX, self.onDateChanged)
 
         self.start_hour_spin, _label = date_creator.spinCtrl(_("開始時間（時）"), min=5, max=28, defaultValue=5, style=wx.SP_ARROW_KEYS, x=-1, proportion=0, margin=5,textLayout=None)
         date_creator.staticText(":")
@@ -209,7 +201,7 @@ class ProgramSearchDialog(BaseDialog):
         try:
             clutl = CalendarUtil()
             date_strings = clutl.getDateValue()
-            date_options = [_("指定なし（全日付）")]
+            date_options = []
             for ds in date_strings:
                 ymd = clutl.transform_date(ds)
                 try:
@@ -223,7 +215,7 @@ class ProgramSearchDialog(BaseDialog):
             self._apply_date_options()
 
             self.log.info(
-                "Date options aligned with program schedule (radio calendar, %s days + 指定なし)",
+                "Date options aligned with program schedule (radio calendar, %s days)",
                 len(date_strings),
             )
             for i, option in enumerate(date_options):
@@ -234,7 +226,7 @@ class ProgramSearchDialog(BaseDialog):
             try:
                 clutl = CalendarUtil()
                 date_strings = clutl.getDateValue()
-                date_options = [_("指定なし（全日付）")]
+                date_options = []
                 for ds in date_strings:
                     ymd = clutl.transform_date(ds)
                     dt = datetime.datetime.strptime(ymd, '%Y%m%d')
@@ -379,14 +371,15 @@ class ProgramSearchDialog(BaseDialog):
         # 結果を表示
         self.display_results()
     
+    def _period_scope_labels(self):
+        """単一コンボの先頭2件（日付未指定モード）。"""
+        return (_("未来・放送中のみ"), _("全期間（過去含む）"))
+
     def get_search_criteria(self):
         """検索条件を取得"""
         criteria = {}
-        scope = self.search_scope_combo.GetSelection()
-        if scope < 0:
-            scope = 0
-        SCOPE_BY_DATE = 2
-        
+        future_lbl, all_lbl = self._period_scope_labels()
+
         # 番組タイトル
         title = self.title_combo.GetValue().strip()
         if title:
@@ -409,33 +402,32 @@ class ProgramSearchDialog(BaseDialog):
         if station_name and station_name != _("指定なし"):
             criteria['station_name'] = station_name
         
-        # 日付（コンボボックスから取得）
+        # 日付／期間（単一コンボ）：先頭2件は全日付検索モード、その他は単一日付指定
         date_selection = self.date_combo.GetSelection()
+        date_text_scope = ""
         selected_date_value = None
         if date_selection >= 0:
             date_text = self.date_combo.GetString(date_selection)
+            date_text_scope = date_text
             self.log.debug(f"Selected date text: '{date_text}'")
 
-            # 「指定なし（全日付）」が選択されている場合は日付条件を追加しない
-            if date_text != _("指定なし（全日付）"):
+            if date_text not in (future_lbl, all_lbl):
                 if '(' in date_text and ')' in date_text:
                     selected_date_value = date_text.split('(')[1].split(')')[0].strip()
                 else:
                     selected_date_value = date_text.strip()
+                if (
+                    len(selected_date_value or "") != 8
+                    or not str(selected_date_value).isdigit()
+                ):
+                    simpleDialog.dialog(_("警告"), _("日付リストから日付を選んでください。"))
+                    return {}
 
-        if scope == SCOPE_BY_DATE:
-            if not selected_date_value:
-                simpleDialog.dialog(
-                    _("警告"),
-                    _("「日付で絞り込み」のときは、日付リストから日付を選んでください。"),
-                )
-                return {}
-            criteria['date'] = selected_date_value
-        elif selected_date_value:
+        if selected_date_value:
             criteria['date'] = selected_date_value
 
         if 'date' not in criteria:
-            criteria['include_past_when_no_date'] = scope == 1
+            criteria['include_past_when_no_date'] = date_text_scope == all_lbl
 
         # 時間範囲（スピンコントロールから取得）
         start_hour = self.start_hour_spin.GetValue()
@@ -576,8 +568,8 @@ class ProgramSearchDialog(BaseDialog):
 
     def _build_past_week_date_options(self):
         sample = ""
-        if self._base_date_options and len(self._base_date_options) > 1:
-            sample = self._base_date_options[1]
+        if self._base_date_options:
+            sample = self._base_date_options[0]
 
         def _format_option(date_obj):
             if "(" in sample and ")" in sample:
@@ -598,32 +590,41 @@ class ProgramSearchDialog(BaseDialog):
         return text.strip()
 
     def _apply_date_options(self):
-        items = list(self._base_date_options) if self._base_date_options else [_("指定なし（全日付）")]
+        """未来のみ／全期間の2項目＋過去1週＋番組表と同じ日付列を組み立てる。"""
+        future_lbl, all_lbl = self._period_scope_labels()
+        prefix_items = [future_lbl, all_lbl]
+
+        schedule_items = list(self._base_date_options) if self._base_date_options else []
+
+        preserved_prefix_index = None
         selected_token = None
         current_selection = self.date_combo.GetSelection()
-        if 0 <= current_selection < self.date_combo.GetCount():
-            selected_token = self._extract_date_token(self.date_combo.GetString(current_selection))
+        if self.date_combo.GetCount() > 0 and 0 <= current_selection < self.date_combo.GetCount():
+            cur_text = self.date_combo.GetString(current_selection)
+            if cur_text == future_lbl:
+                preserved_prefix_index = 0
+            elif cur_text == all_lbl:
+                preserved_prefix_index = 1
+            elif cur_text:
+                selected_token = self._extract_date_token(cur_text)
 
-        # 「日付で絞り込み」のときだけ日付リストに過去1週間を含める
-        include_past_week_dates = self.search_scope_combo.GetSelection() == 2
-        if include_past_week_dates and items:
-            past_entries = self._build_past_week_date_options()
-            items = [items[0]] + past_entries + items[1:]
+        past_entries = self._build_past_week_date_options() if schedule_items else []
+
+        items = prefix_items + past_entries + schedule_items
 
         self.date_combo.SetItems(items)
 
-        if selected_token:
+        if preserved_prefix_index is not None:
+            self.date_combo.SetSelection(preserved_prefix_index)
+        elif selected_token:
             for idx, opt in enumerate(items):
                 if self._extract_date_token(opt) == selected_token:
                     self.date_combo.SetSelection(idx)
                     break
             else:
-                self.date_combo.SetSelection(0 if items else -1)
+                self.date_combo.SetSelection(0)
         else:
-            self.date_combo.SetSelection(0 if items else -1)
-
-    def on_search_scope_changed(self, event):
-        self._apply_date_options()
+            self.date_combo.SetSelection(0)
 
     def _parse_clock_on_listing_date(self, base_date, time_str):
         if not time_str:
@@ -840,9 +841,8 @@ class ProgramSearchDialog(BaseDialog):
         self.title_combo.SetValue("")
         self.performer_combo.SetValue("")
         self.station_combo.SetSelection(0)  # 「指定なし」を選択
-        self.search_scope_combo.SetSelection(0)
         self._apply_date_options()
-        self.date_combo.SetSelection(0)  # 「指定なし（全日付）」を選択
+        self.date_combo.SetSelection(0)  # 「未来・放送中のみ」
         
         # スピンコントロールをリセット（ラジオ形式：5-29時、分は0分から）
         self.start_hour_spin.SetValue(5)

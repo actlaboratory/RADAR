@@ -114,9 +114,9 @@ class ShowSchedule(BaseDialog):
     def onTogglePastProgramDates(self, event):
         include_past = self.show_past_chk.GetValue()
         self._rebuild_date_values(include_past)
-        self.show_programlist()
+        self.show_programlist(focus_program_list=False)
 
-    def show_programlist(self, event=None):
+    def show_programlist(self, event=None, focus_program_list=True):
         self.lst.clear()
         self.dsclst.clear()
         self.tilst.clear()
@@ -150,7 +150,8 @@ class ShowSchedule(BaseDialog):
             self.stlst.append(ftl[:2]+":"+ftl[2:4])
             self.enlst.append(tol[:2]+":"+tol[2:4])
 
-        wx.CallAfter(self._ensure_first_program_row_focused)
+        if focus_program_list:
+            wx.CallAfter(self._ensure_first_program_row_focused)
 
     def _ensure_first_program_row_focused(self):
         """番組一覧の先頭行を選択し、リストにキーボードフォーカスを置く"""
