@@ -97,10 +97,11 @@ class ProgramDataCollector:
             today = datetime.datetime.now()
             start_date = today.replace(hour=0, minute=0, second=0, microsecond=0)
         
-        # 過去7日 + 今日から6日先まで（計14日、聴き逃し用の過去番組表を含む）
+        # 過去7日 + 今日から7日先まで（計15日）。
+        # 番組表はラジオ基準日から8日分表示するため、壁時計の「今日+6」より1日先までキャッシュする。
         first_day = start_date - datetime.timedelta(days=7)
         date_list = []
-        for i in range(14):
+        for i in range(15):
             target_date = first_day + datetime.timedelta(days=i)
             date_list.append(target_date.strftime('%Y%m%d'))
 

@@ -313,14 +313,14 @@ class ProgramCacheManager:
             return False
     
     def get_weekly_data_summary(self):
-        """キャッシュ対象日付帯（過去7日〜先6日）のサマリーを取得"""
+        """キャッシュ対象日付帯（過去7日〜先7日）のサマリーを取得"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
 
                 today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 week_dates = []
-                for i in range(-7, 7):
+                for i in range(-7, 8):
                     target_date = today + datetime.timedelta(days=i)
                     week_dates.append(target_date.strftime('%Y%m%d'))
                 
@@ -351,7 +351,7 @@ class ProgramCacheManager:
                 return None
     
     def is_weekly_cache_complete(self):
-        """過去7日〜先6日の各日に最低件数あるか（簡易チェック）"""
+        """過去7日〜先7日の各日に最低件数あるか（簡易チェック）"""
         try:
             summary = self.get_weekly_data_summary()
             if not summary:

@@ -20,6 +20,7 @@ from views import programmanager
 from searchHistoryManager import SearchHistoryManager
 from recorder import schedule_manager, RecordingSchedule, recorder_manager, create_recording_dir, get_file_type_from_config
 from notification_util import notify as notification_notify
+from tcutil import CalendarUtil
 
 class ProgramSearchDialog(BaseDialog):
     """番組検索ダイアログ"""
@@ -196,68 +197,43 @@ class ProgramSearchDialog(BaseDialog):
         self.result_list.Bind(wx.EVT_LIST_ITEM_DESELECTED, self.onItemDeselected)
 
     def setup_date_options(self):
-        """日付選択オプションを設定（データベースの実際の日付範囲を使用）"""
+        """日付選択を番組表と同じく、ラジオ日付(5時切替)基準の8日分に揃える"""
         try:
-            # データベースから利用可能な日付範囲を取得
-            if hasattr(self, 'cache_manager') and self.cache_manager:
-                date_range = self.cache_manager.get_available_date_range()
-                if date_range and date_range['days_available'] > 0:
-                    self.log.info(f"Available date range: {date_range['start_date']} to {date_range['end_date']}")
-                    # データベースの日付範囲を使用
-                    start_date = datetime.datetime.strptime(date_range['start_date'], '%Y%m%d')
-                    end_date = datetime.datetime.strptime(date_range['end_date'], '%Y%m%d')
-                else:
-                    # データベースにデータがない場合は今日から1週間分
-                    start_date = datetime.datetime.now()
-                    end_date = start_date + datetime.timedelta(days=6)
-                    self.log.info("No data in database, using today + 6 days")
-            else:
-                # フォールバック: 今日から1週間分
-                start_date = datetime.datetime.now()
-                end_date = start_date + datetime.timedelta(days=6)
-                self.log.info("Cache manager not available, using today + 6 days")
-            
-            # 日付オプションを作成
-            date_options = []
-            # 最初に「指定なし（全日付）」を追加
-            date_options.append(_("指定なし（全日付）"))
-            current_date = start_date
-            while current_date <= end_date:
-                # エンコーディングエラーを避けるため、英語形式で表示
+            clutl = CalendarUtil()
+            date_strings = clutl.getDateValue()
+            date_options = [_("指定なし（全日付）")]
+            for ds in date_strings:
+                ymd = clutl.transform_date(ds)
                 try:
-                    date_str = current_date.strftime('%Y/%m/%d')
-                except (ValueError, OSError):
-                    # ロケールエラーの場合は代替形式を使用
-                    date_str = f"{current_date.year:04d}/{current_date.month:02d}/{current_date.day:02d}"
-                
-                date_value = current_date.strftime('%Y%m%d')
-                date_options.append(f"{date_str} ({date_value})")
-                current_date += datetime.timedelta(days=1)
-            
+                    dt = datetime.datetime.strptime(ymd, '%Y%m%d')
+                    date_str = dt.strftime('%Y/%m/%d')
+                except ValueError:
+                    date_str = f"{ds}"
+                date_options.append(f"{date_str} ({ymd})")
+
             self._base_date_options = list(date_options)
             self._apply_date_options()
-            
-            self.log.info(f"Date options set: {len(date_options)} dates from {date_options[0]} to {date_options[-1]}")
-            
-            # 各日付オプションの詳細をログ出力
+
+            self.log.info(
+                "Date options aligned with program schedule (radio calendar, %s days + 指定なし)",
+                len(date_strings),
+            )
             for i, option in enumerate(date_options):
                 self.log.debug(f"Date option {i}: '{option}'")
-            
+
         except Exception as e:
             self.log.error(f"Failed to setup date options: {e}")
-            # フォールバック: シンプルな日付形式
             try:
-                date_options = []
-                # 最初に「指定なし（全日付）」を追加
-                date_options.append(_("指定なし（全日付）"))
-                start_date = datetime.datetime.now()
-                for i in range(7):
-                    target_date = start_date + datetime.timedelta(days=i)
-                    date_value = target_date.strftime('%Y%m%d')
-                    date_options.append(f"{target_date.strftime('%Y/%m/%d')} ({date_value})")
+                clutl = CalendarUtil()
+                date_strings = clutl.getDateValue()
+                date_options = [_("指定なし（全日付）")]
+                for ds in date_strings:
+                    ymd = clutl.transform_date(ds)
+                    dt = datetime.datetime.strptime(ymd, '%Y%m%d')
+                    date_options.append(f"{dt.strftime('%Y/%m/%d')} ({ymd})")
                 self._base_date_options = list(date_options)
                 self._apply_date_options()
-                self.log.info(f"Fallback date options set: {date_options}")
+                self.log.info("Fallback date options set via CalendarUtil")
             except Exception as e2:
                 self.log.error(f"Fallback date setup also failed: {e2}")
     
