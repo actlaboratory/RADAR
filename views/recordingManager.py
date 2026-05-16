@@ -17,6 +17,7 @@ from recorder import (
     RECORDING_STATUS_FAILED,
 )
 from notification_util import notify as notification_notify
+import simpleDialog
 
 
 class RecordingManagerDialog(BaseDialog):
@@ -102,12 +103,22 @@ class RecordingManagerDialog(BaseDialog):
         self.schedule_lst.InsertColumn(4, _("ステータス"), width=120)
         self.schedule_lst.InsertColumn(5, _("出力パス"), width=380)
 
+        tab.staticText(
+            _(
+                "「予約を取り消す」は、予約済み・録音中の予約をキャンセル済みにします。"
+                "開始時刻までは「予約を復活」で予約済みに戻せます。\n"
+                "キャンセル済み・失敗の行では同じボタンで一覧から削除します。"
+            ),
+            sizerFlag=wx.ALL | wx.EXPAND,
+            margin=10,
+        )
+
         btn_creator = views.ViewCreator.ViewCreator(self.viewMode, tab.GetPanel(), tab.GetSizer(), wx.HORIZONTAL, style=wx.ALL, margin=10)
         self.schedule_refresh_btn = btn_creator.button(_("更新(&R)"), self.onRefresh)
         btn_creator.AddSpace(-1)
-        self.schedule_cancel_btn = btn_creator.button(_("キャンセル(&C)"), self.onScheduleCancel)
-        self.schedule_remove_btn = btn_creator.button(_("削除(&D)"), self.onScheduleRemove)
-        self.schedule_clear_all_btn = btn_creator.button(_("すべて削除(&A)"), self.onScheduleClearAll)
+        self.schedule_revoke_btn = btn_creator.button(_("予約を取り消す(&C)"), self.onScheduleRevoke)
+        self.schedule_reactivate_btn = btn_creator.button(_("予約を復活(&U)"), self.onScheduleReactivate)
+        self.schedule_clear_all_btn = btn_creator.button(_("すべて一覧から削除(&A)"), self.onScheduleClearAll)
 
     def onActiveListSelected(self, event):
         self.selected_active_index = event.GetIndex()
@@ -241,19 +252,19 @@ class RecordingManagerDialog(BaseDialog):
         try:
             selected = self._get_selected_active_index()
             if selected < 0:
-                wx.MessageBox(_("録音を選択してください。"), _("エラー"), wx.OK | wx.ICON_ERROR)
+                simpleDialog.errorDialog(_("録音を選択してください。"), self.wnd)
                 return
             if selected >= len(self.active_recorders):
-                wx.MessageBox(_("選択された録音が見つかりません。"), _("エラー"), wx.OK | wx.ICON_ERROR)
+                simpleDialog.errorDialog(_("選択された録音が見つかりません。"), self.wnd)
                 return
 
             recorder, info = self.active_recorders[selected]
-            result = wx.MessageBox(
-                f"'{info}' の録音を停止しますか？",
+            result = simpleDialog.yesNoDialog(
                 _("確認"),
-                wx.YES_NO | wx.ICON_QUESTION
+                f"'{info}' の録音を停止しますか？",
+                self.wnd,
             )
-            if result == wx.YES:
+            if result == wx.ID_YES:
                 self.recorder_manager.stop_recorder(recorder)
                 notification_notify(
                     title='録音停止',
@@ -264,20 +275,20 @@ class RecordingManagerDialog(BaseDialog):
                 self.load_recordings()
         except Exception as e:
             self.log.error(f"Error stopping recording: {e}")
-            wx.MessageBox(f"録音の停止に失敗しました: {e}", _("エラー"), wx.OK | wx.ICON_ERROR)
+            simpleDialog.errorDialog(_("録音の停止に失敗しました。") + f"\n{e}", self.wnd)
 
     def onStopAll(self, event):
         """全ての録音を停止"""
         try:
             if not self.active_recorders:
-                wx.MessageBox(_("停止する録音がありません。"), _("情報"), wx.OK | wx.ICON_INFORMATION)
+                simpleDialog.dialog(_("情報"), _("停止する録音がありません。"), self.wnd)
                 return
-            result = wx.MessageBox(
-                f"全ての録音（{len(self.active_recorders)}件）を停止しますか？",
+            result = simpleDialog.yesNoDialog(
                 _("確認"),
-                wx.YES_NO | wx.ICON_QUESTION
+                f"全ての録音（{len(self.active_recorders)}件）を停止しますか？",
+                self.wnd,
             )
-            if result == wx.YES:
+            if result == wx.ID_YES:
                 self.recorder_manager.stop_all()
                 notification_notify(
                     title='録音停止',
@@ -288,7 +299,7 @@ class RecordingManagerDialog(BaseDialog):
                 self.load_recordings()
         except Exception as e:
             self.log.error(f"Error stopping all recordings: {e}")
-            wx.MessageBox(f"録音の停止に失敗しました: {e}", _("エラー"), wx.OK | wx.ICON_ERROR)
+            simpleDialog.errorDialog(_("録音の停止に失敗しました。") + f"\n{e}", self.wnd)
 
     def _get_selected_schedule(self):
         selected = self.schedule_lst.GetFirstSelected()
@@ -309,73 +320,111 @@ class RecordingManagerDialog(BaseDialog):
             return schedule
         return None
 
-    def onScheduleCancel(self, event):
-        """選択された予約をキャンセル"""
+    def onScheduleRevoke(self, event):
+        """予約済み・録音中はキャンセル済みにする。キャンセル済み・失敗なら一覧から削除する。"""
         try:
             schedule = self._get_selected_schedule()
             if schedule is None:
-                wx.MessageBox(_("予約を選択してください。"), _("エラー"), wx.OK | wx.ICON_ERROR)
+                simpleDialog.errorDialog(_("予約を選択してください。"), self.wnd)
                 return
-            if schedule.status in [RECORDING_STATUS_COMPLETED, RECORDING_STATUS_CANCELLED, RECORDING_STATUS_FAILED]:
-                wx.MessageBox(_("この予約は既に完了またはキャンセル済みです。"), _("エラー"), wx.OK | wx.ICON_ERROR)
-                return
-            result = wx.MessageBox(
-                f"'{schedule.program_title}' の録音予約をキャンセルしますか？",
-                _("確認"),
-                wx.YES_NO | wx.ICON_QUESTION
-            )
-            if result == wx.YES:
-                schedule_manager.cancel_schedule(schedule.id)
-                self.load_schedules()
-                wx.MessageBox(_("予約をキャンセルしました。"), _("完了"), wx.OK | wx.ICON_INFORMATION)
-        except Exception as e:
-            self.log.error(f"Error cancelling schedule: {e}")
-            wx.MessageBox(f"キャンセルに失敗しました: {e}", _("エラー"), wx.OK | wx.ICON_ERROR)
 
-    def onScheduleRemove(self, event):
-        """選択された予約を削除"""
+            st = schedule.status
+            if st in (RECORDING_STATUS_SCHEDULED, RECORDING_STATUS_RECORDING):
+                if st == RECORDING_STATUS_RECORDING:
+                    confirm = (
+                        f"'{schedule.program_title}' の録音を停止し、この予約をキャンセル済みにしますか？\n\n"
+                        + _("開始時刻前であれば、のちほど「予約を復活」で予約済みに戻せます。")
+                    )
+                else:
+                    confirm = (
+                        f"'{schedule.program_title}' の録音予約を取り消しますか？\n\n"
+                        + _("開始時刻までは「予約を復活」から取り消しを取りやめられます。")
+                    )
+                result = simpleDialog.yesNoDialog(_("確認"), confirm, self.wnd)
+                if result != wx.ID_YES:
+                    return
+                if not schedule_manager.cancel_schedule(schedule.id):
+                    simpleDialog.errorDialog(_("予約の取り消しに失敗しました。"), self.wnd)
+                    return
+                self.load_all_data()
+                simpleDialog.dialog(_("完了"), _("予約を取り消しました。"), self.wnd)
+
+            elif st in (RECORDING_STATUS_CANCELLED, RECORDING_STATUS_FAILED):
+                result = simpleDialog.yesNoDialog(
+                    _("確認"),
+                    f"'{schedule.program_title}' を一覧から削除しますか？\n\n"
+                    + _("予約データから行が取り除かれます。この操作は取り消せません。"),
+                    self.wnd,
+                )
+                if result != wx.ID_YES:
+                    return
+                schedule_manager.remove_schedule(schedule.id)
+                self.load_all_data()
+                simpleDialog.dialog(_("完了"), _("一覧から削除しました。"), self.wnd)
+            else:
+                simpleDialog.errorDialog(_("この予約はこの操作では処理できません。"), self.wnd)
+        except Exception as e:
+            self.log.error(f"Error in schedule revoke/remove: {e}")
+            simpleDialog.errorDialog(_("予約の処理に失敗しました。") + f"\n{e}", self.wnd)
+
+    def onScheduleReactivate(self, event):
+        """キャンセル済み・開始時刻前の予約を予約済みに戻す"""
         try:
             schedule = self._get_selected_schedule()
             if schedule is None:
-                wx.MessageBox(_("予約を選択してください。"), _("エラー"), wx.OK | wx.ICON_ERROR)
+                simpleDialog.errorDialog(_("予約を選択してください。"), self.wnd)
                 return
-            result = wx.MessageBox(
-                f"'{schedule.program_title}' の録音予約を削除しますか？\n（この操作は取り消せません）",
+            if schedule.status != RECORDING_STATUS_CANCELLED:
+                simpleDialog.errorDialog(_("キャンセル済みの予約だけ復活できます。"), self.wnd)
+                return
+            if datetime.datetime.now() >= schedule.start_time:
+                simpleDialog.errorDialog(_("開始時刻を過ぎたため、復活できません。"), self.wnd)
+                return
+
+            result = simpleDialog.yesNoDialog(
                 _("確認"),
-                wx.YES_NO | wx.ICON_WARNING
+                f"'{schedule.program_title}' を予約済みに戻しますか？",
+                self.wnd,
             )
-            if result == wx.YES:
-                schedule_manager.remove_schedule(schedule.id)
-                self.load_schedules()
-                wx.MessageBox(_("予約を削除しました。"), _("完了"), wx.OK | wx.ICON_INFORMATION)
+            if result != wx.ID_YES:
+                return
+
+            err = schedule_manager.reactivate_schedule(schedule.id)
+            if err is None:
+                self.load_all_data()
+                simpleDialog.dialog(_("完了"), _("予約を復活し、予約済みに戻しました。"), self.wnd)
+                return
+
+            err_messages = {
+                "not_found": _("対象の予約が見つかりません。"),
+                "not_cancelled": _("キャンセル済みの予約だけ復活できます。"),
+                "too_late": _("開始時刻を過ぎたため、復活できません。"),
+            }
+            simpleDialog.errorDialog(err_messages.get(err, _("復活に失敗しました。")), self.wnd)
         except Exception as e:
-            self.log.error(f"Error removing schedule: {e}")
-            wx.MessageBox(f"削除に失敗しました: {e}", _("エラー"), wx.OK | wx.ICON_ERROR)
+            self.log.error(f"Error reactivating schedule: {e}")
+            simpleDialog.errorDialog(_("復活に失敗しました。") + f"\n{e}", self.wnd)
 
     def onScheduleClearAll(self, event):
         """すべての予約を削除"""
         try:
             if not self.schedules:
-                wx.MessageBox(_("削除する予約がありません。"), _("情報"), wx.OK | wx.ICON_INFORMATION)
+                simpleDialog.dialog(_("情報"), _("削除する予約がありません。"), self.wnd)
                 return
-            result = wx.MessageBox(
-                f"すべての録音予約（{len(self.schedules)}件）を削除しますか？\n"
-                "録音中の予約はキャンセルされます。\n"
-                "（この操作は取り消せません）",
+            result = simpleDialog.yesNoDialog(
                 _("確認"),
-                wx.YES_NO | wx.ICON_WARNING
+                f"すべての録音予約（{len(self.schedules)}件）を一覧から削除しますか？\n"
+                "録音中の予約は先に中止され、その後すべての行がデータから取り除かれます。\n"
+                "（この操作は取り消せません）",
+                self.wnd,
             )
-            if result == wx.YES:
+            if result == wx.ID_YES:
                 removed_count = schedule_manager.clear_all_schedules()
                 self.load_schedules()
-                wx.MessageBox(
-                    f"すべての予約を削除しました。\n（{removed_count}件の予約を削除）",
-                    _("完了"),
-                    wx.OK | wx.ICON_INFORMATION
-                )
+                simpleDialog.dialog(_("完了"), f"すべて一覧から削除しました。\n（{removed_count}件）", self.wnd)
         except Exception as e:
             self.log.error(f"Error clearing all schedules: {e}")
-            wx.MessageBox(f"すべて削除に失敗しました: {e}", _("エラー"), wx.OK | wx.ICON_ERROR)
+            simpleDialog.errorDialog(_("すべて削除に失敗しました。") + f"\n{e}", self.wnd)
 
     def onClose(self, event):
         """ダイアログを閉じる"""

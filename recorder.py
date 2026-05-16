@@ -43,6 +43,10 @@ SCHEDULE_EXECUTION_WINDOW = 10  # 秒
 MIN_RETRY_INTERVAL = 60  # 秒
 RECORDING_END_TIME_BUFFER = 30  # 秒（ラジコの放送時刻と配信時刻のずれに対応するため、停止時刻を延長）
 
+# ffmpeg 起動検証: 入力オープン失敗などで即終了する場合はここで検出し、録音開始成功とみなさない
+RECORDER_STARTUP_MIN_STABLE_SECONDS = 2.5  # この秒数連続でプロセスが生存し、かつ致命stderrが無いことを確認
+RECORDER_STARTUP_MAX_WAIT_SECONDS = 18.0  # 遅い環境・初回バッファの最大待機
+
 # 録音ステータス定数
 RECORDING_STATUS_SCHEDULED = "scheduled"  # 予約スケジュール済み
 RECORDING_STATUS_RECORDING = "recording"  # 録音中
@@ -68,11 +72,185 @@ class Recorder:
         self.recording = False
         self._stop_event = threading.Event()
         self.last_ffmpeg_cmd = ""
-        self._stderr_lines = deque(maxlen=80)
+        self._stderr_lines = deque(maxlen=120)
         self._stderr_lock = threading.Lock()
+        self._stderr_thread = None
         self.recording_seconds = recording_seconds
         self.http_headers = dict(http_headers or {})
         self.input_options = list(input_options or [])
+
+    def _wait_stderr_drain(self, timeout=2.0):
+        """stderr 読み取りスレッドが追いつくまで待つ（プロセス終了直後の取りこぼし防止）"""
+        t = getattr(self, "_stderr_thread", None)
+        if t is not None and t.is_alive():
+            t.join(timeout=timeout)
+
+    def _read_process_stderr_chunk(self, proc, max_bytes=32768):
+        """終了後などに stderr から最大 max_bytes バイト読む（起動失敗メッセージ用）"""
+        try:
+            if proc and proc.stderr:
+                raw = proc.stderr.read(max_bytes)
+                return raw.decode(errors="replace").strip()
+        except Exception as e:
+            self.logger.debug(f"Could not read ffmpeg stderr: {e}")
+        return ""
+
+    def _dispose_failed_startup_process(self):
+        """起動失敗時に子プロセスとパイプを後片付けする"""
+        proc = self.process
+        if proc is None:
+            self.recording = False
+            return
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    try:
+                        proc.wait(timeout=2)
+                    except Exception:
+                        pass
+        except Exception as e:
+            self.logger.warning(f"dispose_failed_startup_process: {e}")
+        finally:
+            self._wait_stderr_drain(timeout=1.5)
+            for attr in ("stdin", "stdout", "stderr"):
+                pipe = getattr(proc, attr, None)
+                if pipe:
+                    try:
+                        pipe.close()
+                    except Exception:
+                        pass
+            self.process = None
+            self.recording = False
+
+    def _format_startup_failure_message(self, return_code, stderr_text):
+        """ユーザー向け・ログ向けの起動失敗メッセージ"""
+        st = stderr_text or ""
+        hint = ""
+        if "-138" in st or "Error number -138" in st:
+            hint = (
+                "\nネットワーク接続に失敗しました（タイムアウト等）。"
+                "インターネット接続・VPN・ファイアウォール・サーバー混雑を確認してください。"
+            )
+        elif "Connection refused" in st:
+            hint = "\n接続が拒否されました。"
+        elif "403" in st or "Forbidden" in st:
+            hint = "\nアクセスが拒否されている可能性があります（認証・地域制限など）。"
+        detail = st[:2000] if st else "(標準エラー出力なし)"
+        if return_code is not None:
+            head = f"録音を開始できませんでした（ffmpeg が異常終了しました）。終了コード: {return_code}"
+        else:
+            head = "録音を開始できませんでした（ffmpeg が入力ストリームを開けませんでした）。"
+        return f"{head}{hint}\n\n{detail}"
+
+    def _fatal_ffmpeg_stderr_excerpt(self):
+        """ffmpeg が致命エラーを stderr に出している場合、その内容を返す（なければ None）。"""
+        markers = (
+            "[tcp @",
+            "error opening input file",
+            "error opening input files",
+            "error opening input:",
+            "unable to open",
+            "connection timed out",
+            "connection refused",
+            "connection failed",
+            "connection to tcp://",
+            "failed:",
+            "error number",
+            "server returned 403",
+            "server returned 404",
+            "http error",
+            "invalid argument",
+            "invalid data found when processing input",
+            "no such file or directory",
+        )
+        with self._stderr_lock:
+            text = "\n".join(self._stderr_lines)
+        if not text.strip():
+            return None
+        blob = text.lower()
+        for m in markers:
+            if m in blob:
+                return text.strip()[-4000:]
+        return None
+
+    def _abort_startup_for_fatal_stderr(self):
+        """検証中に致命stderrを検出したときの後処理と例外送出"""
+        excerpt = self._fatal_ffmpeg_stderr_excerpt()
+        if excerpt is None:
+            return
+        msg = self._format_startup_failure_message(None, excerpt)
+        self.logger.error(f"FFmpeg fatal stderr during startup verification: {msg}")
+        self._dispose_failed_startup_process()
+        raise RecorderError(msg)
+
+    def _verify_process_stable_startup(self):
+        """
+        ffmpeg が TCP / 入力オープン失敗ですぐ終了するケースを検出する。
+        プロセスが RECORDER_STARTUP_MIN_STABLE_SECONDS 連続で生存していることを確認してから戻る。
+        """
+        proc = self.process
+        if proc is None:
+            raise RecorderError("録音プロセスが開始されていません。")
+
+        deadline = time.monotonic() + RECORDER_STARTUP_MAX_WAIT_SECONDS
+        stable_deadline = None
+
+        while time.monotonic() < deadline:
+            self._abort_startup_for_fatal_stderr()
+
+            code = proc.poll()
+            if code is not None:
+                self._wait_stderr_drain(timeout=2.5)
+                stderr_text = self._get_recent_stderr().strip()
+                if not stderr_text:
+                    stderr_text = self._read_process_stderr_chunk(proc)
+                if not stderr_text.strip():
+                    stderr_text = (
+                        "ffmpeg が異常終了しましたが、標準エラー出力を取得できませんでした。"
+                        "（TCP / HLS の接続に失敗した可能性があります。）"
+                    )
+                msg = self._format_startup_failure_message(code, stderr_text)
+                self.logger.error(f"FFmpeg startup failure: {msg}")
+                self._dispose_failed_startup_process()
+                raise RecorderError(msg)
+
+            # 生存中
+            now = time.monotonic()
+            if stable_deadline is None:
+                stable_deadline = now + RECORDER_STARTUP_MIN_STABLE_SECONDS
+            if now >= stable_deadline:
+                self._abort_startup_for_fatal_stderr()
+                self.logger.info(
+                    f"FFmpeg startup verified stable for {RECORDER_STARTUP_MIN_STABLE_SECONDS}s "
+                    f"(pid={proc.pid})"
+                )
+                return
+
+            time.sleep(0.1)
+
+        # 最大待機まで終了しなかった（まだ動いている）→ 致命stderrが無ければ成功とみなす
+        self._abort_startup_for_fatal_stderr()
+        code = proc.poll()
+        if code is not None:
+            self._wait_stderr_drain(timeout=2.5)
+            stderr_text = self._get_recent_stderr().strip()
+            if not stderr_text:
+                stderr_text = self._read_process_stderr_chunk(proc)
+            if not stderr_text.strip():
+                stderr_text = (
+                    "ffmpeg が異常終了しましたが、標準エラー出力を取得できませんでした。"
+                    "（TCP / HLS の接続に失敗した可能性があります。）"
+                )
+            msg = self._format_startup_failure_message(code, stderr_text)
+            self.logger.error(f"FFmpeg startup failure at deadline: {msg}")
+            self._dispose_failed_startup_process()
+            raise RecorderError(msg)
+
+        self.logger.info(f"FFmpeg startup verified still running after max wait (pid={proc.pid})")
 
     def start(self):
         """録音を開始"""
@@ -89,27 +267,39 @@ class Recorder:
             # Windows環境でffmpegプロンプトを非表示にする
             startupinfo = None
             if os.name == 'nt':  # Windows
-                import subprocess
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
-            
+
             self.process = subprocess.Popen(
-                cmd, 
-                stdin=subprocess.PIPE, 
-                stdout=subprocess.DEVNULL, 
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 startupinfo=startupinfo,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
             )
+            self.logger.info(f"FFmpeg process spawned PID: {self.process.pid}")
+
+            # stderr を検証より先に読み始める（パイプ詰まりによる偽生存を防ぎ、致命ログを検出する）
+            self._stderr_thread = threading.Thread(target=self._consume_stderr, daemon=True)
+            self._stderr_thread.start()
+            time.sleep(0.05)
+
+            self._verify_process_stable_startup()
+
+            self._abort_startup_for_fatal_stderr()
+
             self.recording = True
-            self.logger.info(f"FFmpeg process started with PID: {self.process.pid}")
-            threading.Thread(target=self._consume_stderr, daemon=True).start()
             threading.Thread(target=self._monitor, daemon=True).start()
+        except RecorderError:
+            raise
         except Exception as e:
             self.logger.error(f"Failed to start recording: {e}")
+            self._dispose_failed_startup_process()
             self._notify_error(e)
-            raise  # 例外を再投げしてRecorderManagerでキャッチできるようにする
+            raise
+
 
     def stop(self):
         """録音を安全に停止"""
@@ -232,16 +422,34 @@ class Recorder:
             os.makedirs(output_dir, exist_ok=True)
 
     def _consume_stderr(self):
-        """ffmpegのstderrを継続的に読み取り、最後の数行を保持"""
+        """ffmpeg の stderr を読む（readline 依存をやめ、\\r のみの行やバッファ分割にも対応）"""
         proc = self.process
         if not proc or not proc.stderr:
             return
+        buf = b""
         try:
             while True:
-                line = proc.stderr.readline()
-                if not line:
+                chunk = proc.stderr.read(4096)
+                if not chunk:
                     break
-                text = line.decode(errors="ignore").rstrip()
+                buf += chunk
+                parts = re.split(rb"[\r\n]+", buf)
+                buf = parts[-1]
+                for part in parts[:-1]:
+                    text = part.decode(errors="replace").strip()
+                    if text:
+                        with self._stderr_lock:
+                            self._stderr_lines.append(text)
+                # 改行が長く来ないログでも検出できるよう、バッファが膨らんだら強制フラッシュ
+                if len(buf) > 16384:
+                    spill = buf[:-4096]
+                    buf = buf[-4096:]
+                    text = spill.decode(errors="replace").strip()
+                    if text:
+                        with self._stderr_lock:
+                            self._stderr_lines.append(text)
+            if buf.strip():
+                text = buf.decode(errors="replace").strip()
                 if text:
                     with self._stderr_lock:
                         self._stderr_lines.append(text)
@@ -371,6 +579,40 @@ class Recorder:
         """録音中かどうかを返す"""
         return self.recording
 
+
+def normalize_program_title_for_dedup(title):
+    """番組名の表記ゆれを吸収して重複録音判定に使う（UI側の禁止文字処理と揃える）。"""
+    if title is None:
+        return ""
+    t = re.sub(r'[<>:"/\\|?*]', "_", str(title)).strip()
+    t = re.sub(r"\s+", " ", t)
+    return t
+
+
+def allocate_unique_output_base(output_path_without_ext, filetype, logger=None):
+    """
+    指定拡張子のファイルが既に存在する場合は _1, _2 … を付けて衝突しないベースパスを返す。
+    （別プロセスが同名ファイルを掴んでいる場合や、秒単位タイムスタンプの重複を回避）
+    """
+    if not output_path_without_ext or not str(output_path_without_ext).strip():
+        raise ValueError("allocate_unique_output_base: empty output path")
+    output_path_without_ext = os.path.normpath(output_path_without_ext)
+    ext = filetype.lower().lstrip(".")
+    candidate = output_path_without_ext
+    n = 1
+    while os.path.exists(f"{candidate}.{ext}"):
+        candidate = f"{output_path_without_ext}_{n}"
+        n += 1
+        if n > 10000:
+            raise RuntimeError("Could not allocate unique recording output path")
+    if candidate != output_path_without_ext and logger:
+        logger.info(
+            "Recording output path adjusted to avoid existing file: "
+            f"{output_path_without_ext}.{ext} -> {candidate}.{ext}"
+        )
+    return candidate
+
+
 class RecorderManager:
     """
     レコーダー管理者: レコーダーの起動・監督・エラー処理・安全な停止・状態取得
@@ -382,10 +624,22 @@ class RecorderManager:
         self.max_hours = MAX_RECORDING_HOURS
         self.last_start_error = ""
 
+    def _recorder_matches_station(self, rec_entry, station_id):
+        """放送局が一致するか。エントリに station_id があれば ID で比較し、なければ info への包含でフォールバック。"""
+        if station_id is None:
+            return False
+        entry_sid = rec_entry.get("station_id")
+        if entry_sid is not None and entry_sid != "":
+            return str(entry_sid) == str(station_id)
+        info = rec_entry.get("info") or ""
+        return station_id in info
+
     def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None, station_id=None, program_title=None, recording_seconds=None, http_headers=None, input_options=None):
         """録音を開始"""
         try:
             self.last_start_error = ""
+            output_path = allocate_unique_output_base(output_path, filetype, self.logger)
+
             def on_error(rec, error):
                 self._handle_error(rec, error, info, stream_url, output_path, end_time, filetype, recording_seconds, http_headers, input_options)
             
@@ -399,6 +653,8 @@ class RecorderManager:
                 http_headers=http_headers,
                 input_options=input_options
             )
+            recorder.start()
+
             with self.lock:
                 self.recorders.append({
                     "recorder": recorder,
@@ -413,7 +669,6 @@ class RecorderManager:
                     "http_headers": dict(http_headers or {}),
                     "input_options": list(input_options or [])
                 })
-            recorder.start()
             # 終了タイマー
             threading.Thread(target=self._schedule_stop, args=(recorder, end_time, on_complete), daemon=True).start()
             self.logger.info(f"Recorder started: {info}")
@@ -456,6 +711,8 @@ class RecorderManager:
         should_retry = False
         retry_path = output_path
         on_complete = None
+        retry_station_id = None
+        retry_program_title = None
         with self.lock:
             rec_entry = next((r for r in self.recorders if r["recorder"] == recorder), None)
             if not rec_entry:
@@ -465,7 +722,7 @@ class RecorderManager:
             retry = rec_entry["retry_count"]
             self.logger.warning(f"Recorder error (attempt {retry}): {error}")
             recorder.stop()
-            
+
             # ファイル名変更してリトライ
             if os.path.exists(f"{output_path}.{filetype}"):
                 new_path = f"{output_path}_retry{retry}"
@@ -486,6 +743,8 @@ class RecorderManager:
                 on_complete = rec_entry.get("on_complete")
                 should_retry = True
                 retry_path = new_path
+                retry_station_id = rec_entry.get("station_id")
+                retry_program_title = rec_entry.get("program_title")
             else:
                 self.logger.error(f"Recording failed after {MAX_RETRY} attempts: {info}")
                 try:
@@ -493,6 +752,10 @@ class RecorderManager:
                     self.logger.info(f"Recording failure notification sent successfully after max retries: {info}")
                 except Exception as e:
                     self.logger.error(f"Failed to send recording failure notification after max retries: {e}")
+
+            # 失敗したエントリは必ず取り除く（ゾンビ状態で局が占有されたままになるのを防ぐ）
+            self.recorders = [r for r in self.recorders if r["recorder"] != recorder]
+
         # start_recording は lock の外で実行（デッドロック防止）
         if should_retry:
             self.start_recording(
@@ -502,9 +765,11 @@ class RecorderManager:
                 end_time,
                 filetype,
                 on_complete,
+                station_id=retry_station_id,
+                program_title=retry_program_title,
                 recording_seconds=recording_seconds,
                 http_headers=http_headers,
-                input_options=input_options
+                input_options=input_options,
             )
 
     def _is_recorder_active(self, recorder):
@@ -566,12 +831,12 @@ class RecorderManager:
     def get_station_recorders(self, station_id):
         """指定された放送局の録音一覧を取得"""
         with self.lock:
-            return [r for r in self.recorders if station_id in r["info"] and self._is_recorder_active(r["recorder"])]
+            return [r for r in self.recorders if self._recorder_matches_station(r, station_id)]
 
     def is_station_recording(self, station_id):
-        """指定された放送局が録音中かどうかを判定"""
+        """指定された放送局に録音エントリがあるか（起動直後など recording フラグが未更新でも検出する）"""
         with self.lock:
-            return any(station_id in r["info"] and self._is_recorder_active(r["recorder"]) for r in self.recorders)
+            return any(self._recorder_matches_station(r, station_id) for r in self.recorders)
 
     def stop_station_recording(self, station_id):
         """指定された放送局の録音を停止"""
@@ -580,35 +845,85 @@ class RecorderManager:
             # 後ろから削除することでインデックスの問題を回避
             for i in range(len(self.recorders) - 1, -1, -1):
                 rec_entry = self.recorders[i]
-                if station_id in rec_entry["info"] and self._is_recorder_active(rec_entry["recorder"]):
+                if not self._recorder_matches_station(rec_entry, station_id):
+                    continue
+                try:
                     rec_entry["recorder"].stop()
-                    del self.recorders[i]
-                    stopped_count += 1
-                    self.logger.info(f"Stopped recording for station {station_id}: {rec_entry['info']}")
+                except Exception as e:
+                    self.logger.error(f"Error stopping recorder for station {station_id}: {e}")
+                del self.recorders[i]
+                stopped_count += 1
+                self.logger.info(f"Stopped recording for station {station_id}: {rec_entry['info']}")
+            return stopped_count
+
+    def stop_recording_for_program(self, station_id, program_title):
+        """放送局IDと番組タイトルが一致する録音を停止（予約録音の取り消しなどに使用）"""
+        if station_id is None or program_title is None:
+            return 0
+        want = normalize_program_title_for_dedup(program_title)
+        with self.lock:
+            stopped_count = 0
+            for i in range(len(self.recorders) - 1, -1, -1):
+                rec_entry = self.recorders[i]
+                if not self._recorder_matches_station(rec_entry, station_id):
+                    continue
+                if not self._is_recorder_active(rec_entry["recorder"]):
+                    continue
+                rt = rec_entry.get("program_title")
+                if rt is not None and rt != "":
+                    if normalize_program_title_for_dedup(rt) != want:
+                        continue
+                else:
+                    info_n = normalize_program_title_for_dedup(rec_entry.get("info") or "")
+                    if not want or want not in info_n:
+                        continue
+                rec_entry["recorder"].stop()
+                del self.recorders[i]
+                stopped_count += 1
+                self.logger.info(f"Stopped recording for scheduled program: {rec_entry['info']}")
             return stopped_count
 
     def is_duplicate_recording(self, station_id, program_title):
         """同じ放送局・同じ番組の重複録音をチェック"""
+        want = normalize_program_title_for_dedup(program_title)
         with self.lock:
             for rec_entry in self.recorders:
-                if (self._is_recorder_active(rec_entry["recorder"]) and 
-                    rec_entry.get("station_id") == station_id and 
-                    rec_entry.get("program_title") == program_title):
-                    return True
+                if not self._is_recorder_active(rec_entry["recorder"]):
+                    continue
+                if not self._recorder_matches_station(rec_entry, station_id):
+                    continue
+                rt = rec_entry.get("program_title")
+                if rt is not None and rt != "":
+                    if normalize_program_title_for_dedup(rt) == want:
+                        return True
+                else:
+                    info_n = normalize_program_title_for_dedup(rec_entry.get("info") or "")
+                    if want and want in info_n:
+                        return True
             return False
 
     def get_recording_info(self, station_id, program_title):
         """指定された放送局・番組の録音情報を取得"""
+        want = normalize_program_title_for_dedup(program_title)
         with self.lock:
             for rec_entry in self.recorders:
-                if (self._is_recorder_active(rec_entry["recorder"]) and 
-                    rec_entry.get("station_id") == station_id and 
-                    rec_entry.get("program_title") == program_title):
-                    return {
-                        "info": rec_entry["info"],
-                        "start_time": rec_entry.get("start_time"),
-                        "end_time": rec_entry["end_time"]
-                    }
+                if not self._is_recorder_active(rec_entry["recorder"]):
+                    continue
+                if not self._recorder_matches_station(rec_entry, station_id):
+                    continue
+                rt = rec_entry.get("program_title")
+                if rt is not None and rt != "":
+                    if normalize_program_title_for_dedup(rt) != want:
+                        continue
+                else:
+                    info_n = normalize_program_title_for_dedup(rec_entry.get("info") or "")
+                    if not want or want not in info_n:
+                        continue
+                return {
+                    "info": rec_entry["info"],
+                    "start_time": rec_entry.get("start_time"),
+                    "end_time": rec_entry["end_time"],
+                }
             return None
 
     def cleanup(self):
@@ -678,7 +993,10 @@ class RecordingSchedule:
         """実行すべきかどうかを判定"""
         if not self.enabled:
             return False
-            
+
+        if self.status != RECORDING_STATUS_SCHEDULED:
+            return False
+
         # 前回実行から1分未満なら実行しない
         if self.last_execution and (current_time - self.last_execution).total_seconds() < MIN_RETRY_INTERVAL:
             return False
@@ -750,7 +1068,7 @@ class ScheduleManager:
         return False
 
     def remove_schedule(self, schedule_id):
-        """予約を削除"""
+        """予約エントリを一覧から削除（録音の停止は行わない。キャンセル済み・失敗行の片付けに使用）"""
         with self.lock:
             self.schedules = [s for s in self.schedules if s.id != schedule_id]
         self.save_schedules()
@@ -759,16 +1077,17 @@ class ScheduleManager:
     def clear_all_schedules(self):
         """すべての予約を削除"""
         with self.lock:
-            # 録音中のスケジュールをキャンセル
-            for schedule in self.schedules:
+            # 録音中のスケジュールは録音を停止
+            for schedule in list(self.schedules):
                 if schedule.status == RECORDING_STATUS_RECORDING:
+                    self.recorder_manager.stop_recording_for_program(schedule.station_id, schedule.program_title)
                     schedule.set_status(RECORDING_STATUS_CANCELLED)
                     self.logger.info(f"Cancelled recording schedule: {schedule.program_title}")
-            
+
             # すべてのスケジュールを削除
             removed_count = len(self.schedules)
             self.schedules.clear()
-            
+
             # JSONファイルを削除
             try:
                 if os.path.exists(self.schedule_file):
@@ -778,20 +1097,51 @@ class ScheduleManager:
                 self.logger.error(f"Failed to delete schedule file: {e}")
                 # ファイル削除に失敗した場合は空のファイルを保存
                 self.save_schedules()
-            
+
             self.logger.info(f"Cleared all schedules: {removed_count} schedules removed")
             return removed_count
 
     def cancel_schedule(self, schedule_id):
-        """予約をキャンセル（ステータスを更新）"""
+        """予約をキャンセル（ステータスを更新）。録音中なら該当録音を停止する。"""
         with self.lock:
             for schedule in self.schedules:
                 if schedule.id == schedule_id:
+                    if schedule.status not in (
+                        RECORDING_STATUS_SCHEDULED,
+                        RECORDING_STATUS_RECORDING,
+                    ):
+                        return False
+                    if schedule.status == RECORDING_STATUS_RECORDING:
+                        self.recorder_manager.stop_recording_for_program(
+                            schedule.station_id, schedule.program_title
+                        )
                     schedule.set_status(RECORDING_STATUS_CANCELLED)
                     self.save_schedules()
                     self.logger.info(f"Schedule cancelled: {schedule_id}")
                     return True
         return False
+
+    def reactivate_schedule(self, schedule_id):
+        """キャンセル済みで開始時刻前の予約を予約済みに戻す。
+
+        Returns:
+            None: 成功
+            str: 失敗理由（not_found / not_cancelled / too_late）
+        """
+        with self.lock:
+            for schedule in self.schedules:
+                if schedule.id != schedule_id:
+                    continue
+                if schedule.status != RECORDING_STATUS_CANCELLED:
+                    return "not_cancelled"
+                now = datetime.datetime.now()
+                if now >= schedule.start_time:
+                    return "too_late"
+                schedule.set_status(RECORDING_STATUS_SCHEDULED)
+                self.save_schedules()
+                self.logger.info(f"Schedule reactivated: {schedule.program_title} ({schedule_id})")
+                return None
+        return "not_found"
 
     def get_schedules(self):
         """予約一覧を取得"""
@@ -882,6 +1232,15 @@ class ScheduleManager:
         # 非同期で認証と録音を実行
         def execute_async():
             try:
+                with self.lock:
+                    entry = next((s for s in self.schedules if s.id == schedule.id), None)
+                if entry is None or entry.status != RECORDING_STATUS_RECORDING:
+                    self.logger.info(
+                        "Skipping scheduled recording (removed or no longer active): "
+                        f"{schedule.program_title} ({schedule.id})"
+                    )
+                    return
+
                 # 認証済みストリームURLの取得
                 stream_url = self._get_authenticated_stream_url(schedule.station_id)
                 

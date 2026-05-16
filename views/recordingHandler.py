@@ -146,8 +146,8 @@ class RecordingHandler:
             from recorder import create_recording_dir
             dirs = create_recording_dir(station_dir, title)
             
-            # タイムスタンプを追加してファイル名重複を回避
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            # タイムスタンプを追加してファイル名重複を回避（秒以下も含める）
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             file_path = os.path.join(dirs, f"{timestamp}_{replace}")
             
             # ファイルタイプを取得（現在のメニュー選択状態から）
