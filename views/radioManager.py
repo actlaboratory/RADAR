@@ -2,6 +2,7 @@
 # ラジオ局管理モジュール
 
 import wx
+import os
 import tcutil
 import time
 import threading
@@ -15,6 +16,15 @@ import urllib
 from simpleDialog import *
 from views.mpvPlayer import MPVAudioPlayer
 from views import programmanager
+
+
+def _has_proxy_env():
+    """HTTP(S)_PROXY のいずれかがあれば True（直結 TCP 事前検査を省略）。"""
+    for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        v = os.environ.get(k)
+        if v is not None and str(v).strip():
+            return True
+    return False
 
 
 class RadioManager:
@@ -122,25 +132,32 @@ class RadioManager:
         """
         for attempt in range(max_retries):
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 parsed_url = urllib.parse.urlparse(url)
                 host = parsed_url.hostname
                 port = parsed_url.port or 443
-                sock.settimeout(timeout)
-                
-                result = sock.connect_ex((host, port))
-                sock.close()
-                
-                if result != 0:
-                    if attempt < max_retries - 1:
-                        wait_time = (attempt + 1) * 2
-                        self.log.debug(
-                            f"Connection error; retrying after {wait_time}s "
-                            f"(attempt {attempt + 1}/{max_retries})"
-                        )
-                        time.sleep(wait_time)
-                        continue
-                    return False, "接続に失敗しました。インターネットの接続状況をご確認ください。"
+
+                if not _has_proxy_env():
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(timeout)
+                    result = sock.connect_ex((host, port))
+                    sock.close()
+
+                    if result != 0:
+                        if attempt < max_retries - 1:
+                            wait_time = (attempt + 1) * 2
+                            self.log.debug(
+                                f"Connection error; retrying after {wait_time}s "
+                                f"(attempt {attempt + 1}/{max_retries})"
+                            )
+                            time.sleep(wait_time)
+                            continue
+                        return False, "接続に失敗しました。インターネットの接続状況をご確認ください。"
+                else:
+                    self.log.debug(
+                        "Skipping direct TCP precheck to %s:%s (proxy env present)",
+                        host,
+                        port,
+                    )
 
                 req = urllib.request.Request(url)
                 req.add_header('User-Agent', 'Mozilla/5.0')

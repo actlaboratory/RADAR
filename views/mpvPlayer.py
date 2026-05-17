@@ -10,6 +10,55 @@ import constants
 import globalVars
 from views.audio_output_devices import getDeviceList
 
+
+def _first_nonempty(environ, *keys):
+    for k in keys:
+        v = environ.get(k)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
+def _norm_proxy(value):
+    """手動設定の「host:port」を http:// で補完。Windows IE 複合表記は改変しない。"""
+    if not value or not str(value).strip():
+        return ""
+    v = str(value).strip()
+    if "://" in v:
+        return v
+    if ";" in v and "=" in v:
+        return v
+    return "http://" + v
+
+
+def _mpv_proxy_url():
+    """HTTPS ストリーム想定で mpv --http-proxy に渡す URL。"""
+    val = _first_nonempty(
+        os.environ, "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"
+    )
+    return _norm_proxy(val) if val else ""
+
+
+def _spawn_proxy_env():
+    """子プロセス向けにプロキシ環境変数の大小文字とスキームを揃えた env。"""
+    env = os.environ.copy()
+    for upper, lower in (
+        ("HTTP_PROXY", "http_proxy"),
+        ("HTTPS_PROXY", "https_proxy"),
+    ):
+        val = _first_nonempty(env, upper, lower)
+        if not val:
+            continue
+        norm = _norm_proxy(val)
+        if norm:
+            env[upper] = norm
+            env[lower] = norm
+    no = _first_nonempty(env, "NO_PROXY", "no_proxy")
+    if no:
+        env["NO_PROXY"] = env["no_proxy"] = no
+    return env
+
+
 try:
     from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
     HAS_PYCAW = True
@@ -166,6 +215,9 @@ class MPVAudioPlayer:
             header_str = ",".join([f"{k}: {v}" for k, v in self._http_headers.items() if v])
             if header_str:
                 cmd.insert(-1, f"--http-header-fields={header_str}")
+        proxy_url = _mpv_proxy_url()
+        if proxy_url:
+            cmd.insert(-1, f"--http-proxy={proxy_url}")
         if self._ipc_pipe_name:
             cmd.insert(-1, f"--input-ipc-server={self._ipc_pipe_path()}")
         cmd.insert(-1, f"--volume={int(self._volume)}")
@@ -196,6 +248,7 @@ class MPVAudioPlayer:
                 stderr=subprocess.PIPE,
                 startupinfo=startupinfo,
                 creationflags=creationflags,
+                env=_spawn_proxy_env(),
             )
         except Exception as e:
             self._last_error = str(e)

@@ -26,6 +26,44 @@ import queue
 import simpleDialog
 
 
+def _first_nonempty(environ, *keys):
+    for k in keys:
+        v = environ.get(k)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
+def _norm_proxy(value):
+    if not value or not str(value).strip():
+        return ""
+    v = str(value).strip()
+    if "://" in v:
+        return v
+    if ";" in v and "=" in v:
+        return v
+    return "http://" + v
+
+
+def _spawn_proxy_env():
+    env = os.environ.copy()
+    for upper, lower in (
+        ("HTTP_PROXY", "http_proxy"),
+        ("HTTPS_PROXY", "https_proxy"),
+    ):
+        val = _first_nonempty(env, upper, lower)
+        if not val:
+            continue
+        norm = _norm_proxy(val)
+        if norm:
+            env[upper] = norm
+            env[lower] = norm
+    no = _first_nonempty(env, "NO_PROXY", "no_proxy")
+    if no:
+        env["NO_PROXY"] = env["no_proxy"] = no
+    return env
+
+
 logLevelSelection = {
     "50":"fatal",
     "40":"error",
@@ -278,6 +316,7 @@ class Recorder:
                 stderr=subprocess.PIPE,
                 startupinfo=startupinfo,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                env=_spawn_proxy_env(),
             )
             self.logger.info(f"FFmpeg process spawned PID: {self.process.pid}")
 
