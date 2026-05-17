@@ -70,7 +70,13 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         event.Skip()
 
     def _start_live_remainder_recording(self, program_title, start_dt, end_dt):
-        """放送中の番組を、終了時刻までライブストリームで録音する"""
+        """放送中の番組を、終了時刻までライブストリームで録音する。
+
+        Returns:
+            True: 録音を開始した（呼び出し側はダイアログを閉じてよい）
+            False: 開始に失敗した
+            None: 同一番組の録音が既にあったため停止のみ行った（エラーではない）
+        """
         current = datetime.datetime.now()
         if current >= end_dt:
             simpleDialog.errorDialog(_("この番組はすでに終了しています。"))
@@ -81,18 +87,11 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             simpleDialog.errorDialog(_("番組タイトルを取得できませんでした。"))
             return False
 
-        if recorder_manager.is_duplicate_recording(self.stid, safe_title):
-            station_name = self.radioname
-            existing_info = recorder_manager.get_recording_info(self.stid, safe_title)
-            if existing_info:
-                start_time_str = datetime.datetime.fromtimestamp(existing_info["start_time"]).strftime("%H:%M")
-                error_message = (
-                    f"同じ番組の録音が既に開始されています。\n\n放送局: {station_name}\n番組: {safe_title}\n開始時刻: {start_time_str}"
-                )
-            else:
-                error_message = f"同じ番組の録音が既に開始されています。\n\n放送局: {station_name}\n番組: {safe_title}"
-            simpleDialog.errorDialog(error_message)
-            return False
+        rh = getattr(globalVars.app.hMainView, "recording_handler", None)
+        if rh and rh.stop_duplicate_program_recording_toggle(
+            self.stid, safe_title, announce_station_name=self.radioname
+        ):
+            return None
 
         try:
             stream_url = self.progs.get_authenticated_stream_url(self.stid)
@@ -175,7 +174,8 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 return
 
             if start_dt <= current < end_dt:
-                if self._start_live_remainder_recording(program_title, start_dt, end_dt):
+                result = self._start_live_remainder_recording(program_title, start_dt, end_dt)
+                if result is True:
                     self.Destroy()
                 return
             
@@ -318,6 +318,12 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 return
             if end_dt > now:
                 simpleDialog.errorDialog("この番組はまだ放送中のため、聴き逃し録音は開始できません。")
+                return
+
+            rh = getattr(globalVars.app.hMainView, "recording_handler", None)
+            if rh and rh.stop_duplicate_program_recording_toggle(
+                self.stid, title, announce_station_name=self.radioname
+            ):
                 return
 
             duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))

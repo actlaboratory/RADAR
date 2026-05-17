@@ -89,6 +89,41 @@ class RecordingHandler:
         filetype = self._filetype_from_menu_id(selected)
         self.log.info(f"Recording file type changed to: {filetype}")
 
+    def stop_duplicate_program_recording_toggle(self, station_id, program_title, *, announce_station_name=None):
+        """同一放送局・同一番組の録音が進行中なら停止する（ライブ・聴き逃し共通のトグル）。
+
+        Returns:
+            True: 重複があり処理を終えた（停止した、または停止失敗でエラーを表示した）。呼び出し側は新規録音を始めないこと。
+            False: 重複録音はなかった。
+        """
+        from recorder import recorder_manager
+
+        if not recorder_manager.is_duplicate_recording(station_id, program_title):
+            return False
+        station_name = announce_station_name or self.parent.radio_manager.stid.get(station_id, station_id)
+        self.log.warning(f"Duplicate recording detected, stopping: {station_name} - {program_title}")
+        stopped = recorder_manager.stop_recording_for_program(station_id, program_title)
+        if stopped > 0:
+            self.log.info(f"Stopped duplicate recording: {station_name} - {program_title}")
+            try:
+                self.parent.app.say(f"録音停止: {station_name} {program_title}", interrupt=True)
+            except Exception as e:
+                self.log.error(f"Failed to announce recording stop: {e}")
+            try:
+                notification_notify(
+                    title=_("録音停止"),
+                    message=_("録音を停止しました。") + f"\n{station_name} / {program_title}",
+                    app_name="rpb",
+                    timeout=10,
+                )
+            except Exception as e:
+                self.log.error(f"Failed to send recording stop notification: {e}")
+            self._update_recording_menu_for_station(station_id)
+            return True
+        self.log.warning("Duplicate indicated but stop_recording_for_program stopped 0")
+        errorDialog(_("録音の停止に失敗しました。"))
+        return True
+
     def record_immediately(self, event):
         """録音の開始/停止を処理するメソッド"""
         if self.events.current_selected_station_id is None:
@@ -117,19 +152,7 @@ class RecordingHandler:
                 title = re.sub(r'[<>:"/\\|?*]', '_', title)
                 title = title.strip()
 
-            # 重複録音チェック
-            if recorder_manager.is_duplicate_recording(self.events.current_selected_station_id, title):
-                self.log.warning(f"Duplicate recording detected: {self.parent.radio_manager.stid[self.events.current_selected_station_id]} - {title}")
-                station_name = self.parent.radio_manager.stid[self.events.current_selected_station_id]
-                existing_info = recorder_manager.get_recording_info(self.events.current_selected_station_id, title)
-                
-                if existing_info:
-                    start_time_str = datetime.datetime.fromtimestamp(existing_info["start_time"]).strftime("%H:%M")
-                    error_message = f"同じ番組の録音が既に開始されています。\n\n放送局: {station_name}\n番組: {title}\n開始時刻: {start_time_str}"
-                else:
-                    error_message = f"同じ番組の録音が既に開始されています。\n\n放送局: {station_name}\n番組: {title}"
-                
-                errorDialog(_(error_message))
+            if self.stop_duplicate_program_recording_toggle(self.events.current_selected_station_id, title):
                 return
 
             # ストリームURLの取得

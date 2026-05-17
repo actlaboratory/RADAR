@@ -783,6 +783,12 @@ class ProgramSearchDialog(BaseDialog):
             progs = getattr(globalVars.app.hMainView, "progs", None) or programmanager.ProgramManager()
             title = program.get("title", "")
             station_name = program.get("station_name", "")
+            rh = getattr(globalVars.app.hMainView, "recording_handler", None)
+            if rh and rh.stop_duplicate_program_recording_toggle(
+                stid, title, announce_station_name=station_name or None
+            ):
+                return
+
             duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))
             stream_url, headers = progs.get_timefree_recording_source(stid, start_dt, end_dt)
             filetype = get_file_type_from_config()
