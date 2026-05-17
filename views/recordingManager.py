@@ -41,7 +41,6 @@ class RecordingManagerDialog(BaseDialog):
         super().Initialize(globalVars.app.hMainView.hFrame, _("録音管理"))
         self.InstallControls()
         self.load_all_data()
-        self.wnd.SetEscapeId(wx.ID_CANCEL)
 
         # 自動更新タイマーを開始（5秒ごと）
         self.timer = wx.Timer()
