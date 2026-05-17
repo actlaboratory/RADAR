@@ -557,15 +557,28 @@ class RadioManager:
 
     def get_latest_programList(self, progs):
         """番組リストを最新に更新"""
+        was_displaying = self.events.displaying
         self.tree.DeleteAllItems()
-        # 放送局リスト更新時は番組情報UIを破棄し、メニューも実行不可にする。
-        # 既に非表示/未生成の場合でも同じ処理に統一して状態不整合を防ぐ。
+        # 放送局リスト更新時は番組情報UIを一旦破棄し、メニューを一時的に無効にする。
         self.parent.program_info_handler.destroy_program_info_ui(disable_menu=True)
-        self.events.displaying = False
         self.creator.GetSizer().Layout()
         self.areaDetermination(progs)
         self.setupradio()
         self.setRadioList()
+        self._sync_program_info_menu_after_station_list_reload(was_displaying)
+
+    def _sync_program_info_menu_after_station_list_reload(self, was_displaying):
+        """放送局一覧の再構築後、番組情報の表示設定とメニューを整合させる"""
+        handler = self.parent.program_info_handler
+        menu = self.parent.menu
+        if was_displaying:
+            menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示(&H)"))
+            handler.ensure_program_info_ui()
+            handler._set_program_info_menu_enabled(True)
+            handler.get_latest_info()
+        else:
+            menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示(&P)"))
+            handler._set_program_info_menu_enabled(True)
 
     def exit(self):
         """終了処理"""

@@ -47,7 +47,6 @@ class RecordingHandler:
             self.app.config["record"]["check_menu"] = check_menu
         
         self.parent.menu.hRecordingFileTypeMenu.Check(menu_id, check_menu)
-        self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), False)
         self._update_schedule_menu_status()
 
     def _start_schedule_monitoring(self):
