@@ -789,8 +789,7 @@ class ProgramSearchDialog(BaseDialog):
             ):
                 return
 
-            duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))
-            stream_url, headers = progs.get_timefree_recording_source(stid, start_dt, end_dt)
+            segments = progs.get_timefree_recording_segments(stid, start_dt, end_dt)
             filetype = get_file_type_from_config()
             safe_title = re.sub(r'[<>:"/\\|?*]', "_", title).strip()
             replace = safe_title.replace(" ", "-")
@@ -799,17 +798,16 @@ class ProgramSearchDialog(BaseDialog):
             timestamp = start_dt.strftime("%Y%m%d_%H%M%S")
             output_path = os.path.join(dirs, f"{timestamp}_{replace}")
             info = f"{station_name} {title}"
-            end_time = time.time() + duration_sec + 30
-            rec = recorder_manager.start_recording(
-                stream_url,
+            total_audio_sec = sum(s[2] for s in segments)
+            end_time = time.time() + total_audio_sec + 600 + len(segments) * 60
+            rec = recorder_manager.start_timefree_recording_segments(
+                segments,
                 output_path,
                 info,
                 end_time,
                 filetype,
                 station_id=stid,
                 program_title=title,
-                recording_seconds=duration_sec,
-                http_headers=headers,
                 input_options=["-http_seekable", "0", "-seekable", "0"],
             )
             if rec:

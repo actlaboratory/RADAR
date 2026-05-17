@@ -22,6 +22,7 @@ from collections import deque
 from accessible_output2.outputs.base import OutputError
 from concurrent.futures import ThreadPoolExecutor
 import queue
+import tempfile
 
 import simpleDialog
 
@@ -79,11 +80,14 @@ MAX_RECORDING_HOURS = 8
 SCHEDULE_CHECK_INTERVAL = 5  # 秒
 SCHEDULE_EXECUTION_WINDOW = 10  # 秒
 MIN_RETRY_INTERVAL = 60  # 秒
-RECORDING_END_TIME_BUFFER = 30  # 秒（ラジコの放送時刻と配信時刻のずれに対応するため、停止時刻を延長）
+RECORDING_END_TIME_BUFFER = 30  # 秒（ラジコの放送時刻と配信時刻のずれに対応するため、停止時刻を延長する）
 
 # ffmpeg 起動検証: 入力オープン失敗などで即終了する場合はここで検出し、録音開始成功とみなさない
 RECORDER_STARTUP_MIN_STABLE_SECONDS = 2.5  # この秒数連続でプロセスが生存し、かつ致命stderrが無いことを確認
 RECORDER_STARTUP_MAX_WAIT_SECONDS = 18.0  # 遅い環境・初回バッファの最大待機
+
+# 予約録音以外（聴き逃し・-t 指定の即時録音など）の完了履歴件数上限。「完了した録音」タブ用
+MAX_MANUAL_COMPLETED_RECORDINGS = 300
 
 # 録音ステータス定数
 RECORDING_STATUS_SCHEDULED = "scheduled"  # 予約スケジュール済み
@@ -96,15 +100,33 @@ class RecorderError(Exception):
     """録音関連のエラー"""
     pass
 
+
+class RecordingCancelledError(RecorderError):
+    """ユーザー操作などによる録音中断（失敗ではない）"""
+    pass
+
+
 class Recorder:
     """
     レコーダー: 指定URLのストリームを指定パスに保存。エラー時はコールバックで管理者に通知。
     """
-    def __init__(self, stream_url, output_path, filetype, on_error=None, logger=None, recording_seconds=None, http_headers=None, input_options=None):
+    def __init__(
+        self,
+        stream_url,
+        output_path,
+        filetype,
+        on_error=None,
+        logger=None,
+        recording_seconds=None,
+        http_headers=None,
+        input_options=None,
+        on_success=None,
+    ):
         self.stream_url = stream_url
         self.output_path = output_path
         self.filetype = filetype
         self.on_error = on_error
+        self.on_success = on_success
         self.logger = logger or getLogger("recorder")
         self.process = None
         self.recording = False
@@ -404,6 +426,11 @@ class Recorder:
                     if proc.returncode == 0 and self.recording_seconds:
                         # -t で予定終了した場合
                         self.logger.info(f"Recording process finished by duration limit: {self.output_path}.{self.filetype}")
+                        if self.on_success:
+                            try:
+                                self.on_success(self)
+                            except Exception as cb_e:
+                                self.logger.error(f"on_success callback failed: {cb_e}")
                         break
                     else:
                         # 異常終了
@@ -619,6 +646,233 @@ class Recorder:
         return self.recording
 
 
+def _ffmpeg_header_option(headers):
+    if not headers:
+        return []
+    lines = [f"{k}: {v}" for k, v in dict(headers).items() if v]
+    if not lines:
+        return []
+    return ["-headers", "\r\n".join(lines) + "\r\n"]
+
+
+def _ffmpeg_output_quality_args(filetype):
+    if filetype == "wav":
+        return ["-acodec", "pcm_s24le", "-ar", "48000", "-ac", "2"]
+    if filetype == "mp3":
+        return ["-acodec", "libmp3lame", "-b:a", "192k", "-ar", "44100", "-ac", "2"]
+    if filetype == "m4a":
+        return ["-acodec", "copy", "-bsf:a", "aac_adtstoasc"]
+    return ["-acodec", "copy"]
+
+
+class TimefreeChunkedRecordingHandle:
+    """
+    聴き逃し（playlist_create_url）の l<=300 秒制限に対応する分割取得 + concat。
+    中間は常に AAC コピー（m4a）で結合し、最後にユーザー指定形式へ変換する。
+    """
+
+    def __init__(self, manager, segments, output_path, filetype, input_options, logger, info):
+        self.manager = manager
+        self.segments = segments
+        self.output_path = output_path
+        self.filetype = (filetype or "mp3").lower().lstrip(".")
+        self.input_options = list(input_options or [])
+        self.logger = logger or getLogger("recorder")
+        self.info = info
+        self._stop = threading.Event()
+        self._thread = None
+        self._proc = None
+        self._proc_lock = threading.Lock()
+        self._done = False
+
+    def is_recording(self):
+        if self._done:
+            return False
+        t = self._thread
+        return bool(t and t.is_alive() and not self._stop.is_set())
+
+    def start(self):
+        self._started_at = time.time()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        with self._proc_lock:
+            p = self._proc
+        if p and p.poll() is None:
+            try:
+                if p.stdin:
+                    try:
+                        p.stdin.write(b"q\n")
+                        p.stdin.flush()
+                    except Exception:
+                        pass
+                    finally:
+                        try:
+                            p.stdin.close()
+                        except Exception:
+                            pass
+                p.wait(timeout=4)
+            except Exception:
+                try:
+                    p.terminate()
+                    p.wait(timeout=3)
+                except Exception:
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+        if self._thread:
+            self._thread.join(timeout=20)
+
+    def _popen_ffmpeg(self, cmd):
+        startupinfo = None
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+        return subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            startupinfo=startupinfo,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            env=_spawn_proxy_env(),
+        )
+
+    def _run_ffmpeg(self, cmd):
+        proc = self._popen_ffmpeg(cmd)
+        with self._proc_lock:
+            self._proc = proc
+        try:
+            _, err_b = proc.communicate()
+            err = (err_b or b"").decode(errors="replace")
+            if proc.returncode != 0:
+                if self._stop.is_set():
+                    raise RecordingCancelledError("聴き逃し録音が中断されました。")
+                raise RecorderError(
+                    f"ffmpeg failed (exit {proc.returncode}): {(err or '').strip()[-2000:]}"
+                )
+        finally:
+            with self._proc_lock:
+                self._proc = None
+
+    def _run(self):
+        tmp = None
+        try:
+            tmp = tempfile.mkdtemp(prefix="radar_tf_")
+            probe = Recorder("", "", "m4a", logger=self.logger)
+            ffmpeg_path = probe._get_ffmpeg_path()
+            chunk_paths = []
+            for i, (url, hdr, sec) in enumerate(self.segments):
+                if self._stop.is_set():
+                    raise RecordingCancelledError("聴き逃し録音が中断されました。")
+                part = os.path.join(tmp, f"part{i:04d}.m4a")
+                cmd = [
+                    ffmpeg_path,
+                    "-hide_banner",
+                    "-nostats",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-fflags",
+                    "+discardcorrupt",
+                ]
+                cmd.extend(_ffmpeg_header_option(hdr))
+                cmd.extend(self.input_options)
+                cmd.extend([
+                    "-i",
+                    url,
+                    "-t",
+                    str(int(sec)),
+                    "-vn",
+                    "-acodec",
+                    "copy",
+                    "-bsf:a",
+                    "aac_adtstoasc",
+                    part,
+                ])
+                self.logger.info("timefree chunk %s/%s (%ss)", i + 1, len(self.segments), sec)
+                self._run_ffmpeg(cmd)
+                chunk_paths.append(part)
+            if self._stop.is_set():
+                raise RecordingCancelledError("聴き逃し録音が中断されました。")
+            list_path = os.path.join(tmp, "concat.txt")
+            with open(list_path, "w", encoding="utf-8") as f:
+                for pth in chunk_paths:
+                    ap = os.path.abspath(pth).replace("\\", "/").replace("'", "'\\''")
+                    f.write(f"file '{ap}'\n")
+            merged = os.path.join(tmp, "merged.m4a")
+            concat_cmd = [
+                ffmpeg_path,
+                "-hide_banner",
+                "-nostats",
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                list_path,
+                "-c",
+                "copy",
+                merged,
+            ]
+            self._run_ffmpeg(concat_cmd)
+            final = f"{self.output_path}.{self.filetype}"
+            if self.filetype == "m4a":
+                if os.path.exists(final):
+                    os.remove(final)
+                shutil.move(merged, final)
+            else:
+                transcode_cmd = [
+                    ffmpeg_path,
+                    "-hide_banner",
+                    "-nostats",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    merged,
+                ]
+                transcode_cmd.extend(_ffmpeg_output_quality_args(self.filetype))
+                transcode_cmd.append(final)
+                self._run_ffmpeg(transcode_cmd)
+            self.logger.info("Timefree chunked recording completed: %s", final)
+            self.manager.append_manual_completed_recording(
+                self.info,
+                self.output_path,
+                self.filetype,
+                getattr(self, "_started_at", time.time()),
+                time.time(),
+            )
+        except RecordingCancelledError as e:
+            self.logger.info("Timefree chunked recording cancelled: %s", e)
+        except Exception as e:
+            self.logger.error("Timefree chunked recording failed: %s", e)
+            try:
+                notification_notify(
+                    title="録音失敗",
+                    message=f"{self.info} の聴き逃し録音に失敗しました。",
+                    app_name="rpb",
+                    timeout=10,
+                )
+            except Exception:
+                pass
+        finally:
+            if tmp:
+                shutil.rmtree(tmp, ignore_errors=True)
+            with self.manager.lock:
+                self.manager.recorders = [
+                    r for r in self.manager.recorders if r["recorder"] is not self
+                ]
+            self._done = True
+
+
 def normalize_program_title_for_dedup(title):
     """番組名の表記ゆれを吸収して重複録音判定に使う（UI側の禁止文字処理と揃える）。"""
     if title is None:
@@ -662,6 +916,25 @@ class RecorderManager:
         self.lock = threading.Lock()
         self.max_hours = MAX_RECORDING_HOURS
         self.last_start_error = ""
+        self.manual_completed_recordings = []
+
+    def append_manual_completed_recording(self, info, output_path, filetype, start_ts, end_ts=None):
+        """予約録音以外で正常完了した録音を「完了した録音」用に記録する。"""
+        entry = {
+            "info": info or "",
+            "output_path": output_path,
+            "filetype": (filetype or "mp3").lower().lstrip("."),
+            "start_time": float(start_ts),
+            "end_time": float(end_ts if end_ts is not None else time.time()),
+        }
+        with self.lock:
+            self.manual_completed_recordings.insert(0, entry)
+            if len(self.manual_completed_recordings) > MAX_MANUAL_COMPLETED_RECORDINGS:
+                self.manual_completed_recordings = self.manual_completed_recordings[:MAX_MANUAL_COMPLETED_RECORDINGS]
+
+    def get_manual_completed_recordings(self):
+        with self.lock:
+            return [dict(x) for x in self.manual_completed_recordings]
 
     def _recorder_matches_station(self, rec_entry, station_id):
         """放送局が一致するか。エントリに station_id があれば ID で比較し、なければ info への包含でフォールバック。"""
@@ -681,7 +954,18 @@ class RecorderManager:
 
             def on_error(rec, error):
                 self._handle_error(rec, error, info, stream_url, output_path, end_time, filetype, recording_seconds, http_headers, input_options)
-            
+
+            start_ts = time.time()
+
+            def on_success(rec):
+                self.append_manual_completed_recording(
+                    info,
+                    rec.output_path,
+                    rec.filetype,
+                    start_ts,
+                    time.time(),
+                )
+
             recorder = Recorder(
                 stream_url,
                 output_path,
@@ -690,7 +974,8 @@ class RecorderManager:
                 logger=self.logger,
                 recording_seconds=recording_seconds,
                 http_headers=http_headers,
-                input_options=input_options
+                input_options=input_options,
+                on_success=on_success,
             )
             recorder.start()
 
@@ -715,6 +1000,74 @@ class RecorderManager:
         except Exception as e:
             self.last_start_error = str(e)
             self.logger.error(f"Failed to start recording: {e}")
+            return None
+
+    def start_timefree_recording_segments(
+        self,
+        segments,
+        output_path,
+        info,
+        end_time,
+        filetype="mp3",
+        station_id=None,
+        program_title=None,
+        input_options=None,
+    ):
+        """聴き逃し録音: 単一セグメントは通常 Recorder、複数は 300 秒単位の分割 + concat。"""
+        if not segments:
+            self.last_start_error = "聴き逃し録音のセグメントがありません。"
+            return None
+        if len(segments) == 1:
+            url, hdr, sec = segments[0]
+            return self.start_recording(
+                url,
+                output_path,
+                info,
+                end_time,
+                filetype,
+                station_id=station_id,
+                program_title=program_title,
+                recording_seconds=sec,
+                http_headers=hdr,
+                input_options=input_options,
+            )
+        try:
+            self.last_start_error = ""
+            output_path = allocate_unique_output_base(output_path, filetype, self.logger)
+            handle = TimefreeChunkedRecordingHandle(
+                self,
+                segments,
+                output_path,
+                filetype,
+                input_options,
+                self.logger,
+                info,
+            )
+            handle.start()
+            with self.lock:
+                self.recorders.append({
+                    "recorder": handle,
+                    "info": info,
+                    "retry_count": 0,
+                    "end_time": end_time,
+                    "on_complete": None,
+                    "station_id": station_id,
+                    "program_title": program_title,
+                    "start_time": time.time(),
+                    "recording_seconds": sum(s[2] for s in segments),
+                    "http_headers": {},
+                    "input_options": list(input_options or []),
+                })
+            threading.Thread(
+                target=self._schedule_stop,
+                args=(handle, end_time, None),
+                daemon=True,
+            ).start()
+            self.logger.info(f"Timefree chunked recorder started: {info} ({len(segments)} segments)")
+            return handle
+        except Exception as e:
+            self.last_start_error = str(e)
+            self.logger.error(f"Failed to start timefree chunked recording: {e}")
             return None
 
     def get_last_start_error(self):

@@ -4,6 +4,7 @@
 
 import wx
 import datetime
+import os
 from logging import getLogger
 from views.baseDialog import *
 import views.ViewCreator
@@ -183,16 +184,47 @@ class RecordingManagerDialog(BaseDialog):
     def _load_completed_recordings(self):
         self.completed_lst.DeleteAllItems()
         schedules = schedule_manager.get_schedules()
-        completed = [s for s in schedules if s.status == RECORDING_STATUS_COMPLETED]
-        for idx, schedule in enumerate(completed):
-            start_time_str = schedule.start_time.strftime("%Y-%m-%d %H:%M")
-            end_time_str = schedule.end_time.strftime("%Y-%m-%d %H:%M")
-            file_name = f"{schedule.output_path}.{schedule.filetype}".split("\\")[-1]
-            self._set_list_row(
-                self.completed_lst,
-                idx,
-                (schedule.station_name, schedule.program_title, start_time_str, end_time_str, file_name),
+        completed_schedules = [s for s in schedules if s.status == RECORDING_STATUS_COMPLETED]
+        rows = []
+        for schedule in completed_schedules:
+            file_name = os.path.basename(f"{schedule.output_path}.{schedule.filetype}")
+            rows.append(
+                (
+                    schedule.end_time,
+                    (
+                        schedule.station_name,
+                        schedule.program_title,
+                        schedule.start_time.strftime("%Y-%m-%d %H:%M"),
+                        schedule.end_time.strftime("%Y-%m-%d %H:%M"),
+                        file_name,
+                    ),
+                )
             )
+        for m in recorder_manager.get_manual_completed_recordings():
+            parts = (m.get("info") or "").split(" ", 1)
+            station_name = parts[0] if parts else _("不明")
+            program_title = parts[1] if len(parts) > 1 else _("不明")
+            try:
+                st = datetime.datetime.fromtimestamp(m["start_time"])
+                et = datetime.datetime.fromtimestamp(m["end_time"])
+            except (TypeError, ValueError, OSError):
+                continue
+            file_name = os.path.basename(f"{m['output_path']}.{m['filetype']}")
+            rows.append(
+                (
+                    et,
+                    (
+                        station_name,
+                        program_title,
+                        st.strftime("%Y-%m-%d %H:%M"),
+                        et.strftime("%Y-%m-%d %H:%M"),
+                        file_name,
+                    ),
+                )
+            )
+        rows.sort(key=lambda x: x[0], reverse=True)
+        for idx, (_, vals) in enumerate(rows):
+            self._set_list_row(self.completed_lst, idx, vals)
 
     def load_schedules(self):
         """予約一覧を読み込み"""

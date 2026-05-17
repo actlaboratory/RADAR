@@ -103,23 +103,34 @@ class ProgramManager:
             "X-Radiko-AreaId": self.area_id,
         }
 
-    def get_timefree_recording_source(self, station_id, ft_dt, to_dt):
-        """タイムフリー録音用 URL と必須ヘッダーを返す"""
+    def get_timefree_recording_segments(self, station_id, ft_dt, to_dt):
+        """タイムフリー録音用セグメント (url, headers, duration_sec) のリスト。
+
+        radiko 側の制約で playlist_create_url の l は最大 300 秒のため、
+        ts API が使えない長時間番組は複数セグメントに分割する。
+        """
         self.refresh_auth_session()
         ft = self._format_radiko_time(ft_dt)
         to = self._format_radiko_time(to_dt)
-        duration_sec = int(max(15, (to_dt - ft_dt).total_seconds()))
-        l_value = min(duration_sec, 8 * 3600)
+        total_sec = int(max(1, (to_dt - ft_dt).total_seconds()))
         try:
             chunklist_url = self._resolve_timefree_chunklist_url(station_id, ft, to)
-            return chunklist_url, {"X-Radiko-AuthToken": self.token}
+            return [(chunklist_url, {"X-Radiko-AuthToken": self.token}, total_sec)]
         except Exception as e:
-            self.log.warning(f"timefree ts API failed, fallback to playlist_create_url(type=c): {e}")
-            fallback_url = self._build_timefree_playlist_create_url(station_id, ft, to, stream_type="c", l_value=l_value)
-            return fallback_url, {
-                "X-Radiko-AuthToken": self.token,
-                "X-Radiko-AreaId": self.area_id,
-            }
+            self.log.warning(
+                "timefree ts API failed, using playlist_create_url in chunks (l<=300s): %s",
+                e,
+            )
+            return self._build_timefree_playlist_recording_segments(station_id, ft_dt, to_dt)
+
+    def get_timefree_recording_source(self, station_id, ft_dt, to_dt):
+        """タイムフリー録音用 URL（単一セグメント時のみ）。長時間は get_timefree_recording_segments を使う。"""
+        segments = self.get_timefree_recording_segments(station_id, ft_dt, to_dt)
+        if len(segments) != 1:
+            raise RuntimeError(
+                "この番組はタイムフリー録音に複数セグメントが必要です。"
+            )
+        return segments[0][0], segments[0][1]
 
     def _resolve_timefree_chunklist_url(self, station_id, ft, to):
         """sample実装準拠で ts/playlist.m3u8 から chunklist URL を得る"""
@@ -159,10 +170,70 @@ class ProgramManager:
                 continue
         raise RuntimeError(last_error)
 
-    def _build_timefree_playlist_create_url(self, station_id, ft, to, stream_type="c", l_value=15, seek_ft=None):
-        """playlist_create_url ベースのタイムフリーURLを構築"""
+    @staticmethod
+    def _radiko_timefree_chunk_len_seconds(remain_sec: int) -> int:
+        """rec_radiko_ts 準拠: 残りが 300 秒未満のとき 5 秒境界へ切り上げ。"""
+        if remain_sec <= 0:
+            return 0
+        if remain_sec >= 300:
+            return 300
+        if remain_sec % 5 == 0:
+            return remain_sec
+        return ((remain_sec // 5) + 1) * 5
+
+    def _build_timefree_playlist_recording_segments(self, station_id, ft_dt, to_dt):
+        """playlist_create_url を l<=300 秒で繰り返し、セグメント一覧を返す。"""
         playlist_base = self._get_timefree_playlist_create_base_url(station_id)
         lsid = secrets.token_hex(16)
+        program_ft = self._format_radiko_time(ft_dt)
+        headers = {
+            "X-Radiko-AuthToken": self.token,
+            "X-Radiko-AreaId": self.area_id,
+        }
+        segments = []
+        cursor = ft_dt
+        while cursor < to_dt:
+            remain = int((to_dt - cursor).total_seconds())
+            if remain <= 0:
+                break
+            chunk_nominal = self._radiko_timefree_chunk_len_seconds(remain)
+            tentative_end = cursor + datetime.timedelta(seconds=chunk_nominal)
+            chunk_end = min(tentative_end, to_dt)
+            l_eff = max(1, int((chunk_end - cursor).total_seconds()))
+            seek_s = self._format_radiko_time(cursor)
+            end_s = self._format_radiko_time(chunk_end)
+            url = self._build_timefree_playlist_create_url(
+                station_id,
+                program_ft,
+                end_s,
+                stream_type="c",
+                l_value=l_eff,
+                seek_ft=seek_s,
+                playlist_base=playlist_base,
+                lsid=lsid,
+            )
+            segments.append((url, dict(headers), l_eff))
+            cursor = chunk_end
+        if not segments:
+            raise RuntimeError("timefree recording segments empty")
+        return segments
+
+    def _build_timefree_playlist_create_url(
+        self,
+        station_id,
+        ft,
+        to,
+        stream_type="c",
+        l_value=15,
+        seek_ft=None,
+        playlist_base=None,
+        lsid=None,
+    ):
+        """playlist_create_url ベースのタイムフリーURLを構築"""
+        if playlist_base is None:
+            playlist_base = self._get_timefree_playlist_create_base_url(station_id)
+        if lsid is None:
+            lsid = secrets.token_hex(16)
         if not seek_ft:
             seek_ft = ft
         query = urllib.parse.urlencode({

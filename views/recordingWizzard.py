@@ -326,8 +326,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             ):
                 return
 
-            duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))
-            stream_url, headers = self.progs.get_timefree_recording_source(self.stid, start_dt, end_dt)
+            segments = self.progs.get_timefree_recording_segments(self.stid, start_dt, end_dt)
 
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', title).strip()
             replace = safe_title.replace(" ", "-")
@@ -337,19 +336,18 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             output_path = os.path.join(dirs, f"{timestamp}_{replace}")
 
             info = f"{self.radioname} {title}"
-            end_time = time.time() + duration_sec + 30
+            total_audio_sec = sum(s[2] for s in segments)
+            end_time = time.time() + total_audio_sec + 600 + len(segments) * 60
 
-            recorder = recorder_manager.start_recording(
-                stream_url,
+            recorder = recorder_manager.start_timefree_recording_segments(
+                segments,
                 output_path,
                 info,
                 end_time,
                 filetype,
                 station_id=self.stid,
                 program_title=title,
-                recording_seconds=duration_sec,
-                http_headers=headers,
-                input_options=["-http_seekable", "0", "-seekable", "0"]
+                input_options=["-http_seekable", "0", "-seekable", "0"],
             )
             if recorder:
                 simpleDialog.dialog("完了", f"聴き逃し録音を開始しました。\n{title}")
