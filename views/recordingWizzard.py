@@ -10,7 +10,13 @@ from views import showRadioProgramScheduleListBase
 import views.ViewCreator
 from views import programmanager
 import tcutil
-from recorder import schedule_manager, RecordingSchedule
+from recorder import (
+    RECORDING_END_TIME_BUFFER,
+    RecordingSchedule,
+    create_recording_dir,
+    recorder_manager,
+    schedule_manager,
+)
 import os
 
 
@@ -63,6 +69,96 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self._update_timefree_button_label()
         event.Skip()
 
+    def _start_live_remainder_recording(self, program_title, start_dt, end_dt):
+        """放送中の番組を、終了時刻までライブストリームで録音する"""
+        current = datetime.datetime.now()
+        if current >= end_dt:
+            simpleDialog.errorDialog(_("この番組はすでに終了しています。"))
+            return False
+
+        safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
+        if not safe_title:
+            simpleDialog.errorDialog(_("番組タイトルを取得できませんでした。"))
+            return False
+
+        if recorder_manager.is_duplicate_recording(self.stid, safe_title):
+            station_name = self.radioname
+            existing_info = recorder_manager.get_recording_info(self.stid, safe_title)
+            if existing_info:
+                start_time_str = datetime.datetime.fromtimestamp(existing_info["start_time"]).strftime("%H:%M")
+                error_message = (
+                    f"同じ番組の録音が既に開始されています。\n\n放送局: {station_name}\n番組: {safe_title}\n開始時刻: {start_time_str}"
+                )
+            else:
+                error_message = f"同じ番組の録音が既に開始されています。\n\n放送局: {station_name}\n番組: {safe_title}"
+            simpleDialog.errorDialog(error_message)
+            return False
+
+        try:
+            stream_url = self.progs.get_authenticated_stream_url(self.stid)
+        except Exception as e:
+            self.log.error(f"Failed to get live stream URL for remainder recording: {e}")
+            simpleDialog.errorDialog(_("ストリームURLの取得に失敗しました。"))
+            return False
+
+        replace = safe_title.replace(" ", "-")
+        station_dir = self.radioname.replace(" ", "_")
+        dirs = create_recording_dir(station_dir, safe_title)
+        timestamp = start_dt.strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(dirs, f"{timestamp}_{replace}")
+
+        filetype = self._refresh_selected_filetype()
+        end_wall = time.mktime(end_dt.timetuple()) + RECORDING_END_TIME_BUFFER
+        info = f"{self.radioname} {safe_title}"
+
+        def on_recording_complete(recorder):
+            try:
+                notification_notify(
+                    title=_("録音完了"),
+                    message=f"{safe_title} の録音が完了しました。",
+                    app_name="rpb",
+                    timeout=10,
+                )
+            except Exception as ex:
+                self.log.error(f"Failed to send remainder recording completion notification: {ex}")
+
+        recorder = recorder_manager.start_recording(
+            stream_url,
+            output_path,
+            info,
+            end_wall,
+            filetype,
+            on_recording_complete,
+            self.stid,
+            safe_title,
+        )
+        if not recorder:
+            detail = recorder_manager.get_last_start_error()
+            msg = _("録音の開始に失敗しました。")
+            if detail:
+                msg += f"\n\n{detail}"
+            simpleDialog.errorDialog(msg)
+            return False
+
+        try:
+            station_name = self.radioname
+            globalVars.app.say(f"録音開始: {station_name} {safe_title}", interrupt=True)
+        except Exception as ex:
+            self.log.error(f"Failed to announce remainder recording start: {ex}")
+
+        try:
+            notification_notify(
+                title=_("録音開始"),
+                message=_("放送終了までライブ録音を開始しました。") + f"\n{safe_title}",
+                app_name="rpb",
+                timeout=10,
+            )
+        except Exception as ex:
+            self.log.error(f"Failed to send remainder recording start notification: {ex}")
+
+        self.log.info(f"Live remainder recording started: {safe_title} until {end_dt}")
+        return True
+
     def onFinishButton(self, event):
         """録音予約を確定"""
         try:
@@ -73,14 +169,18 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             self.endt = end_dt
             current = datetime.datetime.now()
 
-            if self.stdt < current:
-                simpleDialog.errorDialog("過去の番組の録音はできません。番組を選び直してください。")
-                self.log.error(f"Failed to schedule program: Specified time ({self.stdt}) is in the past.")
+            if current >= end_dt:
+                simpleDialog.errorDialog(_("この番組はすでに終了しています。"))
+                self.log.error(f"Failed to schedule program: Program already ended ({end_dt}).")
+                return
+
+            if start_dt <= current < end_dt:
+                if self._start_live_remainder_recording(program_title, start_dt, end_dt):
+                    self.Destroy()
                 return
             
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
             replace = safe_title.replace(" ", "-")
-            from recorder import create_recording_dir
             station_dir = self.radioname.replace(" ", "_")
             dirs = create_recording_dir(station_dir, program_title)
             
@@ -146,8 +246,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             if start_dt > now:
                 simpleDialog.errorDialog("未来の番組は聴き逃し再生できません。")
                 return
-            if end_dt > now:
-                simpleDialog.errorDialog("この番組はまだ放送中のため、聴き逃し配信が利用できません。")
+            # 放送中はタイムフリーではなくライブストリームで再生する
+            if start_dt <= now < end_dt:
+                main_view.radio_manager.play(self.stid, self.progs)
+                self._update_timefree_button_label()
                 return
             if hasattr(main_view, "radio_manager") and main_view.radio_manager.is_live_playing():
                 if simpleDialog.yesNoDialog(

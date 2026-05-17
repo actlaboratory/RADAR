@@ -678,6 +678,8 @@ class ProgramSearchDialog(BaseDialog):
 
         if start_dt >= now:
             self.schedule_btn.Enable(True)
+        elif start_dt <= now < end_dt:
+            self.timefree_play_btn.Enable(True)
         elif end_dt <= now and not live:
             self.timefree_play_btn.Enable(True)
             self.timefree_rec_btn.Enable(True)
@@ -699,14 +701,17 @@ class ProgramSearchDialog(BaseDialog):
             if start_dt > now:
                 simpleDialog.errorDialog(_("未来の番組は聴き逃し再生できません。"))
                 return
-            if end_dt > now:
-                simpleDialog.errorDialog(_("放送中の番組は聴き逃し再生できません。"))
-                return
             stid = program.get("station_id")
             if not stid:
                 simpleDialog.errorDialog(_("放送局情報がありません。"))
                 return
             progs = getattr(globalVars.app.hMainView, "progs", None) or programmanager.ProgramManager()
+            mv = globalVars.app.hMainView
+            rm = mv.radio_manager
+            # 放送中はタイムフリーではなくライブストリームで再生する
+            if start_dt <= now < end_dt:
+                rm.play(stid, progs)
+                return
             title = program.get("title", "")
             station_name = program.get("station_name", "")
             announce = f"聴き逃し再生: {station_name} {title}"
@@ -724,8 +729,6 @@ class ProgramSearchDialog(BaseDialog):
                 "stream_type": "b",
                 "duration_sec": duration_sec,
             }
-            mv = globalVars.app.hMainView
-            rm = mv.radio_manager
             try:
                 stream_url, headers = progs.get_timefree_playback_source(stid, start_dt, end_dt)
                 rm.play_timefree(
