@@ -724,7 +724,7 @@ class TimefreeChunkedRecordingHandle:
                     except Exception:
                         pass
         if self._thread:
-            self._thread.join(timeout=20)
+            self._thread.join(timeout=0.2)
 
     def _popen_ffmpeg(self, cmd):
         startupinfo = None
@@ -1177,43 +1177,53 @@ class RecorderManager:
             self.logger.error(f"Failed to check recorder state: {e}")
         return False
 
-    def stop_all(self):
-        """全ての録音を停止"""
+    def _stop_recorder_entry_thread(self, rec_entry):
+        """manager.lock を握らずに recorder.stop() する（デッドロック・UI フリーズ防止）。"""
+        info = rec_entry.get("info", "")
+        try:
+            rec_entry["recorder"].stop()
+            self.logger.info(f"Recorder stopped successfully: {info}")
+        except Exception as e:
+            self.logger.error(f"Error stopping recorder {info}: {e}")
+
+    def stop_all(self, wait=False):
+        """全ての録音を停止。wait=True は終了時など停止完了を待つ場合に限る。"""
         with self.lock:
             active_count = len(self.recorders)
             self.logger.info(f"Stopping all {active_count} active recorders")
-            
-            # 停止処理を並列で実行
-            stop_threads = []
-            for rec_entry in self.recorders:
-                def stop_recorder(rec):
-                    try:
-                        rec.stop()
-                        self.logger.info(f"Recorder stopped successfully: {rec_entry['info']}")
-                    except Exception as e:
-                        self.logger.error(f"Error stopping recorder: {e}")
-                
-                thread = threading.Thread(target=stop_recorder, args=(rec_entry["recorder"],), daemon=True)
-                thread.start()
-                stop_threads.append(thread)
-            
-            # 全ての停止スレッドの完了を待つ（最大10秒）
-            for thread in stop_threads:
-                thread.join(timeout=10)
-            
+            entries = list(self.recorders)
             self.recorders.clear()
-            self.logger.info(f"All {active_count} recorders stopped and instances cleared.")
+        threads = []
+        for rec_entry in entries:
+            t = threading.Thread(
+                target=self._stop_recorder_entry_thread,
+                args=(rec_entry,),
+                daemon=True,
+            )
+            t.start()
+            threads.append(t)
+        if wait:
+            for thread in threads:
+                thread.join(timeout=30)
+            self.logger.info(f"All {active_count} recorders stop threads joined.")
+        else:
+            self.logger.info(f"Dispatched stop for {active_count} recorders (no wait).")
 
     def stop_recorder(self, recorder):
-        """指定された録音を停止"""
+        """指定された録音を一覧から外し、別スレッドで stop を実行する。"""
+        removed = None
         with self.lock:
             for i, rec_entry in enumerate(self.recorders):
                 if rec_entry["recorder"] == recorder:
-                    self.logger.info(f"Stopping specific recorder: {rec_entry['info']}")
-                    rec_entry["recorder"].stop()
-                    del self.recorders[i]
-                    self.logger.info(f"Recorder stopped and removed from manager: {rec_entry['info']}")
+                    removed = self.recorders.pop(i)
+                    self.logger.info(f"Recorder removed from list, stopping async: {removed['info']}")
                     break
+        if removed:
+            threading.Thread(
+                target=self._stop_recorder_entry_thread,
+                args=(removed,),
+                daemon=True,
+            ).start()
 
     def get_active_recorders(self):
         """アクティブな録音の一覧を取得"""
@@ -1232,29 +1242,29 @@ class RecorderManager:
 
     def stop_station_recording(self, station_id):
         """指定された放送局の録音を停止"""
+        to_stop = []
         with self.lock:
-            stopped_count = 0
-            # 後ろから削除することでインデックスの問題を回避
             for i in range(len(self.recorders) - 1, -1, -1):
                 rec_entry = self.recorders[i]
                 if not self._recorder_matches_station(rec_entry, station_id):
                     continue
-                try:
-                    rec_entry["recorder"].stop()
-                except Exception as e:
-                    self.logger.error(f"Error stopping recorder for station {station_id}: {e}")
-                del self.recorders[i]
-                stopped_count += 1
-                self.logger.info(f"Stopped recording for station {station_id}: {rec_entry['info']}")
-            return stopped_count
+                to_stop.append(self.recorders.pop(i))
+        for rec_entry in to_stop:
+            self.logger.info(f"Stopping recording for station {station_id}: {rec_entry['info']}")
+            threading.Thread(
+                target=self._stop_recorder_entry_thread,
+                args=(rec_entry,),
+                daemon=True,
+            ).start()
+        return len(to_stop)
 
     def stop_recording_for_program(self, station_id, program_title):
         """放送局IDと番組タイトルが一致する録音を停止（予約録音の取り消しなどに使用）"""
         if station_id is None or program_title is None:
             return 0
         want = normalize_program_title_for_dedup(program_title)
+        to_stop = []
         with self.lock:
-            stopped_count = 0
             for i in range(len(self.recorders) - 1, -1, -1):
                 rec_entry = self.recorders[i]
                 if not self._recorder_matches_station(rec_entry, station_id):
@@ -1269,11 +1279,15 @@ class RecorderManager:
                     info_n = normalize_program_title_for_dedup(rec_entry.get("info") or "")
                     if not want or want not in info_n:
                         continue
-                rec_entry["recorder"].stop()
-                del self.recorders[i]
-                stopped_count += 1
-                self.logger.info(f"Stopped recording for scheduled program: {rec_entry['info']}")
-            return stopped_count
+                to_stop.append(self.recorders.pop(i))
+                self.logger.info(f"Recorder queued for async stop (scheduled program): {rec_entry['info']}")
+        for rec_entry in to_stop:
+            threading.Thread(
+                target=self._stop_recorder_entry_thread,
+                args=(rec_entry,),
+                daemon=True,
+            ).start()
+        return len(to_stop)
 
     def is_duplicate_recording(self, station_id, program_title):
         """同じ放送局・同じ番組の重複録音をチェック"""
@@ -1321,7 +1335,7 @@ class RecorderManager:
     def cleanup(self):
         """クリーンアップ"""
         self.logger.info("Starting RecorderManager cleanup")
-        self.stop_all()
+        self.stop_all(wait=True)
         self.logger.info("RecorderManager cleanup completed")
 
 class RecordingSchedule:

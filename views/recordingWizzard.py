@@ -351,6 +351,15 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             )
             if recorder:
                 simpleDialog.dialog("完了", f"聴き逃し録音を開始しました。\n{title}")
+                try:
+                    notification_notify(
+                        title="録音開始",
+                        message=f"{title} の聴き逃し録音を開始しました。",
+                        app_name="rpb",
+                        timeout=10,
+                    )
+                except Exception as e:
+                    self.log.error(f"Failed to send timefree recording start notification: {e}")
             else:
                 detail = recorder_manager.get_last_start_error()
                 msg = "聴き逃し録音の開始に失敗しました。"

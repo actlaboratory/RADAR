@@ -812,6 +812,15 @@ class ProgramSearchDialog(BaseDialog):
             )
             if rec:
                 simpleDialog.dialog(_("完了"), _("聴き逃し録音を開始しました。") + f"\n{title}")
+                try:
+                    notification_notify(
+                        title=_("録音開始"),
+                        message=_("聴き逃し録音を開始しました。") + f"\n{title}",
+                        app_name="rpb",
+                        timeout=10,
+                    )
+                except Exception as e:
+                    self.log.error(f"Failed to send timefree recording start notification: {e}")
             else:
                 detail = recorder_manager.get_last_start_error()
                 msg = _("聴き逃し録音の開始に失敗しました。")
