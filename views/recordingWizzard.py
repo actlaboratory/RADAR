@@ -246,8 +246,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             if start_dt > now:
                 simpleDialog.errorDialog("未来の番組は聴き逃し再生できません。")
                 return
-            if end_dt > now:
-                simpleDialog.errorDialog("この番組はまだ放送中のため、聴き逃し配信が利用できません。")
+            # 放送中はタイムフリーではなくライブストリームで再生する
+            if start_dt <= now < end_dt:
+                main_view.radio_manager.play(self.stid, self.progs)
+                self._update_timefree_button_label()
                 return
             if hasattr(main_view, "radio_manager") and main_view.radio_manager.is_live_playing():
                 if simpleDialog.yesNoDialog(
