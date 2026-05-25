@@ -8,6 +8,7 @@ import threading
 from logging import getLogger
 import constants
 import globalVars
+from tcutil import CalendarUtil
 from views import programmanager
 
 class ProgramCacheManager:
@@ -277,7 +278,8 @@ class ProgramCacheManager:
         with self.lock:
             try:
                 cursor = self.conn.cursor()
-                cutoff_date = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime('%Y%m%d')
+                base_date = CalendarUtil().get_radio_base_datetime()
+                cutoff_date = (base_date - datetime.timedelta(days=days)).strftime('%Y%m%d')
                 cursor.execute("DELETE FROM programs WHERE date < ?", (cutoff_date,))
                 deleted_count = cursor.rowcount
                 self.conn.commit()
@@ -323,10 +325,10 @@ class ProgramCacheManager:
             try:
                 cursor = self.conn.cursor()
 
-                today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                base_date = CalendarUtil().get_radio_base_datetime()
                 week_dates = []
                 for i in range(-7, 8):
-                    target_date = today + datetime.timedelta(days=i)
+                    target_date = base_date + datetime.timedelta(days=i)
                     week_dates.append(target_date.strftime('%Y%m%d'))
                 
                 # 各日付のデータ数を取得

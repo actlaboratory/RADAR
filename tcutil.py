@@ -122,6 +122,10 @@ class CalendarUtil:
         
         return base_date.strftime('%Y%m%d')
 
+    def get_radio_base_datetime(self):
+        """ラジオ基準日の0:00:00 datetimeを返す"""
+        return datetime.datetime.strptime(self.get_radio_date(), '%Y%m%d')
+
     def format_now(self):
         now = datetime.datetime.now()
 

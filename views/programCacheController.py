@@ -8,6 +8,7 @@ import sqlite3
 from logging import getLogger
 import constants
 import globalVars
+from tcutil import CalendarUtil
 from views.programCacheManager import ProgramCacheManager
 from views.programDataCollector import ProgramDataCollector
 from views.programSearchEngine import ProgramSearchEngine
@@ -24,8 +25,8 @@ class ProgramCacheController:
         self.data_collector = None
         self.search_engine = None
         
-        # 起動時の日付を記録
-        self.startup_date = datetime.datetime.now().strftime('%Y%m%d')
+        # 起動時のラジオ基準日を記録
+        self.startup_date = CalendarUtil().get_radio_date()
         self.last_update_date = None
         
         # データベースファイルのパス
@@ -82,7 +83,7 @@ class ProgramCacheController:
     
     def _needs_database_update(self):
         """データベース更新が必要かチェック"""
-        today_date = datetime.datetime.now().strftime('%Y%m%d')
+        today_date = CalendarUtil().get_radio_date()
         is_weekly_complete = self.cache_manager.is_weekly_cache_complete()
         
         return (
@@ -93,7 +94,7 @@ class ProgramCacheController:
     
     def _perform_database_update(self):
         """データベース更新を実行"""
-        today_date = datetime.datetime.now().strftime('%Y%m%d')
+        today_date = CalendarUtil().get_radio_date()
         is_weekly_complete = self.cache_manager.is_weekly_cache_complete()
         
         reasons = []
@@ -146,18 +147,15 @@ class ProgramCacheController:
             self.data_collector = ProgramDataCollector(self.cache_manager)
             self.data_collector.set_radio_manager(self.radio_manager)
             
-            # 今日から1週間分のデータを効率的に収集
-            today = datetime.datetime.now()
-            today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+            radio_date = CalendarUtil().get_radio_date()
+            self.log.info(f"Starting weekly data collection from radio base date {radio_date}")
             
-            self.log.info(f"Starting weekly data collection from {today.strftime('%Y%m%d')}")
-            
-            # 週間データ収集を実行
-            success = self.data_collector.collect_weekly_data(today, force_refresh=True)
+            # 週間データ収集を実行（ラジオ基準日を起点に15日分）
+            success = self.data_collector.collect_weekly_data(force_refresh=True)
             
             if success:
                 self.log.info("Weekly database update completed successfully")
-                self.last_update_date = self.startup_date
+                self.last_update_date = CalendarUtil().get_radio_date()
             else:
                 self.log.warning("Weekly database update failed, but continuing with existing data")
             
@@ -184,18 +182,15 @@ class ProgramCacheController:
                 self.data_collector = ProgramDataCollector(self.cache_manager)
                 self.data_collector.set_radio_manager(self.radio_manager)
             
-            # 今日から1週間分のデータを効率的に収集
-            today = datetime.datetime.now()
-            today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+            radio_date = CalendarUtil().get_radio_date()
+            self.log.info(f"Starting forced weekly data collection from radio base date {radio_date}")
             
-            self.log.info(f"Starting forced weekly data collection from {today.strftime('%Y%m%d')}")
-            
-            # 週間データ収集を実行
-            success = self.data_collector.collect_weekly_data(today, force_refresh=True)
+            # 週間データ収集を実行（ラジオ基準日を起点に15日分）
+            success = self.data_collector.collect_weekly_data(force_refresh=True)
             
             if success:
                 self.log.info("Forced weekly database update completed successfully")
-                self.last_update_date = self.startup_date
+                self.last_update_date = CalendarUtil().get_radio_date()
                 return True
             else:
                 self.log.warning("Forced weekly database update failed")
@@ -428,13 +423,12 @@ class ProgramCacheController:
                     if not self.data_collector:
                         self.data_collector = ProgramDataCollector(self.cache_manager)
                         self.data_collector.set_radio_manager(self.radio_manager)
-                    today = datetime.datetime.now()
-                    today = today.replace(hour=0, minute=0, second=0, microsecond=0)
-                    self.log.info(f"Starting deferred weekly data collection from {today.strftime('%Y%m%d')}")
-                    ok = self.data_collector.collect_weekly_data(today, force_refresh=True)
+                    radio_date = CalendarUtil().get_radio_date()
+                    self.log.info(f"Starting deferred weekly data collection from radio base date {radio_date}")
+                    ok = self.data_collector.collect_weekly_data(force_refresh=True)
                     if ok:
                         self.log.info("Deferred weekly database update completed successfully")
-                        self.last_update_date = self.startup_date
+                        self.last_update_date = CalendarUtil().get_radio_date()
                     else:
                         self.log.warning("Deferred weekly database update failed")
                 except Exception as e:

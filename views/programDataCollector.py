@@ -93,13 +93,16 @@ class ProgramDataCollector:
             return False
         
         if start_date is None:
-            # 今日（0:00:00）を基準にする
-            today = datetime.datetime.now()
-            start_date = today.replace(hour=0, minute=0, second=0, microsecond=0)
+            from tcutil import CalendarUtil
+            base_date = CalendarUtil().get_radio_base_datetime()
+        elif isinstance(start_date, str):
+            base_date = datetime.datetime.strptime(start_date, '%Y%m%d')
+        else:
+            base_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
         
-        # 過去7日 + 今日から7日先まで（計15日）。
-        # 番組表はラジオ基準日から8日分表示するため、壁時計の「今日+6」より1日先までキャッシュする。
-        first_day = start_date - datetime.timedelta(days=7)
+        # ラジオ基準日から過去7日 + 基準日から7日先まで（計15日）。
+        # 番組表・番組検索の日付選択肢（過去1週 + 番組表8日分）と一致させる。
+        first_day = base_date - datetime.timedelta(days=7)
         date_list = []
         for i in range(15):
             target_date = first_day + datetime.timedelta(days=i)
