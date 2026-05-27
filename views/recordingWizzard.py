@@ -49,10 +49,23 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             return False
         return main_view.radio_manager.is_timefree_playing()
 
+    def _is_selected_program_currently_playing_timefree(self):
+        """一覧で選んだ番組が、いま聴き逃し再生中の番組かどうか"""
+        main_view = globalVars.app.hMainView
+        if not hasattr(main_view, "radio_manager"):
+            return False
+        rm = main_view.radio_manager
+        if not rm.is_timefree_playing():
+            return False
+        try:
+            _, start_dt, end_dt = self._get_selected_program_range()
+        except ValueError:
+            return True
+        return rm.is_playing_timefree_program(self.stid, start_dt, end_dt)
+
     def _update_timefree_button_label(self):
         main_view = globalVars.app.hMainView
-        is_timefree_playing = self._is_timefree_playing()
-        if is_timefree_playing:
+        if self._is_selected_program_currently_playing_timefree():
             self.timefree_play_btn.SetLabel(_("聴き逃し停止(&P)"))
             self.timefree_play_btn.Enable(True)
         else:
@@ -235,7 +248,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         """選択番組の聴き逃し再生/停止をトグル"""
         try:
             main_view = globalVars.app.hMainView
-            if self._is_timefree_playing():
+            if self._is_selected_program_currently_playing_timefree():
                 main_view.radio_manager.stop_timefree()
                 self._update_timefree_button_label()
                 return
@@ -437,9 +450,14 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self._cleanup_dialog_resources()
         event.Skip()
 
+    def show_programlist(self, event=None, focus_program_list=True):
+        super().show_programlist(event, focus_program_list)
+        wx.CallAfter(self._update_timefree_button_label)
+
     def on_program_list_selection(self, event):
         """過去番組行を選んだとき、ライブ×別局時のメニュー再開許可フラグを更新"""
         self._notify_past_program_focus_if_applicable()
+        self._update_timefree_button_label()
         event.Skip()
 
     def _notify_past_program_focus_if_applicable(self):

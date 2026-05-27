@@ -3,6 +3,7 @@
 
 import wx
 import os
+import datetime
 import tcutil
 import time
 import threading
@@ -420,6 +421,28 @@ class RadioManager:
     def is_timefree_playing(self):
         """聴き逃し再生中かどうか"""
         return self.playback_mode == "timefree"
+
+    def is_playing_timefree_program(self, station_id, start_dt, end_dt):
+        """指定番組が現在の聴き逃し再生対象かどうか"""
+        if self.playback_mode != "timefree":
+            return False
+        info = self._timefree_info or {}
+        if info.get("station_id") != station_id:
+            return False
+        playing_start = info.get("ft_dt")
+        playing_end = info.get("to_dt")
+        if playing_start is not None and playing_end is not None:
+            return start_dt == playing_start and end_dt == playing_end
+        try:
+            playing_start = datetime.datetime.strptime(
+                info.get("start_time", ""), "%Y-%m-%d %H:%M:%S"
+            )
+            playing_end = datetime.datetime.strptime(
+                info.get("end_time", ""), "%Y-%m-%d %H:%M:%S"
+            )
+            return start_dt == playing_start and end_dt == playing_end
+        except (TypeError, ValueError):
+            return False
 
     def has_last_timefree_request(self):
         """再開可能な聴き逃し再生情報があるか"""
