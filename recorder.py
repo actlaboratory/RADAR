@@ -138,6 +138,7 @@ class Recorder:
         self.recording_seconds = recording_seconds
         self.http_headers = dict(http_headers or {})
         self.input_options = list(input_options or [])
+        self._completion_cancelled = False
 
     def _wait_stderr_drain(self, timeout=2.0):
         """stderr 読み取りスレッドが追いつくまで待つ（プロセス終了直後の取りこぼし防止）"""
@@ -684,6 +685,7 @@ class TimefreeChunkedRecordingHandle:
         self._proc = None
         self._proc_lock = threading.Lock()
         self._done = False
+        self._completion_cancelled = False
 
     def is_recording(self):
         if self._done:
@@ -946,7 +948,7 @@ class RecorderManager:
         info = rec_entry.get("info") or ""
         return station_id in info
 
-    def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None, station_id=None, program_title=None, recording_seconds=None, http_headers=None, input_options=None):
+    def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None, station_id=None, program_title=None, schedule_id=None, recording_seconds=None, http_headers=None, input_options=None):
         """録音を開始"""
         try:
             self.last_start_error = ""
@@ -988,6 +990,7 @@ class RecorderManager:
                     "on_complete": on_complete,
                     "station_id": station_id,
                     "program_title": program_title,
+                    "schedule_id": schedule_id,
                     "start_time": time.time(),
                     "recording_seconds": recording_seconds,
                     "http_headers": dict(http_headers or {}),
@@ -1082,6 +1085,11 @@ class RecorderManager:
         wait = min(wait, max_wait)
         self.logger.debug(f"Recorder will stop in {wait} seconds.")
         time.sleep(wait)
+        if getattr(recorder, "_completion_cancelled", False):
+            self.logger.info(
+                f"Skipping scheduled stop/completion (manual stop): {getattr(recorder, 'output_path', recorder)}"
+            )
+            return
         recorder.stop()
         self.logger.info(f"Recorder stopped by schedule: {recorder.output_path}")
         
@@ -1137,6 +1145,7 @@ class RecorderManager:
                 retry_path = new_path
                 retry_station_id = rec_entry.get("station_id")
                 retry_program_title = rec_entry.get("program_title")
+                retry_schedule_id = rec_entry.get("schedule_id")
             else:
                 self.logger.error(f"Recording failed after {MAX_RETRY} attempts: {info}")
                 try:
@@ -1159,6 +1168,7 @@ class RecorderManager:
                 on_complete,
                 station_id=retry_station_id,
                 program_title=retry_program_title,
+                schedule_id=retry_schedule_id,
                 recording_seconds=recording_seconds,
                 http_headers=http_headers,
                 input_options=input_options,
@@ -1177,6 +1187,14 @@ class RecorderManager:
             self.logger.error(f"Failed to check recorder state: {e}")
         return False
 
+    def _mark_manual_stop(self, rec_entry):
+        """ユーザー操作による停止: 終了予定時刻の完了コールバック・通知を抑止する。"""
+        recorder = rec_entry.get("recorder")
+        if recorder is not None:
+            recorder._completion_cancelled = True
+        if rec_entry.get("on_complete"):
+            schedule_manager.mark_recording_interrupted(rec_entry)
+
     def _stop_recorder_entry_thread(self, rec_entry):
         """manager.lock を握らずに recorder.stop() する（デッドロック・UI フリーズ防止）。"""
         info = rec_entry.get("info", "")
@@ -1186,6 +1204,16 @@ class RecorderManager:
         except Exception as e:
             self.logger.error(f"Error stopping recorder {info}: {e}")
 
+    def _pop_and_stop_entries(self, entries):
+        """手動停止マーク後に非同期で stop する。"""
+        for rec_entry in entries:
+            self._mark_manual_stop(rec_entry)
+            threading.Thread(
+                target=self._stop_recorder_entry_thread,
+                args=(rec_entry,),
+                daemon=True,
+            ).start()
+
     def stop_all(self, wait=False):
         """全ての録音を停止。wait=True は終了時など停止完了を待つ場合に限る。"""
         with self.lock:
@@ -1193,6 +1221,8 @@ class RecorderManager:
             self.logger.info(f"Stopping all {active_count} active recorders")
             entries = list(self.recorders)
             self.recorders.clear()
+        for rec_entry in entries:
+            self._mark_manual_stop(rec_entry)
         threads = []
         for rec_entry in entries:
             t = threading.Thread(
@@ -1219,6 +1249,7 @@ class RecorderManager:
                     self.logger.info(f"Recorder removed from list, stopping async: {removed['info']}")
                     break
         if removed:
+            self._mark_manual_stop(removed)
             threading.Thread(
                 target=self._stop_recorder_entry_thread,
                 args=(removed,),
@@ -1251,11 +1282,7 @@ class RecorderManager:
                 to_stop.append(self.recorders.pop(i))
         for rec_entry in to_stop:
             self.logger.info(f"Stopping recording for station {station_id}: {rec_entry['info']}")
-            threading.Thread(
-                target=self._stop_recorder_entry_thread,
-                args=(rec_entry,),
-                daemon=True,
-            ).start()
+        self._pop_and_stop_entries(to_stop)
         return len(to_stop)
 
     def stop_recording_for_program(self, station_id, program_title):
@@ -1281,12 +1308,7 @@ class RecorderManager:
                         continue
                 to_stop.append(self.recorders.pop(i))
                 self.logger.info(f"Recorder queued for async stop (scheduled program): {rec_entry['info']}")
-        for rec_entry in to_stop:
-            threading.Thread(
-                target=self._stop_recorder_entry_thread,
-                args=(rec_entry,),
-                daemon=True,
-            ).start()
+        self._pop_and_stop_entries(to_stop)
         return len(to_stop)
 
     def is_duplicate_recording(self, station_id, program_title):
@@ -1507,25 +1529,63 @@ class ScheduleManager:
             self.logger.info(f"Cleared all schedules: {removed_count} schedules removed")
             return removed_count
 
-    def cancel_schedule(self, schedule_id):
-        """予約をキャンセル（ステータスを更新）。録音中なら該当録音を停止する。"""
+    def mark_recording_interrupted(self, rec_entry):
+        """録音管理などから手動停止された予約録音をキャンセル済みにする（完了扱いにしない）。"""
+        schedule_id = rec_entry.get("schedule_id")
+        station_id = rec_entry.get("station_id")
+        program_title = rec_entry.get("program_title")
+        want = normalize_program_title_for_dedup(program_title) if program_title else ""
+        updated = False
         with self.lock:
             for schedule in self.schedules:
-                if schedule.id == schedule_id:
-                    if schedule.status not in (
-                        RECORDING_STATUS_SCHEDULED,
-                        RECORDING_STATUS_RECORDING,
-                    ):
-                        return False
-                    if schedule.status == RECORDING_STATUS_RECORDING:
-                        self.recorder_manager.stop_recording_for_program(
-                            schedule.station_id, schedule.program_title
-                        )
+                if schedule.status != RECORDING_STATUS_RECORDING:
+                    continue
+                if schedule_id and schedule.id == schedule_id:
                     schedule.set_status(RECORDING_STATUS_CANCELLED)
-                    self.save_schedules()
-                    self.logger.info(f"Schedule cancelled: {schedule_id}")
-                    return True
-        return False
+                    updated = True
+                    break
+                if (
+                    station_id
+                    and schedule.station_id == station_id
+                    and want
+                    and normalize_program_title_for_dedup(schedule.program_title) == want
+                ):
+                    schedule.set_status(RECORDING_STATUS_CANCELLED)
+                    updated = True
+                    break
+        if updated:
+            self.save_schedules()
+            self.logger.info(
+                "Schedule marked cancelled after manual recording stop: "
+                f"{station_id} {program_title}"
+            )
+
+    def cancel_schedule(self, schedule_id):
+        """予約をキャンセル（ステータスを更新）。録音中なら該当録音を停止する。"""
+        station_id = None
+        program_title = None
+        was_recording = False
+        with self.lock:
+            for schedule in self.schedules:
+                if schedule.id != schedule_id:
+                    continue
+                if schedule.status not in (
+                    RECORDING_STATUS_SCHEDULED,
+                    RECORDING_STATUS_RECORDING,
+                ):
+                    return False
+                was_recording = schedule.status == RECORDING_STATUS_RECORDING
+                station_id = schedule.station_id
+                program_title = schedule.program_title
+                schedule.set_status(RECORDING_STATUS_CANCELLED)
+                self.save_schedules()
+                self.logger.info(f"Schedule cancelled: {schedule_id}")
+                break
+            else:
+                return False
+        if was_recording:
+            self.recorder_manager.stop_recording_for_program(station_id, program_title)
+        return True
 
     def reactivate_schedule(self, schedule_id):
         """キャンセル済みで開始時刻前の予約を予約済みに戻す。
@@ -1678,7 +1738,8 @@ class ScheduleManager:
                     schedule.filetype,
                     on_complete=on_recording_complete,
                     station_id=schedule.station_id,
-                    program_title=schedule.program_title
+                    program_title=schedule.program_title,
+                    schedule_id=schedule.id,
                 )
                 
                 if recorder:
