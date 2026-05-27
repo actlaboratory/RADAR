@@ -639,6 +639,29 @@ class ProgramSearchDialog(BaseDialog):
         d = base_date + datetime.timedelta(days=day_offset)
         return datetime.datetime.combine(d, datetime.time(hour, minute))
 
+    def _extended_hour_in_time_str(self, time_str):
+        """Radikoの24時超え表記(24:00〜)かどうか。day_offset 済みのため5時切替補正は不要。"""
+        if not time_str:
+            return False
+        parts = str(time_str).split(":")
+        if len(parts) < 2:
+            return False
+        try:
+            return int(parts[0]) >= 24
+        except ValueError:
+            return False
+
+    def _adjust_listing_datetime(self, dt, time_str, *, is_end=False):
+        """04:xx 表記向けの5時切替補正。24時超え表記には適用しない。"""
+        if dt is None or self._extended_hour_in_time_str(time_str):
+            return dt
+        if is_end:
+            if dt.time() <= datetime.time(5, 0):
+                dt += datetime.timedelta(days=1)
+        elif dt.time() < datetime.time(4, 59, 59):
+            dt += datetime.timedelta(days=1)
+        return dt
+
     def _program_start_end_dt(self, program):
         date_str = program.get("date", "") or ""
         start_time_str = program.get("start_time", "") or ""
@@ -653,10 +676,8 @@ class ProgramSearchDialog(BaseDialog):
         end_dt = self._parse_clock_on_listing_date(base_date, end_time_str)
         if not start_dt or not end_dt:
             return None, None
-        if start_dt.time() < datetime.time(4, 59, 59):
-            start_dt += datetime.timedelta(days=1)
-        if end_dt.time() <= datetime.time(5, 0):
-            end_dt += datetime.timedelta(days=1)
+        start_dt = self._adjust_listing_datetime(start_dt, start_time_str, is_end=False)
+        end_dt = self._adjust_listing_datetime(end_dt, end_time_str, is_end=True)
         if end_dt <= start_dt:
             end_dt += datetime.timedelta(days=1)
         return start_dt, end_dt
@@ -1116,34 +1137,20 @@ class ProgramSearchDialog(BaseDialog):
                 else:
                     raise ValueError(f"Invalid date format: {date_str}")
                 
-                # 時間をパース（HH:MM:SS形式またはHH:MM形式）
-                start_parts = start_time_str.split(':')
-                end_parts = end_time_str.split(':')
-                
-                if len(start_parts) >= 2 and len(end_parts) >= 2:
-                    start_hour = int(start_parts[0])
-                    start_minute = int(start_parts[1])
-                    end_hour = int(end_parts[0])
-                    end_minute = int(end_parts[1])
-                else:
+                start_time_dt = self._parse_clock_on_listing_date(selected_date, start_time_str)
+                end_time_dt = self._parse_clock_on_listing_date(selected_date, end_time_str)
+                if not start_time_dt or not end_time_dt:
                     raise ValueError(f"Invalid time format: {start_time_str} - {end_time_str}")
-                
-                # datetimeオブジェクトを作成
-                start_time_dt = datetime.datetime.combine(
-                    selected_date,
-                    datetime.time(start_hour, start_minute)
+
+                start_time_dt = self._adjust_listing_datetime(
+                    start_time_dt, start_time_str, is_end=False
                 )
-                end_time_dt = datetime.datetime.combine(
-                    selected_date,
-                    datetime.time(end_hour, end_minute)
+                end_time_dt = self._adjust_listing_datetime(
+                    end_time_dt, end_time_str, is_end=True
                 )
-                
-                # 深夜番組の処理（開始時間が4:59以前の場合は翌日）
-                if start_time_dt.time() < datetime.time(4, 59, 59):
-                    start_time_dt += datetime.timedelta(days=1)
-                if end_time_dt.time() <= datetime.time(5, 0):
+                if end_time_dt <= start_time_dt:
                     end_time_dt += datetime.timedelta(days=1)
-                
+
                 # 過去の番組かチェック
                 current = datetime.datetime.now()
                 if start_time_dt < current:
