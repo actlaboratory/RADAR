@@ -1,0 +1,9 @@
+pycaw
+
+Copyright (c) 2016 AndreMiras
+
+本ソフトウェアは pycaw（https://github.com/AndreMiras/pycaw）を使用しています。
+pycaw は MIT License の条件に従って提供されています。
+ライセンス全文は common/MIT.txt を参照してください。
+
+ソースコード: https://github.com/AndreMiras/pycaw

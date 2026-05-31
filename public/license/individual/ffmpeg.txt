@@ -1,0 +1,13 @@
+FFmpeg
+
+Copyright (c) the FFmpeg developers
+
+本ソフトウェアに同梱されている ffmpeg（bin/ffmpeg.exe）は、GNU Lesser General Public License
+version 2.1 or later（LGPL v2.1+）の条件に従って提供されています。
+ライセンス全文は common/LGPL-2.1.txt を参照してください。
+
+FFmpeg のライセンスに関する詳細は、以下を参照してください。
+https://github.com/FFmpeg/FFmpeg/blob/master/LICENSE.md
+
+対応するソースコードは、以下より取得できます。
+https://github.com/FFmpeg/FFmpeg
