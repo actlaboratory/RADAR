@@ -66,6 +66,9 @@ class ShowSchedule(BaseDialog):
         )
         self.cmb, label = row_creator.combobox(_("日付指定"), self.date_values, textLayout=wx.HORIZONTAL)
         self.cmb.SetSelection(0)
+        self._date_combo_dropdown_used = False
+        self.cmb.Bind(wx.EVT_COMBOBOX_DROPDOWN, self._on_date_combo_dropdown)
+        self.cmb.Bind(wx.EVT_COMBOBOX_CLOSEUP, self._on_date_combo_closeup)
         self.cmb.Bind(wx.EVT_COMBOBOX, self.show_programlist)
         row_creator.AddSpace(20)
         self.show_past_chk = row_creator.checkbox(
@@ -116,7 +119,24 @@ class ShowSchedule(BaseDialog):
         self._rebuild_date_values(include_past)
         self.show_programlist(focus_program_list=False)
 
+    def _on_date_combo_dropdown(self, event):
+        """ドロップダウン一覧を開いた操作（Alt+下矢印など）を記録する"""
+        self._date_combo_dropdown_used = True
+        event.Skip()
+
+    def _on_date_combo_closeup(self, event):
+        """一覧を閉じただけ（Esc 等）のときは、次の矢印操作を誤判定しない"""
+        wx.CallAfter(self._reset_date_combo_dropdown_flag)
+        event.Skip()
+
+    def _reset_date_combo_dropdown_flag(self):
+        self._date_combo_dropdown_used = False
+
     def show_programlist(self, event=None, focus_program_list=True):
+        if event is not None:
+            # 閉じた状態で上下矢印した場合はフォーカスを番組一覧へ移さない
+            focus_program_list = self._date_combo_dropdown_used
+            self._date_combo_dropdown_used = False
         self.lst.clear()
         self.dsclst.clear()
         self.tilst.clear()
