@@ -24,6 +24,11 @@ from tcutil import CalendarUtil
 
 class ProgramSearchDialog(BaseDialog):
     """番組検索ダイアログ"""
+
+    DEFAULT_START_HOUR = 5
+    DEFAULT_START_MINUTE = 0
+    DEFAULT_END_HOUR = 28
+    DEFAULT_END_MINUTE = 59
     
     def __init__(self, radio_manager=None):
         super().__init__("ProgramSearchDialog")
@@ -333,7 +338,7 @@ class ProgramSearchDialog(BaseDialog):
         search_criteria = self.get_search_criteria()
         
         # 検索条件が空の場合は警告
-        if not search_criteria:
+        if not self._has_meaningful_search_criteria(search_criteria):
             simpleDialog.dialog(_("警告"), _("検索条件を入力してください。"))
             return
         
@@ -374,6 +379,26 @@ class ProgramSearchDialog(BaseDialog):
     def _period_scope_labels(self):
         """単一コンボの先頭2件（日付未指定モード）。"""
         return (_("未来・放送中のみ"), _("全期間（過去含む）"))
+
+    def _is_default_time_range(self, start_hour, start_minute, end_hour, end_minute):
+        return (
+            start_hour == self.DEFAULT_START_HOUR
+            and start_minute == self.DEFAULT_START_MINUTE
+            and end_hour == self.DEFAULT_END_HOUR
+            and end_minute == self.DEFAULT_END_MINUTE
+        )
+
+    def _has_meaningful_search_criteria(self, criteria):
+        """ユーザーが意図した検索条件があるか（デフォルト時間帯は除外）"""
+        if not criteria:
+            return False
+        if criteria.get('title') or criteria.get('performer') or criteria.get('station_name'):
+            return True
+        if criteria.get('date'):
+            return True
+        if criteria.get('start_time') or criteria.get('end_time'):
+            return True
+        return False
 
     def get_search_criteria(self):
         """検索条件を取得"""
@@ -434,28 +459,26 @@ class ProgramSearchDialog(BaseDialog):
         start_minute = self.start_minute_spin.GetValue()
         end_hour = self.end_hour_spin.GetValue()
         end_minute = self.end_minute_spin.GetValue()
-        
-        
-        # 時間範囲の設定
-        # 開始時間が設定されている場合（5:00以降）
-        if start_hour >= 5:
-            criteria['start_time'] = f"{start_hour:02d}:{start_minute:02d}:00"
-        
-        # 終了時間が設定されている場合（28:59以外、ラジオ形式の最大値）
-        if not (end_hour == 28 and end_minute == 59):
-            criteria['end_time'] = f"{end_hour:02d}:{end_minute:02d}:00"
-        
-        # 時間範囲の妥当性チェック
-        if 'start_time' in criteria and 'end_time' in criteria:
-            start_time_str = criteria['start_time']
-            end_time_str = criteria['end_time']
-            if start_time_str >= end_time_str:
-                # 開始時間が終了時間より遅い場合は警告
-                simpleDialog.dialog(_("警告"), _("開始時間は終了時間より早く設定してください。"))
-                return {}
-        
-        # 時間範囲検索のフラグを設定
-        criteria['use_time_range_search'] = True
+
+        # デフォルト値（5:00〜28:59）のままなら時間条件は付けない
+        if not self._is_default_time_range(start_hour, start_minute, end_hour, end_minute):
+            # 開始時間が設定されている場合（5:00以降）
+            if start_hour >= 5:
+                criteria['start_time'] = f"{start_hour:02d}:{start_minute:02d}:00"
+
+            # 終了時間が設定されている場合（28:59以外、ラジオ形式の最大値）
+            if not (end_hour == self.DEFAULT_END_HOUR and end_minute == self.DEFAULT_END_MINUTE):
+                criteria['end_time'] = f"{end_hour:02d}:{end_minute:02d}:00"
+
+            # 時間範囲の妥当性チェック
+            if 'start_time' in criteria and 'end_time' in criteria:
+                start_time_str = criteria['start_time']
+                end_time_str = criteria['end_time']
+                if start_time_str >= end_time_str:
+                    simpleDialog.dialog(_("警告"), _("開始時間は終了時間より早く設定してください。"))
+                    return {}
+
+            criteria['use_time_range_search'] = True
         
         return criteria
 
@@ -882,10 +905,10 @@ class ProgramSearchDialog(BaseDialog):
         self.date_combo.SetSelection(0)  # 「未来・放送中のみ」
         
         # スピンコントロールをリセット（ラジオ形式：5-29時、分は0分から）
-        self.start_hour_spin.SetValue(5)
-        self.start_minute_spin.SetValue(0)
-        self.end_hour_spin.SetValue(28)
-        self.end_minute_spin.SetValue(59)
+        self.start_hour_spin.SetValue(self.DEFAULT_START_HOUR)
+        self.start_minute_spin.SetValue(self.DEFAULT_START_MINUTE)
+        self.end_hour_spin.SetValue(self.DEFAULT_END_HOUR)
+        self.end_minute_spin.SetValue(self.DEFAULT_END_MINUTE)
         
         self.result_list.clear()
         self.result_count_label.SetLabel(_("検索結果: 0件"))
@@ -982,6 +1005,7 @@ class ProgramSearchDialog(BaseDialog):
 
     def _perform_data_refresh_worker(self, state):
         success = False
+        partial = False
         error_text = None
         try:
             controller = getattr(globalVars.app.hMainView, 'program_cache_controller', None)
@@ -1001,11 +1025,13 @@ class ProgramSearchDialog(BaseDialog):
                         self.data_collector.set_radio_manager(self.radio_manager)
                 self.log.warning("Falling back to today's data collection")
                 success = self.data_collector.collect_all_stations_data(force_refresh=True)
+                partial = success
             except Exception as e:
                 self.log.error(f"Fallback data collection failed: {e}")
                 error_text = str(e)
 
         state["success"] = success
+        state["partial"] = partial
         state["error"] = error_text
 
     def _cleanup_refresh_ui(self):
@@ -1070,7 +1096,16 @@ class ProgramSearchDialog(BaseDialog):
         self._refresh_state = None
 
         if state.get("success"):
-            simpleDialog.dialog(_("完了"), _("データの更新が完了しました。"))
+            partial = state.get("partial")
+            if partial:
+                simpleDialog.dialog(
+                    _("完了"),
+                    _("本日分の番組データのみ更新しました。")
+                    + "\n"
+                    + _("週間データの更新に失敗したため、過去・未来の日付は検索できない場合があります。"),
+                )
+            else:
+                simpleDialog.dialog(_("完了"), _("データの更新が完了しました。"))
             self.update_station_list()
             wx.CallAfter(self._restore_focus_to_search_box)
             wx.CallLater(80, self._restore_focus_to_search_box)

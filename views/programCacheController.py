@@ -191,6 +191,8 @@ class ProgramCacheController:
             if success:
                 self.log.info("Forced weekly database update completed successfully")
                 self.last_update_date = CalendarUtil().get_radio_date()
+                if self.cache_manager:
+                    self.cache_manager.cleanup_old_data(days=21)
                 return True
             else:
                 self.log.warning("Forced weekly database update failed")
