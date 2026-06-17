@@ -105,8 +105,12 @@ def main():
 	_sd.info("[Shutdown] Settings file saved")
 	try:
 		if hasattr(app, 'hMainView') and hasattr(app.hMainView, 'program_cache_controller'):
-			_sd.info("[Shutdown] Calling ProgramCacheController.cleanup (sqlite)")
-			app.hMainView.program_cache_controller.cleanup()
+			controller = app.hMainView.program_cache_controller
+			if not controller._cleanup_done:
+				_sd.info("[Shutdown] Calling ProgramCacheController.cleanup (sqlite)")
+				controller.cleanup()
+			else:
+				_sd.info("[Shutdown] Program cache already closed in Phase 2; skipping")
 		else:
 			_sd.warning("[Shutdown] program_cache_controller missing; skipping DB close")
 	except Exception as cleanup_error:

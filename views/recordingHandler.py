@@ -366,10 +366,6 @@ class RecordingHandler:
             if self.recordingStatusTimer:
                 self.recordingStatusTimer.Stop()
             
-            # 録音スケジュールのクリーンアップ
-            from recorder import schedule_manager
-            schedule_manager.cleanup()
-            
             # 全ての録音を停止
             from recorder import recorder_manager
             recorder_manager.cleanup()

@@ -253,9 +253,10 @@ class Events(BaseEvents):
 		sd.info("[Shutdown] Phase 2: Cleanup (recording handler, radio/mpv, schedule data)")
 		self._cleanup_recording_handler()
 		self._cleanup_radio_manager()
+		self._cleanup_program_cache()
 		self._cleanup_schedule_data()
 		sd.info(
-			"[Shutdown] Phase 2 complete (program cache sqlite closes after MainLoop returns)"
+			"[Shutdown] Phase 2 complete (program cache sqlite closed; MainLoop ends next)"
 		)
 		self.log.info("Tearing down UI resources")
 		globalVars.app.tb.Destroy()
@@ -287,6 +288,17 @@ class Events(BaseEvents):
 				self.parent.radio_manager.exit()
 			except Exception as e:
 				self.log.error("radio_manager cleanup failed: %s", e, exc_info=True)
+
+	def _cleanup_program_cache(self):
+		"""番組キャッシュのクリーンアップ"""
+		if hasattr(self.parent, 'program_cache_controller'):
+			try:
+				shutdown_log.get_shutdown_logger().info(
+					"[Shutdown] Running program_cache_controller.cleanup (sqlite)"
+				)
+				self.parent.program_cache_controller.cleanup()
+			except Exception as e:
+				self.log.error("program_cache_controller cleanup failed: %s", e, exc_info=True)
 
 	def _cleanup_schedule_data(self):
 		"""スケジュール録音データの完全削除"""

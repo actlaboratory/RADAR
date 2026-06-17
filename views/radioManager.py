@@ -615,7 +615,6 @@ class RadioManager:
     def exit(self):
         """終了処理"""
         if self._shutting_down:
-            self._player.exit()
             return
         self.log.info("RadioManager.exit: stopping timers and shutting down mpv")
         self._shutting_down = True

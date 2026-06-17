@@ -919,6 +919,7 @@ class RecorderManager:
         self.max_hours = MAX_RECORDING_HOURS
         self.last_start_error = ""
         self.manual_completed_recordings = []
+        self._cleanup_done = False
 
     def append_manual_completed_recording(self, info, output_path, filetype, start_ts, end_ts=None):
         """予約録音以外で正常完了した録音を「完了した録音」用に記録する。"""
@@ -1356,6 +1357,9 @@ class RecorderManager:
 
     def cleanup(self):
         """クリーンアップ"""
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
         self.logger.info("Starting RecorderManager cleanup")
         self.stop_all(wait=True)
         self.logger.info("RecorderManager cleanup completed")
@@ -1464,6 +1468,9 @@ class ScheduleManager:
         self.lock = threading.Lock()
         self.token_manager = None  # 認証トークン管理
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="schedule_executor")
+        self._monitor_stopped = False
+        self._cleanup_done = False
+        self._executor_shutdown = False
         self.load_schedules()
 
     def add_schedule(self, schedule):
@@ -1634,13 +1641,17 @@ class ScheduleManager:
 
     def stop_monitoring(self):
         """監視を停止"""
+        if self._monitor_stopped:
+            return
+        self._monitor_stopped = True
         self.running = False
-        if self.timer:
-            self.timer.join(timeout=5)
-        
-        # スレッドプールをシャットダウン
-        self.executor.shutdown(wait=True)
-        
+        if self.timer and self.timer.is_alive():
+            self.timer.join(timeout=1.0)
+        self.timer = None
+        if self.executor and not self._executor_shutdown:
+            self.executor.shutdown(wait=False, cancel_futures=True)
+            self._executor_shutdown = True
+            self.logger.info("Schedule executor shutdown completed")
         self.logger.info("Schedule monitoring stopped")
 
     def _monitor_loop(self):
@@ -1837,6 +1848,9 @@ class ScheduleManager:
 
     def cleanup(self):
         """アプリ終了時のクリーンアップ処理"""
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
         try:
             self.logger.info("Starting schedule cleanup...")
             
@@ -1855,11 +1869,6 @@ class ScheduleManager:
                 if updated_count > 0:
                     self.save_schedules()
                     self.logger.info(f"Updated {updated_count} recording schedules to cancelled status")
-            
-            # スレッドプールをシャットダウン
-            if self.executor:
-                self.executor.shutdown(wait=False)
-                self.logger.info("Schedule executor shutdown completed")
             
             self.logger.info("Schedule cleanup completed")
             
