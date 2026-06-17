@@ -1,3 +1,4 @@
+import atexit
 import json
 import os
 import subprocess
@@ -66,6 +67,26 @@ except Exception:
     AudioUtilities = None
     ISimpleAudioVolume = None
     HAS_PYCAW = False
+
+
+def shutdown_global_mpv_player():
+    """RadioManager.exit を経由できない異常終了経路向けに MPV を停止する。"""
+    try:
+        app = getattr(globalVars, "app", None)
+        if not app:
+            return
+        main_view = getattr(app, "hMainView", None)
+        if not main_view:
+            return
+        radio_manager = getattr(main_view, "radio_manager", None)
+        if not radio_manager:
+            return
+        radio_manager.exit()
+    except Exception:
+        pass
+
+
+atexit.register(shutdown_global_mpv_player)
 
 
 class MPVAudioPlayer:

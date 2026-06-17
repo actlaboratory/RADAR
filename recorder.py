@@ -1904,6 +1904,8 @@ def signal_handler(signum, frame):
         print(f"Received signal {signum}, cleaning up...")
         schedule_manager.cleanup_on_error()
         recorder_manager.cleanup()
+        from views.mpvPlayer import shutdown_global_mpv_player
+        shutdown_global_mpv_player()
     except Exception as e:
         print(f"Error during signal cleanup: {e}")
     finally:
