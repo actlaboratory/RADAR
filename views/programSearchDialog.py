@@ -1185,18 +1185,8 @@ class ProgramSearchDialog(BaseDialog):
                 simpleDialog.errorDialog(_("日時情報の解析に失敗しました。"))
                 return
             
-            # 録音品質を取得（メインウィンドウの設定から）
-            filetype = "mp3"  # デフォルト
-            try:
-                if hasattr(globalVars.app.hMainView, 'menu'):
-                    menu = globalVars.app.hMainView.menu
-                    if hasattr(menu, 'hRecordingFileTypeMenu'):
-                        if menu.hRecordingFileTypeMenu.IsChecked(constants.RECORDING_M4A):  # M4A
-                            filetype = "m4a"
-                        elif menu.hRecordingFileTypeMenu.IsChecked(constants.RECORDING_WAV):  # WAV
-                            filetype = "wav"
-            except Exception as e:
-                self.log.warning(f"Failed to get recording file type, using default: {e}")
+            # 録音品質を取得（設定ファイルから）
+            filetype = get_file_type_from_config()
             
             # 出力パスを準備
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
