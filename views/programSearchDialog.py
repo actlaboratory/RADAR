@@ -1110,7 +1110,7 @@ class ProgramSearchDialog(BaseDialog):
     def _perform_data_refresh(self):
         """データ更新の実際の処理"""
         progress = DatabaseUpdateProgress()
-        progress.start(self.wnd)
+        progress.start(parent=None)
         self._refresh_state = {"success": False, "error": None, "progress": progress}
         self._refresh_worker = threading.Thread(
             target=self._perform_data_refresh_worker,
