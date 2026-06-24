@@ -1,3 +1,4 @@
+import atexit
 import json
 import os
 import subprocess
@@ -68,6 +69,28 @@ except Exception:
     HAS_PYCAW = False
 
 
+def shutdown_global_mpv_player():
+    """RadioManager.exit を経由できない異常終了経路向けに MPV を停止する。"""
+    try:
+        app = getattr(globalVars, "app", None)
+        if not app:
+            return
+        main_view = getattr(app, "hMainView", None)
+        if not main_view:
+            return
+        radio_manager = getattr(main_view, "radio_manager", None)
+        if not radio_manager:
+            return
+        if getattr(radio_manager, "_shutting_down", False):
+            return
+        radio_manager.exit()
+    except Exception:
+        pass
+
+
+atexit.register(shutdown_global_mpv_player)
+
+
 class MPVAudioPlayer:
     def __init__(self):
         self._log = getLogger(f"{constants.LOG_PREFIX}.MPVAudioPlayer")
@@ -81,6 +104,7 @@ class MPVAudioPlayer:
         self._last_error = ""
         self._lock = threading.RLock()
         self._ipc_pipe_name = f"radar_mpv_{uuid.uuid4().hex}" if os.name == "nt" else ""
+        self._shutdown_done = False
         self._load_device_from_config()
 
     def _load_device_from_config(self):
@@ -170,6 +194,9 @@ class MPVAudioPlayer:
             self._stop_locked()
 
     def exit(self):
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
         self._log.info("MPVAudioPlayer.exit: starting shutdown")
         self.stop()
         self._log.info("MPVAudioPlayer.exit: shutdown complete")
@@ -288,9 +315,17 @@ class MPVAudioPlayer:
         pid = proc.pid if proc else None
         self._log.info("mpv shutdown: starting pid=%s ipc=%s", pid, self._ipc_pipe_name or "(none)")
         used_kill = False
+        if self._send_mpv_ipc_command_locked(["quit"], retries=8, delay_sec=0.02):
+            try:
+                rc = proc.wait(timeout=0.5)
+                self._log.info("mpv shutdown: exited after ipc quit pid=%s returncode=%s", pid, rc)
+                self._process = None
+                return
+            except Exception:
+                pass
         try:
             proc.terminate()
-            rc = proc.wait(timeout=2)
+            rc = proc.wait(timeout=0.5)
             self._log.info("mpv shutdown: exited after terminate pid=%s returncode=%s", pid, rc)
         except Exception as e_term:
             self._log.warning(
@@ -301,7 +336,7 @@ class MPVAudioPlayer:
             try:
                 proc.kill()
                 used_kill = True
-                rc = proc.wait(timeout=2)
+                rc = proc.wait(timeout=0.5)
                 self._log.info("mpv shutdown: exited after kill pid=%s returncode=%s", pid, rc)
             except Exception as e_kill:
                 self._log.error("mpv shutdown: kill failed pid=%s: %s", pid, e_kill)

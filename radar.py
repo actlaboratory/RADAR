@@ -7,7 +7,7 @@ import simpleDialog
 import requests.exceptions
 import traceback
 import winsound
-from views.mpvPlayer import MPVAudioPlayer
+from views.mpvPlayer import shutdown_global_mpv_player
 
 
 #64bitのPythonでは起動させない
@@ -43,6 +43,11 @@ def exchandler(type, exc, tb):
 			shutdown_log.flush_app_log_handlers()
 		except Exception:
 			print(f"Error during cache cleanup: {cache_cleanup_error}")
+
+	try:
+		shutdown_global_mpv_player()
+	except Exception as mpv_cleanup_error:
+		print(f"Error during mpv cleanup: {mpv_cleanup_error}")
 	
 	if type == requests.exceptions.ConnectionError:
 		simpleDialog.errorDialog(_("通信に失敗しました。インターネット接続を確認してください。プログラムを終了します。"))
@@ -67,8 +72,7 @@ def exchandler(type, exc, tb):
 		f.close()
 	except:
 		pass
-	os._exit(1	)
-	MPVAudioPlayer().exit()
+	os._exit(1)
 
 
 sys.excepthook=exchandler
@@ -101,8 +105,12 @@ def main():
 	_sd.info("[Shutdown] Settings file saved")
 	try:
 		if hasattr(app, 'hMainView') and hasattr(app.hMainView, 'program_cache_controller'):
-			_sd.info("[Shutdown] Calling ProgramCacheController.cleanup (sqlite)")
-			app.hMainView.program_cache_controller.cleanup()
+			controller = app.hMainView.program_cache_controller
+			if not controller._cleanup_done:
+				_sd.info("[Shutdown] Calling ProgramCacheController.cleanup (sqlite)")
+				controller.cleanup()
+			else:
+				_sd.info("[Shutdown] Program cache already closed in Phase 2; skipping")
 		else:
 			_sd.warning("[Shutdown] program_cache_controller missing; skipping DB close")
 	except Exception as cleanup_error:

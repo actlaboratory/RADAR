@@ -271,8 +271,9 @@ class ProgramDataCollector:
     def stop_background_collection(self):
         """バックグラウンド収集を停止"""
         self.is_collecting = False
-        if self.collection_thread:
-            self.collection_thread.join(timeout=5)
+        if self.collection_thread and self.collection_thread.is_alive():
+            self.collection_thread.join(timeout=0.2)
+        self.collection_thread = None
         self.log.info("Background collection stopped")
     
     def _background_collection_loop(self):
@@ -324,8 +325,6 @@ class ProgramDataCollector:
     
     def cleanup(self):
         """リソースのクリーンアップ"""
-        self.log.info("ProgramDataCollector.cleanup: stopping background collection and closing DB")
+        self.log.info("ProgramDataCollector.cleanup: stopping background collection")
         self.stop_background_collection()
-        if self.cache_manager:
-            self.cache_manager.close()
         self.log.info("ProgramDataCollector.cleanup: done")

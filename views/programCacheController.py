@@ -31,6 +31,7 @@ class ProgramCacheController:
         
         # データベースファイルのパス
         self.db_path = constants.PROGRAM_CACHE_DB_NAME
+        self._cleanup_done = False
         
         # 初期化を実行
         self._initialize_cache_system()
@@ -191,6 +192,8 @@ class ProgramCacheController:
             if success:
                 self.log.info("Forced weekly database update completed successfully")
                 self.last_update_date = CalendarUtil().get_radio_date()
+                if self.cache_manager:
+                    self.cache_manager.cleanup_old_data(days=21)
                 return True
             else:
                 self.log.warning("Forced weekly database update failed")
@@ -493,6 +496,9 @@ class ProgramCacheController:
     
     def cleanup(self):
         """リソースのクリーンアップ"""
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
         self.log.info("ProgramCacheController.cleanup: starting (stop collection, close DB)")
         try:
             if self.data_collector:

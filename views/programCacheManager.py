@@ -308,7 +308,7 @@ class ProgramCacheManager:
                 self.log.debug(f"No programs found for date {date}, cache invalid")
                 return False
             
-            last_update_time = datetime.datetime.fromisoformat(last_update)
+            last_update_time = datetime.datetime.strptime(last_update[:8], '%Y%m%d')
             age = datetime.datetime.now() - last_update_time
             is_valid = age.total_seconds() < (max_age_hours * 3600)
             
