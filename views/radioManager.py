@@ -589,6 +589,7 @@ class RadioManager:
         self.setupradio()
         self.setRadioList()
         self._sync_program_info_menu_after_station_list_reload(was_displaying)
+        self.creator.GetSizer().Layout()
 
     def _sync_program_info_menu_after_station_list_reload(self, was_displaying):
         """放送局一覧の再構築後、番組情報の表示設定とメニューを整合させる"""
