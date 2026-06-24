@@ -34,6 +34,9 @@ class databaseUpdateDialog(BaseDialog):
 		self.gauge.SetRange(100)
 		self.gauge.SetValue(0)
 
+	def set_status_text(self, text):
+		self.statusStatic.SetLabel(text)
+
 	def update_progress(self, current, total, status_text=None):
 		if total > 0:
 			self.gauge.SetRange(total)

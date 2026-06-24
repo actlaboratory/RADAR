@@ -188,7 +188,7 @@ class ProgramCacheController:
             return False
 
     def _collect_weekly_data(self, progress=None):
-        """週間データ収集を実行（progress 指定時のみ進捗UI・読み上げ）"""
+        """週間データ収集を実行（progress 指定時のみ進捗UI）"""
         success = False
         try:
             if progress and self.data_collector:
