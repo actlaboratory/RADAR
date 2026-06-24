@@ -142,34 +142,20 @@ class ProgramCacheController:
                 self._schedule_wait_and_update()
                 return
             
-            self.log.info(f"Starting database update with {len(self.radio_manager.stid)} stations")
+            self.log.info(f"Scheduling background database update with {len(self.radio_manager.stid)} stations")
             
-            # データ収集器を初期化
-            self.data_collector = ProgramDataCollector(self.cache_manager)
-            self.data_collector.set_radio_manager(self.radio_manager)
+            if not self.data_collector:
+                self.data_collector = ProgramDataCollector(self.cache_manager)
+                self.data_collector.set_radio_manager(self.radio_manager)
             
-            radio_date = CalendarUtil().get_radio_date()
-            self.log.info(f"Starting weekly data collection from radio base date {radio_date}")
-            
-            # 週間データ収集を実行（ラジオ基準日を起点に15日分）
-            success = self.data_collector.collect_weekly_data(force_refresh=True)
-            
-            if success:
-                self.log.info("Weekly database update completed successfully")
-                self.last_update_date = CalendarUtil().get_radio_date()
-            else:
-                self.log.warning("Weekly database update failed, but continuing with existing data")
-            
-            self.cache_manager.cleanup_old_data(days=21)
-            
-            # サービスを初期化
             self._initialize_services()
+            self._schedule_weekly_update_background()
             
         except Exception as e:
             self.log.error(f"Failed to update database: {e}")
             self._handle_database_error(e)
     
-    def force_weekly_update(self):
+    def force_weekly_update(self, progress=None):
         """1週間分のデータを強制的に更新"""
         try:
             if not self.radio_manager or not hasattr(self.radio_manager, 'stid') or not self.radio_manager.stid:
@@ -186,12 +172,10 @@ class ProgramCacheController:
             radio_date = CalendarUtil().get_radio_date()
             self.log.info(f"Starting forced weekly data collection from radio base date {radio_date}")
             
-            # 週間データ収集を実行（ラジオ基準日を起点に15日分）
-            success = self.data_collector.collect_weekly_data(force_refresh=True)
+            success = self._collect_weekly_data(progress=progress)
             
             if success:
                 self.log.info("Forced weekly database update completed successfully")
-                self.last_update_date = CalendarUtil().get_radio_date()
                 if self.cache_manager:
                     self.cache_manager.cleanup_old_data(days=21)
                 return True
@@ -202,6 +186,41 @@ class ProgramCacheController:
         except Exception as e:
             self.log.error(f"Failed to force weekly update: {e}")
             return False
+
+    def _collect_weekly_data(self, progress=None):
+        """週間データ収集を実行（progress 指定時のみ進捗UI）"""
+        success = False
+        try:
+            if progress and self.data_collector:
+                self.data_collector.set_progress_callback(progress.report)
+            success = self.data_collector.collect_weekly_data(force_refresh=True)
+            if success:
+                self.last_update_date = CalendarUtil().get_radio_date()
+            return success
+        finally:
+            if self.data_collector:
+                self.data_collector.set_progress_callback(None)
+
+    def _schedule_weekly_update_background(self):
+        """週間データ更新をバックグラウンドで実行"""
+        try:
+            def background_weekly_update():
+                try:
+                    radio_date = CalendarUtil().get_radio_date()
+                    self.log.info(f"Starting background weekly data collection from radio base date {radio_date}")
+                    success = self._collect_weekly_data()
+                    if success:
+                        self.log.info("Background weekly database update completed successfully")
+                        if self.cache_manager:
+                            self.cache_manager.cleanup_old_data(days=21)
+                    else:
+                        self.log.warning("Background weekly database update failed")
+                except Exception as e:
+                    self.log.error(f"Background weekly update failed: {e}")
+
+            threading.Thread(target=background_weekly_update, daemon=True).start()
+        except Exception as e:
+            self.log.error(f"Failed to schedule background weekly update: {e}")
     
     def _initialize_services(self):
         """検索サービスを初期化"""
@@ -428,10 +447,9 @@ class ProgramCacheController:
                         self.data_collector.set_radio_manager(self.radio_manager)
                     radio_date = CalendarUtil().get_radio_date()
                     self.log.info(f"Starting deferred weekly data collection from radio base date {radio_date}")
-                    ok = self.data_collector.collect_weekly_data(force_refresh=True)
+                    ok = self._collect_weekly_data()
                     if ok:
                         self.log.info("Deferred weekly database update completed successfully")
-                        self.last_update_date = CalendarUtil().get_radio_date()
                     else:
                         self.log.warning("Deferred weekly database update failed")
                 except Exception as e:

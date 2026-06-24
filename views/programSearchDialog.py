@@ -16,6 +16,7 @@ import views.ViewCreator
 from views.programCacheManager import ProgramCacheManager
 from views.programSearchEngine import ProgramSearchEngine
 from views.programDataCollector import ProgramDataCollector
+from views.databaseUpdateProgress import DatabaseUpdateProgress
 from views import programmanager
 from searchHistoryManager import SearchHistoryManager
 from recorder import schedule_manager, RecordingSchedule, recorder_manager, create_recording_dir, get_file_type_from_config
@@ -68,7 +69,6 @@ class ProgramSearchDialog(BaseDialog):
         self._base_date_options = []
         self._refresh_worker = None
         self._refresh_state = None
-        self._refresh_wait_dialog = None
         self._refresh_poller = None
 
         # 検索履歴管理
@@ -1007,11 +1007,12 @@ class ProgramSearchDialog(BaseDialog):
         success = False
         partial = False
         error_text = None
+        progress = state.get("progress")
         try:
             controller = getattr(globalVars.app.hMainView, 'program_cache_controller', None)
             if controller and hasattr(controller, 'force_weekly_update'):
                 self.log.info("Requesting ProgramCacheController to force weekly update")
-                success = controller.force_weekly_update()
+                success = controller.force_weekly_update(progress=progress)
         except Exception as e:
             self.log.warning(f"Controller update failed: {e}")
             error_text = str(e)
@@ -1024,11 +1025,16 @@ class ProgramSearchDialog(BaseDialog):
                     if self.radio_manager:
                         self.data_collector.set_radio_manager(self.radio_manager)
                 self.log.warning("Falling back to today's data collection")
+                if progress:
+                    self.data_collector.set_progress_callback(progress.report)
                 success = self.data_collector.collect_all_stations_data(force_refresh=True)
                 partial = success
             except Exception as e:
                 self.log.error(f"Fallback data collection failed: {e}")
                 error_text = str(e)
+            finally:
+                if self.data_collector:
+                    self.data_collector.set_progress_callback(None)
 
         state["success"] = success
         state["partial"] = partial
@@ -1041,29 +1047,6 @@ class ProgramSearchDialog(BaseDialog):
             except Exception:
                 pass
         self._refresh_poller = None
-        if self._refresh_wait_dialog:
-            try:
-                if self._refresh_wait_dialog.IsShown():
-                    self._refresh_wait_dialog.Destroy()
-            except Exception:
-                pass
-        self._refresh_wait_dialog = None
-
-    def _show_refresh_wait_dialog(self):
-        if self._refresh_wait_dialog:
-            return
-        dlg = wx.Dialog(
-            self.wnd,
-            title=_("データ更新中"),
-            style=wx.CAPTION | wx.STAY_ON_TOP,
-        )
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        text = wx.StaticText(dlg, label=_("データベースを更新しています。しばらくお待ちください。"))
-        sizer.Add(text, 0, wx.ALL | wx.ALIGN_CENTER, 20)
-        dlg.SetSizerAndFit(sizer)
-        dlg.CentreOnParent()
-        dlg.Show()
-        self._refresh_wait_dialog = dlg
 
     def _restore_focus_to_search_box(self):
         """更新完了後に検索ボックスへフォーカスを戻す。"""
@@ -1091,6 +1074,9 @@ class ProgramSearchDialog(BaseDialog):
             return
 
         state = self._refresh_state or {"success": False}
+        progress = state.get("progress")
+        if progress:
+            progress.finish(state.get("success", False))
         self._cleanup_refresh_ui()
         self._refresh_worker = None
         self._refresh_state = None
@@ -1123,8 +1109,9 @@ class ProgramSearchDialog(BaseDialog):
 
     def _perform_data_refresh(self):
         """データ更新の実際の処理"""
-        self._refresh_state = {"success": False, "error": None}
-        self._show_refresh_wait_dialog()
+        progress = DatabaseUpdateProgress()
+        progress.start(parent=None)
+        self._refresh_state = {"success": False, "error": None, "progress": progress}
         self._refresh_worker = threading.Thread(
             target=self._perform_data_refresh_worker,
             args=(self._refresh_state,),

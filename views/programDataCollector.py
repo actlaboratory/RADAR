@@ -21,10 +21,27 @@ class ProgramDataCollector:
         self.collection_thread = None
         self.is_collecting = False
         self.collection_interval = 3600  # 1時間ごと
+        self.progress_callback = None
     
     def set_radio_manager(self, radio_manager):
         """RadioManagerを設定"""
         self.radio_manager = radio_manager
+
+    def set_progress_callback(self, callback):
+        """進捗通知コールバック (current, total, status_text) を設定"""
+        self.progress_callback = callback
+
+    def _report_progress(self, current, total, status_text=None):
+        if self.progress_callback:
+            try:
+                self.progress_callback(current, total, status_text)
+            except Exception as e:
+                self.log.warning(f"Progress callback failed: {e}")
+
+    def _get_station_name(self, station_id):
+        if self.radio_manager and hasattr(self.radio_manager, 'stid'):
+            return self.radio_manager.stid.get(station_id, station_id)
+        return station_id
     
     def collect_all_stations_data(self, date=None, force_refresh=False):
         """全放送局の番組データを収集"""
@@ -57,9 +74,16 @@ class ProgramDataCollector:
             # 各放送局のデータを収集
             collected_data = {}
             success_count = 0
+            total = len(station_ids)
             
-            for station_id in station_ids:
+            for index, station_id in enumerate(station_ids, start=1):
                 try:
+                    station_name = self._get_station_name(station_id)
+                    self._report_progress(
+                        index,
+                        total,
+                        _("%(date)s %(station)s を取得中") % {"date": date, "station": station_name},
+                    )
                     station_data = self._collect_station_data(station_id, date)
                     if station_data:
                         collected_data[station_id] = station_data
@@ -120,6 +144,8 @@ class ProgramDataCollector:
         
         success_count = 0
         total_days = len(date_list)
+        total_steps = total_days * len(station_ids)
+        current_step = 0
         
         for date_str in date_list:
             try:
@@ -131,6 +157,16 @@ class ProgramDataCollector:
                 
                 for station_id in station_ids:
                     try:
+                        current_step += 1
+                        station_name = self._get_station_name(station_id)
+                        self._report_progress(
+                            current_step,
+                            total_steps,
+                            _("%(date)s %(station)s を取得中") % {
+                                "date": date_str,
+                                "station": station_name,
+                            },
+                        )
                         station_data = self._collect_station_data(station_id, date_str)
                         if station_data:
                             collected_data[station_id] = station_data
