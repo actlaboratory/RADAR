@@ -12,7 +12,7 @@ import re
 import shutil
 from notification_util import notify as notification_notify
 from logging import getLogger
-from views import token
+from views import programmanager
 import threading
 import time
 import json
@@ -668,7 +668,7 @@ def _ffmpeg_output_quality_args(filetype):
 
 class TimefreeChunkedRecordingHandle:
     """
-    聴き逃し（playlist_create_url）の l<=300 秒制限に対応する分割取得 + concat。
+    聴き逃しの l<=300 秒制限に対応する分割取得 + concat。
     中間は常に AAC コピー（m4a）で結合し、最後にユーザー指定形式へ変換する。
     """
 
@@ -1466,7 +1466,7 @@ class ScheduleManager:
         self.timer = None
         self.running = False
         self.lock = threading.Lock()
-        self.token_manager = None  # 認証トークン管理
+        self.program_manager = None
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="schedule_executor")
         self._monitor_stopped = False
         self._cleanup_done = False
@@ -1669,31 +1669,19 @@ class ScheduleManager:
                 time.sleep(SCHEDULE_CHECK_INTERVAL)
 
     def _get_authenticated_stream_url(self, station_id, max_retries=3):
-        """認証済みのストリームURLを取得（リトライ機能付き）"""
+        """認証済みのストリームURLとHTTPヘッダーを取得（リトライ機能付き）"""
         for attempt in range(max_retries):
             try:
-                if not self.token_manager:
-                    self.token_manager = token.Token()
-                
-                # 認証を実行
-                auth_response = self.token_manager.auth1()
-                partial_key, auth_token = self.token_manager.get_partial_key(auth_response)
-                self.token_manager.auth2(partial_key, auth_token)
-                
-                # 認証済みストリームURLを取得
-                base_url = f'http://f-radiko.smartstream.ne.jp/{station_id}/_definst_/simul-stream.stream/playlist.m3u8'
-                stream_url = self.token_manager.gen_temp_chunk_m3u8_url(base_url, auth_token)
-                
+                if not self.program_manager:
+                    self.program_manager = programmanager.ProgramManager()
+                stream_url, headers = self.program_manager.get_authenticated_stream_url(station_id)
                 self.logger.debug(f"Authenticated stream URL obtained: {stream_url}")
-                return stream_url
-                
+                return stream_url, headers
             except Exception as e:
                 self.logger.warning(f"Authentication attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
-                    # リトライ前に短時間待機（非同期スレッドなので短縮）
                     time.sleep(0.5)
-                    # トークンマネージャーをリセット
-                    self.token_manager = None
+                    self.program_manager = None
                 else:
                     self.logger.error(f"Failed to get authenticated stream URL after {max_retries} attempts: {e}")
                     raise
@@ -1719,7 +1707,7 @@ class ScheduleManager:
                     return
 
                 # 認証済みストリームURLの取得
-                stream_url = self._get_authenticated_stream_url(schedule.station_id)
+                stream_url, http_headers = self._get_authenticated_stream_url(schedule.station_id)
                 
                 # 録音開始
                 # ラジコの放送時刻と配信時刻のずれに対応するため、停止時刻を30秒延長
@@ -1751,6 +1739,7 @@ class ScheduleManager:
                     station_id=schedule.station_id,
                     program_title=schedule.program_title,
                     schedule_id=schedule.id,
+                    http_headers=http_headers,
                 )
                 
                 if recorder:

@@ -194,7 +194,17 @@ class RecordingHandler:
                 except Exception as e:
                     self.log.error(f"Failed to send recording completion notification: {e}")
             
-            recorder = recorder_manager.start_recording(stream_url, file_path, info, end_time, filetype, on_recording_complete, self.events.current_selected_station_id, title)
+            recorder = recorder_manager.start_recording(
+                stream_url,
+                file_path,
+                info,
+                end_time,
+                filetype,
+                on_recording_complete,
+                self.events.current_selected_station_id,
+                title,
+                http_headers=getattr(self.parent.radio_manager, "live_http_headers", None),
+            )
             if recorder:
                 self.log.info(f"Recording started: {title}")
                 self._update_recording_menu_for_station(self.events.current_selected_station_id)

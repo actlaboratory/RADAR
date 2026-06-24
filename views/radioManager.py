@@ -48,6 +48,7 @@ class RadioManager:
         self.region = region_dic.REGION
         self.area = None
         self.m3u8 = None
+        self.live_http_headers = {}
         self.current_station_id = None
         self.current_progs = None
         self.playback_mode = None
@@ -264,7 +265,7 @@ class RadioManager:
 
     def get_streamUrl(self, stationid, progs):
         """ストリームURLを取得"""
-        self.m3u8 = progs.get_authenticated_stream_url(stationid)
+        self.m3u8, self.live_http_headers = progs.get_authenticated_stream_url(stationid)
 
     def _refresh_playback_stream(self, max_retries=3, force_reconnect=False):
         """再生中のストリームURLを再取得してプレイヤーへ反映"""
@@ -282,6 +283,7 @@ class RadioManager:
                     self.get_streamUrl(self.current_station_id, self.current_progs)
                     if not self.m3u8:
                         raise RuntimeError("empty stream url")
+                    self._player.setHttpHeaders(self.live_http_headers)
                     self._player.setSource(self.m3u8)
                     self._player.play()
                     return True
@@ -349,7 +351,7 @@ class RadioManager:
         self._timefree_info = None
         self.get_streamUrl(id, progs)
         self._player.setNonSeekableInput(True)
-        self._player.setHttpHeaders(None)
+        self._player.setHttpHeaders(self.live_http_headers)
         self._player.setStartPosition(0)
         self.player()
         self.update_program_info()

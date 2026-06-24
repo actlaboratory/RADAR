@@ -107,7 +107,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             return None
 
         try:
-            stream_url = self.progs.get_authenticated_stream_url(self.stid)
+            stream_url, http_headers = self.progs.get_authenticated_stream_url(self.stid)
         except Exception as e:
             self.log.error(f"Failed to get live stream URL for remainder recording: {e}")
             simpleDialog.errorDialog(_("ストリームURLの取得に失敗しました。"))
@@ -143,6 +143,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             on_recording_complete,
             self.stid,
             safe_title,
+            http_headers=http_headers,
         )
         if not recorder:
             detail = recorder_manager.get_last_start_error()
