@@ -12,7 +12,7 @@ import urllib.parse
 from views import token
 
 LIVE_PLAYLIST_URL = "https://alliance-stream-radiko.smartstream.ne.jp/so/playlist.m3u8"
-TIMEFREE_PLAYLIST_URL = "https://tf-rpaa.smartstream.ne.jp/tf/playlist.m3u8"
+TIMEFREE_PLAYLIST_URL = "https://tf-f-rpaa-radiko.smartstream.ne.jp/tf/playlist.m3u8"
 RADIKO_API_BASE = "https://radiko.jp/v3"
 
 class ProgramManager:
@@ -23,6 +23,7 @@ class ProgramManager:
         self.token = None
         self.partialkey = None
         self.area_id = ""
+        self._timefree_playlist_base_cache = {}
         self.jpCode()
 
     def refresh_auth_session(self):
@@ -135,6 +136,30 @@ class ProgramManager:
             return remain_sec
         return ((remain_sec // 5) + 1) * 5
 
+    def _get_timefree_playlist_base_url(self, station_id):
+        """放送局ごとのタイムフリー playlist ベース URL を返す"""
+        cached = self._timefree_playlist_base_cache.get(station_id)
+        if cached:
+            return cached
+        url = f"{RADIKO_API_BASE}/station/stream/pc_html5/{station_id}.xml"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+        for item in root.findall(".//url"):
+            if item.get("timefree") != "1":
+                continue
+            playlist = item.find("playlist_create_url")
+            if playlist is not None and playlist.text:
+                base_url = playlist.text.strip()
+                self._timefree_playlist_base_cache[station_id] = base_url
+                return base_url
+        self.log.warning(
+            "timefree playlist_create_url not found for %s; using fallback",
+            station_id,
+        )
+        self._timefree_playlist_base_cache[station_id] = TIMEFREE_PLAYLIST_URL
+        return TIMEFREE_PLAYLIST_URL
+
     def _build_timefree_playlist_url(
         self,
         station_id,
@@ -160,7 +185,8 @@ class ProgramManager:
             "lsid": lsid or self._make_lsid(),
             "type": stream_type,
         })
-        return f"{TIMEFREE_PLAYLIST_URL}?{query}"
+        playlist_base = self._get_timefree_playlist_base_url(station_id)
+        return f"{playlist_base}?{query}"
 
     def _build_timefree_playlist_recording_segments(self, station_id, ft_dt, to_dt):
         """新タイムフリーAPIを l<=300 秒で繰り返し、セグメント一覧を返す。"""
