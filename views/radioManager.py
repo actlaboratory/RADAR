@@ -331,7 +331,7 @@ class RadioManager:
         self.log.info("playing...")
         self._player.play()
 
-    def play(self, id, progs):
+    def play(self, id, progs, program_info=None):
         """再生開始"""
         if self._shutting_down:
             return
@@ -344,6 +344,7 @@ class RadioManager:
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
         self.current_station_id = id
         self.current_progs = progs
+        self.events.current_playing_station_id = id
         self.playback_mode = "live"
         self._timefree_started_monotonic = None
         self._timefree_resume_position_sec = 0
@@ -361,7 +362,13 @@ class RadioManager:
         self.streamWatchdogTimer.Start(self.stream_watchdog_interval_ms)
         self.update_timefree_command_ui()
         if hasattr(self.parent, "program_info_handler"):
-            self.parent.program_info_handler.clear_timefree_program_info()
+            handler = self.parent.program_info_handler
+            handler.clear_timefree_program_info()
+            if self.events.displaying:
+                if program_info:
+                    handler.show_program_info_snapshot(program_info)
+                else:
+                    handler.get_latest_info()
 
         try:
             station_name = self.stid.get(id, id)

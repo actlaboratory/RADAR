@@ -96,15 +96,18 @@ class ProgramInfoHandler:
         self._timefree_program_info = dict(info or {})
         self._render_timefree_program_info()
 
+    def show_program_info_snapshot(self, info):
+        """ダイアログ等で選択した番組情報を表示（ライブ再生開始時）"""
+        if not self.events.displaying:
+            return
+        self.ensure_program_info_ui()
+        self._render_program_details(info or {})
+
     def clear_timefree_program_info(self):
         """聴き逃し番組情報表示を解除"""
         self._timefree_program_info = None
 
-    def _render_timefree_program_info(self):
-        if not self.events.displaying:
-            return
-        self.ensure_program_info_ui()
-        info = self._timefree_program_info or {}
+    def _render_program_details(self, info):
         station_name = info.get("station_name", "")
         title = info.get("title", "")
         performer = info.get("performer", "")
@@ -121,6 +124,12 @@ class ProgramInfoHandler:
             self.DSCBOX.SetValue(description)
         else:
             self.DSCBOX.SetValue("")
+
+    def _render_timefree_program_info(self):
+        if not self.events.displaying:
+            return
+        self.ensure_program_info_ui()
+        self._render_program_details(self._timefree_program_info or {})
 
     def show_description(self, station_id):
         """番組の説明を表示"""

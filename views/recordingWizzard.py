@@ -262,7 +262,15 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 return
             # 放送中はタイムフリーではなくライブストリームで再生する
             if start_dt <= now < end_dt:
-                main_view.radio_manager.play(self.stid, self.progs)
+                performer = self.pfmlst[idx] if 0 <= idx < len(self.pfmlst) else ""
+                description = self.dsclst[idx] if 0 <= idx < len(self.dsclst) else ""
+                program_info = {
+                    "station_name": self.radioname,
+                    "title": title,
+                    "performer": performer,
+                    "description": description,
+                }
+                main_view.radio_manager.play(self.stid, self.progs, program_info=program_info)
                 self._update_timefree_button_label()
                 return
             if hasattr(main_view, "radio_manager") and main_view.radio_manager.is_live_playing():

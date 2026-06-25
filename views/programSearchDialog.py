@@ -774,7 +774,13 @@ class ProgramSearchDialog(BaseDialog):
             rm = mv.radio_manager
             # 放送中はタイムフリーではなくライブストリームで再生する
             if start_dt <= now < end_dt:
-                rm.play(stid, progs)
+                program_info = {
+                    "station_name": program.get("station_name", ""),
+                    "title": program.get("title", ""),
+                    "performer": program.get("performer", ""),
+                    "description": (program.get("description") or "")[:500],
+                }
+                rm.play(stid, progs, program_info=program_info)
                 return
             title = program.get("title", "")
             station_name = program.get("station_name", "")
