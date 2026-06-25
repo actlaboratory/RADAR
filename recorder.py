@@ -672,7 +672,18 @@ class TimefreeChunkedRecordingHandle:
     中間は常に AAC コピー（m4a）で結合し、最後にユーザー指定形式へ変換する。
     """
 
-    def __init__(self, manager, segments, output_path, filetype, input_options, logger, info):
+    def __init__(
+        self,
+        manager,
+        segments,
+        output_path,
+        filetype,
+        input_options,
+        logger,
+        info,
+        station_id=None,
+        program_title=None,
+    ):
         self.manager = manager
         self.segments = segments
         self.output_path = output_path
@@ -680,6 +691,8 @@ class TimefreeChunkedRecordingHandle:
         self.input_options = list(input_options or [])
         self.logger = logger or getLogger("recorder")
         self.info = info
+        self.station_id = station_id
+        self.program_title = program_title
         self._stop = threading.Event()
         self._thread = None
         self._proc = None
@@ -851,6 +864,8 @@ class TimefreeChunkedRecordingHandle:
                 self.filetype,
                 getattr(self, "_started_at", time.time()),
                 time.time(),
+                station_id=self.station_id,
+                program_title=self.program_title,
             )
         except RecordingCancelledError as e:
             self.logger.info("Timefree chunked recording cancelled: %s", e)
@@ -882,6 +897,53 @@ def normalize_program_title_for_dedup(title):
     t = re.sub(r'[<>:"/\\|?*]', "_", str(title)).strip()
     t = re.sub(r"\s+", " ", t)
     return t
+
+
+def resolve_recording_display_names(
+    info=None,
+    station_id=None,
+    program_title=None,
+    station_names=None,
+    unknown_label="不明",
+):
+    """放送局名・番組名をUI表示用に解決する。
+
+    station_id と program_title を優先する。info は「放送局名 番組名」形式のとき、
+    放送局名が既知なら番組名を逆算する。スペースを含む放送局名では info の先頭空白分割は使わない。
+    """
+    station_names = station_names or {}
+    info = (info or "").strip()
+    prog = (program_title or "").strip()
+
+    station = ""
+    if station_id is not None and str(station_id).strip() != "":
+        station = (
+            station_names.get(station_id)
+            or station_names.get(str(station_id))
+            or str(station_id).strip()
+        )
+
+    if not prog and info:
+        if station and info.startswith(station):
+            rest = info[len(station):].strip()
+            if rest:
+                prog = rest
+        elif not station and " " in info:
+            head, _, tail = info.partition(" ")
+            station = head
+            prog = tail.strip()
+
+    if not station and info and prog and info.endswith(prog):
+        prefix = info[:-len(prog)].strip()
+        if prefix:
+            station = prefix
+
+    if not prog:
+        prog = unknown_label
+    if not station:
+        station = unknown_label
+
+    return station, prog
 
 
 def allocate_unique_output_base(output_path_without_ext, filetype, logger=None):
@@ -921,7 +983,16 @@ class RecorderManager:
         self.manual_completed_recordings = []
         self._cleanup_done = False
 
-    def append_manual_completed_recording(self, info, output_path, filetype, start_ts, end_ts=None):
+    def append_manual_completed_recording(
+        self,
+        info,
+        output_path,
+        filetype,
+        start_ts,
+        end_ts=None,
+        station_id=None,
+        program_title=None,
+    ):
         """予約録音以外で正常完了した録音を「完了した録音」用に記録する。"""
         entry = {
             "info": info or "",
@@ -929,6 +1000,8 @@ class RecorderManager:
             "filetype": (filetype or "mp3").lower().lstrip("."),
             "start_time": float(start_ts),
             "end_time": float(end_ts if end_ts is not None else time.time()),
+            "station_id": station_id,
+            "program_title": program_title,
         }
         with self.lock:
             self.manual_completed_recordings.insert(0, entry)
@@ -967,6 +1040,8 @@ class RecorderManager:
                     rec.filetype,
                     start_ts,
                     time.time(),
+                    station_id=station_id,
+                    program_title=program_title,
                 )
 
             recorder = Recorder(
@@ -1046,6 +1121,8 @@ class RecorderManager:
                 input_options,
                 self.logger,
                 info,
+                station_id=station_id,
+                program_title=program_title,
             )
             handle.start()
             with self.lock:
@@ -1260,7 +1337,17 @@ class RecorderManager:
     def get_active_recorders(self):
         """アクティブな録音の一覧を取得"""
         with self.lock:
-            return [(r["recorder"], r["info"]) for r in self.recorders if self._is_recorder_active(r["recorder"])]
+            return [
+                {
+                    "recorder": r["recorder"],
+                    "info": r.get("info", ""),
+                    "station_id": r.get("station_id"),
+                    "program_title": r.get("program_title"),
+                    "start_time": r.get("start_time"),
+                }
+                for r in self.recorders
+                if self._is_recorder_active(r["recorder"])
+            ]
 
     def get_station_recorders(self, station_id):
         """指定された放送局の録音一覧を取得"""

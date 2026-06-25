@@ -11,6 +11,7 @@ import views.ViewCreator
 from recorder import (
     recorder_manager,
     schedule_manager,
+    resolve_recording_display_names,
     RECORDING_STATUS_SCHEDULED,
     RECORDING_STATUS_RECORDING,
     RECORDING_STATUS_COMPLETED,
@@ -130,6 +131,22 @@ class RecordingManagerDialog(BaseDialog):
             self.selected_schedule_id = self.schedules[self.selected_schedule_index].id
         event.Skip()
 
+    def _get_station_name_map(self):
+        try:
+            radio_manager = globalVars.app.hMainView.radio_manager
+            return getattr(radio_manager, "stid", {}) or {}
+        except Exception:
+            return {}
+
+    def _resolve_recording_display(self, entry):
+        return resolve_recording_display_names(
+            info=entry.get("info"),
+            station_id=entry.get("station_id"),
+            program_title=entry.get("program_title"),
+            station_names=self._get_station_name_map(),
+            unknown_label=_("不明"),
+        )
+
     def _set_list_row(self, list_ctrl, row_idx, values):
         list_ctrl.InsertItem(row_idx, str(values[0]))
         for col, value in enumerate(values[1:], start=1):
@@ -160,12 +177,18 @@ class RecordingManagerDialog(BaseDialog):
     def _update_active_list(self):
         self.active_lst.DeleteAllItems()
 
-        for idx, (recorder, info) in enumerate(self.active_recorders):
-            parts = info.split(' ', 1)
-            station_name = parts[0] if parts else "不明"
-            program_title = parts[1] if len(parts) > 1 else "不明"
+        for idx, entry in enumerate(self.active_recorders):
+            recorder = entry["recorder"]
+            station_name, program_title = self._resolve_recording_display(entry)
             file_name = f"{recorder.output_path}.{recorder.filetype}".split("\\")[-1]
-            start_time = datetime.datetime.now().strftime("%H:%M:%S")
+            start_ts = entry.get("start_time")
+            if start_ts:
+                try:
+                    start_time = datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M:%S")
+                except (TypeError, ValueError, OSError):
+                    start_time = datetime.datetime.now().strftime("%H:%M:%S")
+            else:
+                start_time = datetime.datetime.now().strftime("%H:%M:%S")
             self._set_list_row(
                 self.active_lst,
                 idx,
@@ -201,9 +224,13 @@ class RecordingManagerDialog(BaseDialog):
                 )
             )
         for m in recorder_manager.get_manual_completed_recordings():
-            parts = (m.get("info") or "").split(" ", 1)
-            station_name = parts[0] if parts else _("不明")
-            program_title = parts[1] if len(parts) > 1 else _("不明")
+            station_name, program_title = resolve_recording_display_names(
+                info=m.get("info"),
+                station_id=m.get("station_id"),
+                program_title=m.get("program_title"),
+                station_names=self._get_station_name_map(),
+                unknown_label=_("不明"),
+            )
             try:
                 st = datetime.datetime.fromtimestamp(m["start_time"])
                 et = datetime.datetime.fromtimestamp(m["end_time"])
@@ -289,7 +316,8 @@ class RecordingManagerDialog(BaseDialog):
                 simpleDialog.errorDialog(_("選択された録音が見つかりません。"), self.wnd)
                 return
 
-            recorder, info = self.active_recorders[selected]
+            recorder = self.active_recorders[selected]["recorder"]
+            info = self.active_recorders[selected].get("info", "")
             result = simpleDialog.yesNoDialog(
                 _("確認"),
                 f"'{info}' の録音を停止しますか？",
