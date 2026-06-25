@@ -22,7 +22,7 @@ class databaseUpdateDialog(BaseDialog):
 		self.creator = views.ViewCreator.ViewCreator(
 			self.viewMode, self.panel, self.sizer, wx.VERTICAL, 5, style=wx.ALL, margin=20
 		)
-		self.statusStatic = self.creator.staticText(_("番組データベースを更新しています..."))
+		self.statusStatic = self.creator.staticText(_("番組データベースを更新しています...\n"))
 		gauge_style = wx.GA_HORIZONTAL | wx.GA_SMOOTH
 		self.gauge, _gauge_label = self.creator.gauge(
 			_("進行状況"),
@@ -44,7 +44,7 @@ class databaseUpdateDialog(BaseDialog):
 			percent = min(100, int(100 * current / total))
 			if status_text:
 				self.statusStatic.SetLabel(
-					_("%(status)s (%(current)d/%(total)d, %(percent)d%%)") % {
+					_("%(status)s\n(%(current)d/%(total)d, %(percent)d%%)") % {
 						"status": status_text,
 						"current": current,
 						"total": total,
@@ -53,7 +53,7 @@ class databaseUpdateDialog(BaseDialog):
 				)
 			else:
 				self.statusStatic.SetLabel(
-					_("進捗 %(current)d/%(total)d (%(percent)d%%)") % {
+					_("進捗\n%(current)d/%(total)d (%(percent)d%%)") % {
 						"current": current,
 						"total": total,
 						"percent": percent,
