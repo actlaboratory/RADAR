@@ -19,7 +19,14 @@ from views.programDataCollector import ProgramDataCollector
 from views.databaseUpdateProgress import DatabaseUpdateProgress
 from views import programmanager
 from searchHistoryManager import SearchHistoryManager
-from recorder import schedule_manager, RecordingSchedule, recorder_manager, create_recording_dir, get_file_type_from_config
+from recorder import (
+    RECORDING_END_TIME_BUFFER,
+    schedule_manager,
+    RecordingSchedule,
+    recorder_manager,
+    create_recording_dir,
+    get_file_type_from_config,
+)
 from notification_util import notify as notification_notify
 from tcutil import CalendarUtil
 
@@ -489,7 +496,7 @@ class ProgramSearchDialog(BaseDialog):
         now = datetime.datetime.now()
         out = []
         for program in programs:
-            _start_dt, end_dt = self._program_start_end_dt(program)
+            _start_dt, end_dt = self._program_start_end_dt_for_filter(program)
             if end_dt is None:
                 continue
             if end_dt > now:
@@ -686,6 +693,7 @@ class ProgramSearchDialog(BaseDialog):
         return dt
 
     def _program_start_end_dt(self, program):
+        """番組表ダイアログ(recordingWizzard)と同じルールで開始・終了日時を解釈する。"""
         date_str = program.get("date", "") or ""
         start_time_str = program.get("start_time", "") or ""
         end_time_str = program.get("end_time", "") or ""
@@ -699,6 +707,17 @@ class ProgramSearchDialog(BaseDialog):
         end_dt = self._parse_clock_on_listing_date(base_date, end_time_str)
         if not start_dt or not end_dt:
             return None, None
+        if end_dt <= start_dt:
+            end_dt += datetime.timedelta(days=1)
+        return start_dt, end_dt
+
+    def _program_start_end_dt_for_filter(self, program):
+        """検索結果の期間フィルタ用。04:xx表記向け5時切替補正を適用する。"""
+        start_dt, end_dt = self._program_start_end_dt(program)
+        if start_dt is None:
+            return None, None
+        start_time_str = program.get("start_time", "") or ""
+        end_time_str = program.get("end_time", "") or ""
         start_dt = self._adjust_listing_datetime(start_dt, start_time_str, is_end=False)
         end_dt = self._adjust_listing_datetime(end_dt, end_time_str, is_end=True)
         if end_dt <= start_dt:
@@ -724,6 +743,7 @@ class ProgramSearchDialog(BaseDialog):
             self.schedule_btn.Enable(True)
         elif start_dt <= now < end_dt:
             self.timefree_play_btn.Enable(True)
+            self.schedule_btn.Enable(True)
         elif end_dt <= now and not live:
             self.timefree_play_btn.Enable(True)
             self.timefree_rec_btn.Enable(True)
@@ -1119,14 +1139,95 @@ class ProgramSearchDialog(BaseDialog):
         )
         self._refresh_worker.start()
         self._poll_data_refresh_completion()
+
+    def _start_live_remainder_recording(self, station_id, station_name, program_title, start_dt, end_dt):
+        """放送中の番組を、終了時刻までライブストリームで録音する（番組表ダイアログと同様）。"""
+        current = datetime.datetime.now()
+        if current >= end_dt:
+            simpleDialog.errorDialog(_("この番組はすでに終了しています。"))
+            return False
+
+        safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
+        if not safe_title:
+            simpleDialog.errorDialog(_("番組タイトルを取得できませんでした。"))
+            return False
+
+        rh = getattr(globalVars.app.hMainView, "recording_handler", None)
+        if rh and rh.stop_duplicate_program_recording_toggle(
+            station_id, safe_title, announce_station_name=station_name or None
+        ):
+            return None
+
+        progs = getattr(globalVars.app.hMainView, "progs", None) or programmanager.ProgramManager()
+        try:
+            stream_url, http_headers = progs.get_authenticated_stream_url(station_id)
+        except Exception as e:
+            self.log.error(f"Failed to get live stream URL for remainder recording: {e}")
+            simpleDialog.errorDialog(_("ストリームURLの取得に失敗しました。"))
+            return False
+
+        replace = safe_title.replace(" ", "-")
+        station_dir = (station_name or station_id).replace(" ", "_")
+        dirs = create_recording_dir(station_dir, program_title)
+        timestamp = start_dt.strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(dirs, f"{timestamp}_{replace}")
+        filetype = get_file_type_from_config()
+        end_wall = time.mktime(end_dt.timetuple()) + RECORDING_END_TIME_BUFFER
+        info = f"{station_name} {safe_title}"
+
+        def on_recording_complete(recorder):
+            try:
+                notification_notify(
+                    title=_("録音完了"),
+                    message=f"{safe_title} の録音が完了しました。",
+                    app_name="rpb",
+                    timeout=10,
+                )
+            except Exception as ex:
+                self.log.error(f"Failed to send remainder recording completion notification: {ex}")
+
+        recorder = recorder_manager.start_recording(
+            stream_url,
+            output_path,
+            info,
+            end_wall,
+            filetype,
+            on_recording_complete,
+            station_id,
+            safe_title,
+            http_headers=http_headers,
+        )
+        if not recorder:
+            detail = recorder_manager.get_last_start_error()
+            msg = _("録音の開始に失敗しました。")
+            if detail:
+                msg += f"\n\n{detail}"
+            simpleDialog.errorDialog(msg)
+            return False
+
+        try:
+            globalVars.app.say(f"録音開始: {station_name} {safe_title}", interrupt=True)
+        except Exception as ex:
+            self.log.error(f"Failed to announce remainder recording start: {ex}")
+
+        try:
+            notification_notify(
+                title=_("録音開始"),
+                message=_("放送終了までライブ録音を開始しました。") + f"\n{safe_title}",
+                app_name="rpb",
+                timeout=10,
+            )
+        except Exception as ex:
+            self.log.error(f"Failed to send remainder recording start notification: {ex}")
+
+        self.log.info(f"Live remainder recording started: {safe_title} until {end_dt}")
+        return True
     
     def onScheduleRecording(self, event):
-        """選択された番組を予約録音"""
+        """選択された番組を予約録音（放送中は番組表と同様にライブ録音）"""
         try:
-            # 選択されたアイテムのインデックスを取得（フォーカスまたは選択されているアイテム）
             index = self.result_list.GetFocusedItem()
             if index < 0:
-                # フォーカスされていない場合は、選択されている最初のアイテムを取得
                 index = self.result_list.GetFirstSelected()
             
             if index < 0 or index >= len(self.search_results):
@@ -1134,72 +1235,45 @@ class ProgramSearchDialog(BaseDialog):
                 return
             
             program = self.search_results[index]
-            
-            # 必要な情報を取得
             station_id = program.get('station_id')
             station_name = program.get('station_name', '')
             program_title = program.get('title', '')
-            start_time_str = program.get('start_time', '')
-            end_time_str = program.get('end_time', '')
-            date_str = program.get('date', '')
             
-            if not all([station_id, program_title, start_time_str, end_time_str, date_str]):
+            if not all([station_id, program_title, program.get('start_time'), program.get('end_time'), program.get('date')]):
                 simpleDialog.errorDialog(_("番組情報が不完全です。"))
                 self.log.error(f"Incomplete program data: {program}")
                 return
-            
-            # 日付と時間をパース
-            try:
-                # 日付をパース（YYYYMMDD形式）
-                if len(date_str) == 8:
-                    year = int(date_str[:4])
-                    month = int(date_str[4:6])
-                    day = int(date_str[6:8])
-                    selected_date = datetime.date(year, month, day)
-                else:
-                    raise ValueError(f"Invalid date format: {date_str}")
-                
-                start_time_dt = self._parse_clock_on_listing_date(selected_date, start_time_str)
-                end_time_dt = self._parse_clock_on_listing_date(selected_date, end_time_str)
-                if not start_time_dt or not end_time_dt:
-                    raise ValueError(f"Invalid time format: {start_time_str} - {end_time_str}")
 
-                start_time_dt = self._adjust_listing_datetime(
-                    start_time_dt, start_time_str, is_end=False
-                )
-                end_time_dt = self._adjust_listing_datetime(
-                    end_time_dt, end_time_str, is_end=True
-                )
-                if end_time_dt <= start_time_dt:
-                    end_time_dt += datetime.timedelta(days=1)
-
-                # 過去の番組かチェック
-                current = datetime.datetime.now()
-                if start_time_dt < current:
-                    simpleDialog.errorDialog(_("過去の番組の録音はできません。"))
-                    self.log.error(f"Failed to schedule program: Specified time ({start_time_dt}) is in the past.")
-                    return
-                
-            except (ValueError, TypeError) as e:
-                self.log.error(f"Failed to parse date/time: {e}")
+            start_time_dt, end_time_dt = self._program_start_end_dt(program)
+            if not start_time_dt or not end_time_dt:
                 simpleDialog.errorDialog(_("日時情報の解析に失敗しました。"))
                 return
+
+            current = datetime.datetime.now()
+            if current >= end_time_dt:
+                simpleDialog.errorDialog(_("この番組はすでに終了しています。"))
+                self.log.error(f"Failed to schedule program: Program already ended ({end_time_dt}).")
+                return
+
+            if start_time_dt <= current < end_time_dt:
+                self._start_live_remainder_recording(
+                    station_id, station_name, program_title, start_time_dt, end_time_dt
+                )
+                return
+
+            if start_time_dt < current:
+                simpleDialog.errorDialog(_("過去の番組の録音はできません。"))
+                self.log.error(f"Failed to schedule program: Specified time ({start_time_dt}) is in the past.")
+                return
             
-            # 録音品質を取得（設定ファイルから）
             filetype = get_file_type_from_config()
-            
-            # 出力パスを準備
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
             replace = safe_title.replace(" ", "-")
-            from recorder import create_recording_dir
             station_dir = station_name.replace(" ", "_")
             dirs = create_recording_dir(station_dir, program_title)
-            
-            # タイムスタンプを追加してファイル名重複を回避
             timestamp = start_time_dt.strftime("%Y%m%d_%H%M%S")
             output_path = os.path.join(dirs, f"{timestamp}_{replace}")
             
-            # 録音予約を作成
             schedule = RecordingSchedule(
                 station_id=station_id,
                 station_name=station_name,
