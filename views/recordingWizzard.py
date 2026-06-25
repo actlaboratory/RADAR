@@ -265,6 +265,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 performer = self.pfmlst[idx] if 0 <= idx < len(self.pfmlst) else ""
                 description = self.dsclst[idx] if 0 <= idx < len(self.dsclst) else ""
                 program_info = {
+                    "station_id": self.stid,
                     "station_name": self.radioname,
                     "title": title,
                     "performer": performer,

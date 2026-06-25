@@ -179,9 +179,14 @@ class Events(BaseEvents):
 
 	def onUpdateProcess(self, event):
 		"""番組情報を定期的に更新"""
+		if not hasattr(self.parent, 'program_info_handler'):
+			return
+		radio_manager = getattr(self.parent, 'radio_manager', None)
+		if radio_manager and radio_manager.is_timefree_playing():
+			self.parent.program_info_handler.get_latest_info()
+			return
 		if self.playing and self.current_playing_station_id:
-			if hasattr(self.parent, 'program_info_handler'):
-				self.parent.program_info_handler.get_latest_info()
+			self.parent.program_info_handler.get_latest_info()
 
 	def onHide(self, event):
 		"""最小化メニューが選択されたときの処理"""

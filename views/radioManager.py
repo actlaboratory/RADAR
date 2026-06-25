@@ -390,6 +390,7 @@ class RadioManager:
         self.log.debug(f"Start timefree playback: station={station_id}, url={stream_url}")
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
         self.current_station_id = station_id
+        self.events.current_playing_station_id = station_id
         self.current_progs = None
         self.playback_mode = "timefree"
         self.m3u8 = stream_url
@@ -428,6 +429,7 @@ class RadioManager:
         self._sync_timefree_seek_ui_from_player()
         self._start_timefree_seek_timer()
         self.update_timefree_command_ui()
+        self.update_program_info()
         if hasattr(self.parent, "program_info_handler"):
             self.parent.program_info_handler.show_timefree_program_info(self._timefree_info)
         try:
@@ -552,6 +554,7 @@ class RadioManager:
         self.updateInfoTimer.Stop()
         self.streamWatchdogTimer.Stop()
         self.current_station_id = None
+        self.events.current_playing_station_id = None
         self.current_progs = None
         self.playback_mode = None
         self.events.playing = False

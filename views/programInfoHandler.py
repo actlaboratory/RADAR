@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 # 番組情報処理ハンドラーモジュール
 
+import datetime
+
 import wx
 from views import recordingWizzard
 import menuItemsStore
@@ -101,14 +103,20 @@ class ProgramInfoHandler:
         if not self.events.displaying:
             return
         self.ensure_program_info_ui()
-        self._render_program_details(info or {})
+        snapshot = dict(info or {})
+        if not snapshot.get("station_id"):
+            snapshot["station_id"] = getattr(self.events, "current_playing_station_id", None)
+        self._render_program_details(snapshot, include_onair_music=True)
 
     def clear_timefree_program_info(self):
         """聴き逃し番組情報表示を解除"""
         self._timefree_program_info = None
 
-    def _render_program_details(self, info):
+    def _render_program_details(self, info, *, include_onair_music=False):
         station_name = info.get("station_name", "")
+        station_id = info.get("station_id")
+        if not station_name and station_id and hasattr(self.parent, "radio_manager"):
+            station_name = self.parent.radio_manager.stid.get(station_id, station_id)
         title = info.get("title", "")
         performer = info.get("performer", "")
         description = info.get("description", "")
@@ -118,6 +126,8 @@ class ProgramInfoHandler:
         self.nplist.Append(("放送局", station_name))
         self.nplist.Append(("番組名", title))
         self.nplist.Append(("出演者", performer))
+        if include_onair_music:
+            self._append_onair_music_row(info)
 
         if description:
             self.DSCBOX.Enable()
@@ -129,7 +139,53 @@ class ProgramInfoHandler:
         if not self.events.displaying:
             return
         self.ensure_program_info_ui()
-        self._render_program_details(self._timefree_program_info or {})
+        self._render_program_details(self._timefree_program_info or {}, include_onair_music=True)
+
+    def _append_onair_music_row(self, info):
+        station_id = info.get("station_id") or getattr(self.events, "current_playing_station_id", None)
+        if self._should_use_timefree_onair_music(info):
+            onair_music = self._get_timefree_onair_music(info) if station_id else None
+        elif station_id:
+            onair_music = self._get_onair_music_safely(station_id)
+        else:
+            onair_music = None
+        self.nplist.Append(("オンエア曲", onair_music or ""))
+
+    def _should_use_timefree_onair_music(self, info):
+        if hasattr(self.parent, "radio_manager") and self.parent.radio_manager.is_timefree_playing():
+            return True
+        return bool(info.get("ft_dt") or info.get("to_dt"))
+
+    def _get_timefree_onair_target_dt(self, info):
+        ft_dt = info.get("ft_dt")
+        if ft_dt is None:
+            start_time = info.get("start_time", "")
+            try:
+                ft_dt = datetime.datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+            except (TypeError, ValueError):
+                return None
+
+        position_sec = 0
+        if hasattr(self.parent, "radio_manager"):
+            try:
+                position_sec = self.parent.radio_manager.get_timefree_position_seconds()
+            except Exception:
+                pass
+        return ft_dt + datetime.timedelta(seconds=position_sec)
+
+    def _get_timefree_onair_music(self, info):
+        station_id = info.get("station_id")
+        if not station_id:
+            return None
+        target_dt = self._get_timefree_onair_target_dt(info)
+        return self._get_onair_music_at_safely(station_id, target_dt)
+
+    def _get_onair_music_at_safely(self, station_id, target_dt):
+        try:
+            return self.parent.progs.get_onair_music_at(station_id, target_dt=target_dt)
+        except Exception as e:
+            self.log.warning(f"Failed to get onair music at {target_dt}: {e}")
+            return None
 
     def show_description(self, station_id):
         """番組の説明を表示"""

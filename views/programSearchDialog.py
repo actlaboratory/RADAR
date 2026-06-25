@@ -775,6 +775,7 @@ class ProgramSearchDialog(BaseDialog):
             # 放送中はタイムフリーではなくライブストリームで再生する
             if start_dt <= now < end_dt:
                 program_info = {
+                    "station_id": stid,
                     "station_name": program.get("station_name", ""),
                     "title": program.get("title", ""),
                     "performer": program.get("performer", ""),
