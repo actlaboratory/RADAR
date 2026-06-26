@@ -2,15 +2,21 @@ import wx
 import time
 import datetime
 import re
-import threading
 from logging import getLogger
 from notification_util import notify as notification_notify
 import globalVars
 import simpleDialog
 from views import showRadioProgramScheduleListBase
+import views.ViewCreator
 from views import programmanager
 import tcutil
-from recorder import schedule_manager, RecordingSchedule
+from recorder import (
+    RECORDING_END_TIME_BUFFER,
+    RecordingSchedule,
+    create_recording_dir,
+    recorder_manager,
+    schedule_manager,
+)
 import os
 
 
@@ -25,22 +31,11 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         from recorder import get_file_type_from_config
         self.filetype = get_file_type_from_config()
         self.current_schedule = None
-        self._current_timefree_duration_sec = 0
-        self._updating_seek_ui = False
-        self.timefree_seek_timer = None
-        self.timefree_seek_apply_timer = None
-        self._pending_seek_seconds = None
-        self._seek_worker_running = False
-        self._seek_worker_lock = threading.Lock()
         self._is_disposed = False
         self._main_window = globalVars.app.hMainView.hFrame
         super().Initialize()
         self.log = getLogger("recording_wizzard")
         self._main_window.Bind(wx.EVT_CLOSE, self.on_application_close)
-        self.timefree_seek_timer = wx.Timer(self.wnd)
-        self.wnd.Bind(wx.EVT_TIMER, self.onTimefreeSeekTimer, self.timefree_seek_timer)
-        self.timefree_seek_apply_timer = wx.Timer(self.wnd)
-        self.wnd.Bind(wx.EVT_TIMER, self.onTimefreeSeekApplyTimer, self.timefree_seek_apply_timer)
 
     def _refresh_selected_filetype(self):
         """録音形式設定を最新化して返す"""
@@ -54,20 +49,28 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             return False
         return main_view.radio_manager.is_timefree_playing()
 
+    def _is_selected_program_currently_playing_timefree(self):
+        """一覧で選んだ番組が、いま聴き逃し再生中の番組かどうか"""
+        main_view = globalVars.app.hMainView
+        if not hasattr(main_view, "radio_manager"):
+            return False
+        rm = main_view.radio_manager
+        if not rm.is_timefree_playing():
+            return False
+        try:
+            _, start_dt, end_dt = self._get_selected_program_range()
+        except ValueError:
+            return True
+        return rm.is_playing_timefree_program(self.stid, start_dt, end_dt)
+
     def _update_timefree_button_label(self):
         main_view = globalVars.app.hMainView
-        is_timefree_playing = self._is_timefree_playing()
-        if is_timefree_playing:
+        if self._is_selected_program_currently_playing_timefree():
             self.timefree_play_btn.SetLabel(_("聴き逃し停止(&P)"))
             self.timefree_play_btn.Enable(True)
         else:
             self.timefree_play_btn.SetLabel(_("聴き逃し再生(&P)"))
-            is_live_playing = False
-            if hasattr(main_view, "radio_manager"):
-                is_live_playing = main_view.radio_manager.is_live_playing()
-            self.timefree_play_btn.Enable(not is_live_playing)
-        if hasattr(self, "timefree_seek_slider"):
-            self.timefree_seek_slider.Enable(is_timefree_playing)
+            self.timefree_play_btn.Enable(True)
         if hasattr(main_view, "radio_manager"):
             main_view.radio_manager.update_timefree_command_ui()
 
@@ -77,8 +80,97 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             event.Skip()
             return
         self._update_timefree_button_label()
-        self._sync_seek_slider_from_player()
         event.Skip()
+
+    def _start_live_remainder_recording(self, program_title, start_dt, end_dt):
+        """放送中の番組を、終了時刻までライブストリームで録音する。
+
+        Returns:
+            True: 録音を開始した（呼び出し側はダイアログを閉じてよい）
+            False: 開始に失敗した
+            None: 同一番組の録音が既にあったため停止のみ行った（エラーではない）
+        """
+        current = datetime.datetime.now()
+        if current >= end_dt:
+            simpleDialog.errorDialog(_("この番組はすでに終了しています。"))
+            return False
+
+        safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
+        if not safe_title:
+            simpleDialog.errorDialog(_("番組タイトルを取得できませんでした。"))
+            return False
+
+        rh = getattr(globalVars.app.hMainView, "recording_handler", None)
+        if rh and rh.stop_duplicate_program_recording_toggle(
+            self.stid, safe_title, announce_station_name=self.radioname
+        ):
+            return None
+
+        try:
+            stream_url, http_headers = self.progs.get_authenticated_stream_url(self.stid)
+        except Exception as e:
+            self.log.error(f"Failed to get live stream URL for remainder recording: {e}")
+            simpleDialog.errorDialog(_("ストリームURLの取得に失敗しました。"))
+            return False
+
+        replace = safe_title.replace(" ", "-")
+        station_dir = self.radioname.replace(" ", "_")
+        dirs = create_recording_dir(station_dir, safe_title)
+        timestamp = start_dt.strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(dirs, f"{timestamp}_{replace}")
+
+        filetype = self._refresh_selected_filetype()
+        end_wall = time.mktime(end_dt.timetuple()) + RECORDING_END_TIME_BUFFER
+        info = f"{self.radioname} {safe_title}"
+
+        def on_recording_complete(recorder):
+            try:
+                notification_notify(
+                    title=_("録音完了"),
+                    message=f"{safe_title} の録音が完了しました。",
+                    app_name="rpb",
+                    timeout=10,
+                )
+            except Exception as ex:
+                self.log.error(f"Failed to send remainder recording completion notification: {ex}")
+
+        recorder = recorder_manager.start_recording(
+            stream_url,
+            output_path,
+            info,
+            end_wall,
+            filetype,
+            on_recording_complete,
+            self.stid,
+            safe_title,
+            http_headers=http_headers,
+        )
+        if not recorder:
+            detail = recorder_manager.get_last_start_error()
+            msg = _("録音の開始に失敗しました。")
+            if detail:
+                msg += f"\n\n{detail}"
+            simpleDialog.errorDialog(msg)
+            return False
+
+        try:
+            station_name = self.radioname
+            globalVars.app.say(f"録音開始: {station_name} {safe_title}", interrupt=True)
+        except Exception as ex:
+            self.log.error(f"Failed to announce remainder recording start: {ex}")
+
+        try:
+            notification_notify(
+                title=_("録音開始"),
+                message=_("放送終了までライブ録音を開始しました。") + f"\n{safe_title}",
+                app_name="rpb",
+                timeout=10,
+            )
+        except Exception as ex:
+            self.log.error(f"Failed to send remainder recording start notification: {ex}")
+
+        self.log.info(f"Live remainder recording started: {safe_title} until {end_dt}")
+        return True
 
     def onFinishButton(self, event):
         """録音予約を確定"""
@@ -90,14 +182,19 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             self.endt = end_dt
             current = datetime.datetime.now()
 
-            if self.stdt < current:
-                simpleDialog.errorDialog("過去の番組の録音はできません。番組を選び直してください。")
-                self.log.error(f"Failed to schedule program: Specified time ({self.stdt}) is in the past.")
+            if current >= end_dt:
+                simpleDialog.errorDialog(_("この番組はすでに終了しています。"))
+                self.log.error(f"Failed to schedule program: Program already ended ({end_dt}).")
+                return
+
+            if start_dt <= current < end_dt:
+                result = self._start_live_remainder_recording(program_title, start_dt, end_dt)
+                if result is True:
+                    self.Destroy()
                 return
             
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
             replace = safe_title.replace(" ", "-")
-            from recorder import create_recording_dir
             station_dir = self.radioname.replace(" ", "_")
             dirs = create_recording_dir(station_dir, program_title)
             
@@ -114,7 +211,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 filetype=self.filetype
             )
             
-            schedule_manager.add_schedule(schedule)
+            added = schedule_manager.add_schedule(schedule)
+            if not added:
+                simpleDialog.dialog(_("情報"), _("同一番組の予約が既に存在します。"))
+                return
             self.current_schedule = schedule
             
             schedule_manager.start_monitoring()
@@ -149,9 +249,8 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         """選択番組の聴き逃し再生/停止をトグル"""
         try:
             main_view = globalVars.app.hMainView
-            if self._is_timefree_playing():
+            if self._is_selected_program_currently_playing_timefree():
                 main_view.radio_manager.stop_timefree()
-                self._sync_seek_slider_from_player()
                 self._update_timefree_button_label()
                 return
 
@@ -161,9 +260,27 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             if start_dt > now:
                 simpleDialog.errorDialog("未来の番組は聴き逃し再生できません。")
                 return
-            if end_dt > now:
-                simpleDialog.errorDialog("この番組はまだ放送中のため、聴き逃し配信が利用できません。")
+            # 放送中はタイムフリーではなくライブストリームで再生する
+            if start_dt <= now < end_dt:
+                performer = self.pfmlst[idx] if 0 <= idx < len(self.pfmlst) else ""
+                description = self.dsclst[idx] if 0 <= idx < len(self.dsclst) else ""
+                program_info = {
+                    "station_id": self.stid,
+                    "station_name": self.radioname,
+                    "title": title,
+                    "performer": performer,
+                    "description": description,
+                }
+                main_view.radio_manager.play(self.stid, self.progs, program_info=program_info)
+                self._update_timefree_button_label()
                 return
+            if hasattr(main_view, "radio_manager") and main_view.radio_manager.is_live_playing():
+                if simpleDialog.yesNoDialog(
+                    _("確認"),
+                    _("ライブ再生を終了し、聴き逃し再生を開始しますか？"),
+                    self.wnd,
+                ) != wx.ID_YES:
+                    return
             announce = f"聴き逃し再生: {self.radioname} {title}"
             duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))
             performer = self.pfmlst[idx] if 0 <= idx < len(self.pfmlst) else ""
@@ -191,9 +308,6 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                     resume_seconds=0,
                     timefree_info=timefree_info
                 )
-                self._current_timefree_duration_sec = duration_sec
-                self._sync_seek_slider_from_player()
-                self._start_seek_timer()
                 self._update_timefree_button_label()
                 return
             except Exception as e:
@@ -208,128 +322,11 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 resume_seconds=0,
                 timefree_info={**timefree_info, "stream_type": "c"}
             )
-            self._current_timefree_duration_sec = duration_sec
-            self._sync_seek_slider_from_player()
-            self._start_seek_timer()
             self._update_timefree_button_label()
         except Exception as e:
             self.log.error(f"Error in onPlayTimeFree: {e}")
             simpleDialog.errorDialog(f"聴き逃し再生に失敗しました: {e}")
-            self._stop_seek_timer()
             self._update_timefree_button_label()
-
-    def _start_seek_timer(self):
-        if self._is_disposed or not self.timefree_seek_timer:
-            return
-        if not self.timefree_seek_timer.IsRunning():
-            self.timefree_seek_timer.Start(1000)
-
-    def _stop_seek_timer(self):
-        if not self.timefree_seek_timer:
-            return
-        if self.timefree_seek_timer.IsRunning():
-            self.timefree_seek_timer.Stop()
-        if self.timefree_seek_apply_timer and self.timefree_seek_apply_timer.IsRunning():
-            self.timefree_seek_apply_timer.Stop()
-
-    def onTimefreeSeekTimer(self, event):
-        if self._is_disposed:
-            return
-        self._sync_seek_slider_from_player()
-
-    def _sync_seek_slider_from_player(self):
-        if self._is_disposed:
-            return
-        if not hasattr(self, "timefree_seek_slider"):
-            return
-        main_view = globalVars.app.hMainView
-        if not hasattr(main_view, "radio_manager"):
-            return
-        radio_manager = main_view.radio_manager
-        duration = radio_manager.get_timefree_duration_seconds() or self._current_timefree_duration_sec
-        position = radio_manager.get_timefree_position_seconds()
-        if duration <= 0:
-            duration = max(position, 1)
-        position = max(0, min(position, duration))
-        self._updating_seek_ui = True
-        try:
-            self.timefree_seek_slider.SetRange(0, int(duration))
-            self.timefree_seek_slider.SetValue(int(position))
-            self.timefree_seek_label.SetLabel(
-                f"{self._format_hhmmss(position)} / {self._format_hhmmss(duration)}"
-            )
-        except RuntimeError:
-            self._stop_seek_timer()
-            return
-        finally:
-            self._updating_seek_ui = False
-        if self._is_timefree_playing():
-            self._start_seek_timer()
-        else:
-            self._stop_seek_timer()
-
-    def onTimefreeSeekChanged(self, event):
-        if self._is_disposed or self._updating_seek_ui:
-            return
-        if not hasattr(globalVars.app.hMainView, "radio_manager"):
-            return
-        target = int(self.timefree_seek_slider.GetValue())
-        duration = int(max(self.timefree_seek_slider.GetMax(), self._current_timefree_duration_sec, 1))
-        self.timefree_seek_label.SetLabel(
-            f"{self._format_hhmmss(target)} / {self._format_hhmmss(duration)}"
-        )
-        self._pending_seek_seconds = target
-        if self.timefree_seek_apply_timer:
-            self.timefree_seek_apply_timer.Start(120, oneShot=True)
-
-    def onTimefreeSeekApplyTimer(self, event):
-        if self._is_disposed:
-            return
-        if self._pending_seek_seconds is None:
-            return
-        self._start_seek_worker()
-
-    def _start_seek_worker(self):
-        if self._is_disposed:
-            return
-        with self._seek_worker_lock:
-            if self._seek_worker_running:
-                return
-            self._seek_worker_running = True
-        threading.Thread(target=self._seek_worker_loop, daemon=True).start()
-
-    def _seek_worker_loop(self):
-        error_message = None
-        try:
-            while not self._is_disposed:
-                with self._seek_worker_lock:
-                    target = self._pending_seek_seconds
-                    self._pending_seek_seconds = None
-                if target is None:
-                    break
-                try:
-                    globalVars.app.hMainView.radio_manager.seek_timefree(int(target))
-                except Exception as e:
-                    self.log.error(f"Failed to seek timefree playback: {e}")
-                    error_message = str(e)
-                    break
-            if not self._is_disposed:
-                wx.CallAfter(self._sync_seek_slider_from_player)
-                if error_message:
-                    wx.CallAfter(simpleDialog.errorDialog, f"シークに失敗しました: {error_message}")
-        finally:
-            with self._seek_worker_lock:
-                self._seek_worker_running = False
-                needs_restart = self._pending_seek_seconds is not None and not self._is_disposed
-            if needs_restart:
-                wx.CallAfter(self._start_seek_worker)
-
-    def _format_hhmmss(self, seconds):
-        total = int(max(0, seconds))
-        hh = total // 3600
-        mm = (total % 3600) // 60
-        ss = total % 60
-        return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
     def onRecordTimeFree(self, event):
         """選択番組を聴き逃し録音"""
@@ -346,8 +343,13 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 simpleDialog.errorDialog("この番組はまだ放送中のため、聴き逃し録音は開始できません。")
                 return
 
-            duration_sec = int(max(1, (end_dt - start_dt).total_seconds()))
-            stream_url, headers = self.progs.get_timefree_recording_source(self.stid, start_dt, end_dt)
+            rh = getattr(globalVars.app.hMainView, "recording_handler", None)
+            if rh and rh.stop_duplicate_program_recording_toggle(
+                self.stid, title, announce_station_name=self.radioname
+            ):
+                return
+
+            segments = self.progs.get_timefree_recording_segments(self.stid, start_dt, end_dt)
 
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', title).strip()
             replace = safe_title.replace(" ", "-")
@@ -357,22 +359,30 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             output_path = os.path.join(dirs, f"{timestamp}_{replace}")
 
             info = f"{self.radioname} {title}"
-            end_time = time.time() + duration_sec + 30
+            total_audio_sec = sum(s[2] for s in segments)
+            end_time = time.time() + total_audio_sec + 600 + len(segments) * 60
 
-            recorder = recorder_manager.start_recording(
-                stream_url,
+            recorder = recorder_manager.start_timefree_recording_segments(
+                segments,
                 output_path,
                 info,
                 end_time,
                 filetype,
                 station_id=self.stid,
                 program_title=title,
-                recording_seconds=duration_sec,
-                http_headers=headers,
-                input_options=["-http_seekable", "0", "-seekable", "0"]
+                input_options=["-http_seekable", "0", "-seekable", "0"],
             )
             if recorder:
                 simpleDialog.dialog("完了", f"聴き逃し録音を開始しました。\n{title}")
+                try:
+                    notification_notify(
+                        title="録音開始",
+                        message=f"{title} の聴き逃し録音を開始しました。",
+                        app_name="rpb",
+                        timeout=10,
+                    )
+                except Exception as e:
+                    self.log.error(f"Failed to send timefree recording start notification: {e}")
             else:
                 detail = recorder_manager.get_last_start_error()
                 msg = "聴き逃し録音の開始に失敗しました。"
@@ -439,7 +449,6 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         if self._is_disposed:
             return
         self._is_disposed = True
-        self._stop_seek_timer()
         try:
             if self._main_window:
                 self._main_window.Unbind(wx.EVT_CLOSE, handler=self.on_application_close)
@@ -451,27 +460,53 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self._cleanup_dialog_resources()
         event.Skip()
 
+    def show_programlist(self, event=None, focus_program_list=True):
+        super().show_programlist(event, focus_program_list)
+        wx.CallAfter(self._update_timefree_button_label)
+
+    def on_program_list_selection(self, event):
+        """過去番組行を選んだとき、ライブ×別局時のメニュー再開許可フラグを更新"""
+        self._notify_past_program_focus_if_applicable()
+        self._update_timefree_button_label()
+        event.Skip()
+
+    def _notify_past_program_focus_if_applicable(self):
+        """現在フォーカスが「過去の放送済み番組」なら聴き逃しメニュー用 ACK を立てる"""
+        try:
+            idx = self.lst.GetFocusedItem()
+            if idx < 0:
+                return
+            _, start_dt, end_dt = self._get_selected_program_range()
+            now = datetime.datetime.now()
+            if start_dt > now or end_dt > now:
+                return
+            main_view = globalVars.app.hMainView
+            if not hasattr(main_view, "radio_manager"):
+                return
+            rm = main_view.radio_manager
+            rm.set_timefree_menu_live_ack(self.stid)
+            rm.update_timefree_command_ui()
+        except Exception:
+            pass
 
     def InstallControls(self):
         """コントロールを配置"""
         super().InstallControls()
 
-        self.record_btn = self.creator.button(_("録音予約(&R)"), self.onFinishButton)
-        self.timefree_play_btn = self.creator.button(_("聴き逃し再生(&P)"), self.onPlayTimeFree)
-        self.timefree_record_btn = self.creator.button(_("聴き逃し録音(&T)"), self.onRecordTimeFree)
-        self.timefree_seek_slider, self.timefree_seek_label = self.creator.slider(
-            _("聴き逃しシーク"),
-            min=0,
-            max=1,
-            defaultValue=0,
-            event=self.onTimefreeSeekChanged,
-            x=400,
-            sizerFlag=wx.ALL | wx.EXPAND
+        self.lst.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_program_list_selection)
+        wx.CallAfter(self._notify_past_program_focus_if_applicable)
+
+        btn_creator = views.ViewCreator.ViewCreator(
+            self.viewMode,
+            self.creator.GetPanel(),
+            self.creator.GetSizer(),
+            wx.HORIZONTAL,
+            style=wx.ALL,
+            margin=5
         )
-        self.timefree_seek_slider.SetPageSize(10)
-        self.timefree_seek_slider.Enable(False)
-        self.timefree_seek_label.SetLabel("00:00:00 / 00:00:00")
+        self.record_btn = btn_creator.button(_("録音予約(&R)"), self.onFinishButton)
+        self.timefree_play_btn = btn_creator.button(_("聴き逃し再生(&P)"), self.onPlayTimeFree)
+        self.timefree_record_btn = btn_creator.button(_("聴き逃し録音(&T)"), self.onRecordTimeFree)
         self._update_timefree_button_label()
-        self._sync_seek_slider_from_player()
         self.wnd.Bind(wx.EVT_ACTIVATE, self.onDialogActivated)
 

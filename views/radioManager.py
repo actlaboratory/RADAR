@@ -2,8 +2,11 @@
 # ラジオ局管理モジュール
 
 import wx
+import os
+import datetime
 import tcutil
 import time
+import threading
 import region_dic
 import re
 import lxml.etree as ET
@@ -14,6 +17,15 @@ import urllib
 from simpleDialog import *
 from views.mpvPlayer import MPVAudioPlayer
 from views import programmanager
+
+
+def _has_proxy_env():
+    """HTTP(S)_PROXY のいずれかがあれば True（直結 TCP 事前検査を省略）。"""
+    for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        v = os.environ.get(k)
+        if v is not None and str(v).strip():
+            return True
+    return False
 
 
 class RadioManager:
@@ -28,12 +40,15 @@ class RadioManager:
         self._player = MPVAudioPlayer()
         self.updateInfoTimer = wx.Timer()
         self.streamWatchdogTimer = wx.Timer()
+        self.timefreeSeekTimer = wx.Timer()
+        self.timefreeSeekApplyTimer = wx.Timer()
         self.tmg = tcutil.TimeManager()
         self.clutl = tcutil.CalendarUtil()
         self.stid = {}
         self.region = region_dic.REGION
         self.area = None
         self.m3u8 = None
+        self.live_http_headers = {}
         self.current_station_id = None
         self.current_progs = None
         self.playback_mode = None
@@ -44,7 +59,17 @@ class RadioManager:
         self._timefree_info = None
         self.stream_watchdog_interval_ms = 5000
         self._refresh_in_progress = False
+        self._shutting_down = False
+        self._timefree_seek_updating_ui = False
+        self._pending_seek_seconds = None
+        self._seek_apply_lock = threading.Lock()
+        self._seek_apply_running = False
+        self._seek_apply_latest = None
+        # ライブ再生中に「番組表で過去番組を選択した」ことを示す局 ID（メニュー再開可否用）
+        self._timefree_menu_live_ack_station_id = None
         self.streamWatchdogTimer.Bind(wx.EVT_TIMER, self._on_stream_watchdog_timer)
+        self.timefreeSeekTimer.Bind(wx.EVT_TIMER, self._on_timefree_seek_timer)
+        self.timefreeSeekApplyTimer.Bind(wx.EVT_TIMER, self._on_timefree_seek_apply_timer)
 
     def setup_radio_ui(self):
         """ラジオ局関連のUIを設定"""
@@ -55,6 +80,22 @@ class RadioManager:
             textLayout=None
         )
         self.volume.SetValue(self.app.config.getint("play", "volume"))
+        self.timefree_seek_slider, self.timefree_seek_label = self.creator.slider(
+            _("聴き逃しシーク"),
+            min=0,
+            max=1,
+            defaultValue=0,
+            event=self.onTimefreeSeekChanged,
+            x=400,
+            sizerFlag=wx.ALL | wx.EXPAND
+        )
+        # ViewCreatorの既定バインド(EVT_SCROLL_CHANGED)に加え、
+        # キー操作中にも即座に反応できるようEVT_SLIDERを追加で受ける。
+        self.timefree_seek_slider.Bind(wx.EVT_SLIDER, self.onTimefreeSeekChanged)
+        self.timefree_seek_slider.Bind(wx.EVT_KEY_DOWN, self.onTimefreeSeekKeyDown)
+        self.timefree_seek_slider.SetPageSize(60)
+        self.timefree_seek_label.SetLabel("00:00:00 / 00:00:00")
+        self._set_timefree_seek_ui_visible(False)
         
         self.AreaTreeCtrl()
         self.setupradio()
@@ -94,22 +135,32 @@ class RadioManager:
         """
         for attempt in range(max_retries):
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 parsed_url = urllib.parse.urlparse(url)
                 host = parsed_url.hostname
                 port = parsed_url.port or 443
-                sock.settimeout(timeout)
-                
-                result = sock.connect_ex((host, port))
-                sock.close()
-                
-                if result != 0:
-                    if attempt < max_retries - 1:
-                        wait_time = (attempt + 1) * 2
-                        self.log.debug(f"接続エラー。{wait_time}秒後にリトライします。(試行 {attempt + 1}/{max_retries})")
-                        time.sleep(wait_time)
-                        continue
-                    return False, "接続に失敗しました。インターネットの接続状況をご確認ください。"
+
+                if not _has_proxy_env():
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(timeout)
+                    result = sock.connect_ex((host, port))
+                    sock.close()
+
+                    if result != 0:
+                        if attempt < max_retries - 1:
+                            wait_time = (attempt + 1) * 2
+                            self.log.debug(
+                                f"Connection error; retrying after {wait_time}s "
+                                f"(attempt {attempt + 1}/{max_retries})"
+                            )
+                            time.sleep(wait_time)
+                            continue
+                        return False, "接続に失敗しました。インターネットの接続状況をご確認ください。"
+                else:
+                    self.log.debug(
+                        "Skipping direct TCP precheck to %s:%s (proxy env present)",
+                        host,
+                        port,
+                    )
 
                 req = urllib.request.Request(url)
                 req.add_header('User-Agent', 'Mozilla/5.0')
@@ -120,13 +171,13 @@ class RadioManager:
             except socket.timeout:
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 2
-                    self.log.debug(f"タイムアウトが発生しました。{wait_time}秒後にリトライします。")
+                    self.log.debug(f"Timeout; retrying after {wait_time}s")
                     time.sleep(wait_time)
                 else:
                     return False, "タイムアウトによりデータの取得に失敗しました。"
                 
             except Exception as e:
-                self.log.error(f"予期せぬエラーが発生しました: {str(e)}")
+                self.log.error(f"Unexpected error: {str(e)}")
                 return False, f"予期せぬエラーが発生しました: {str(e)}"
 
     def setRadioList(self):
@@ -214,10 +265,12 @@ class RadioManager:
 
     def get_streamUrl(self, stationid, progs):
         """ストリームURLを取得"""
-        self.m3u8 = progs.get_authenticated_stream_url(stationid)
+        self.m3u8, self.live_http_headers = progs.get_authenticated_stream_url(stationid)
 
     def _refresh_playback_stream(self, max_retries=3, force_reconnect=False):
         """再生中のストリームURLを再取得してプレイヤーへ反映"""
+        if self._shutting_down:
+            return False
         if not self.current_station_id or not self.current_progs:
             return False
         if self._refresh_in_progress:
@@ -230,6 +283,7 @@ class RadioManager:
                     self.get_streamUrl(self.current_station_id, self.current_progs)
                     if not self.m3u8:
                         raise RuntimeError("empty stream url")
+                    self._player.setHttpHeaders(self.live_http_headers)
                     self._player.setSource(self.m3u8)
                     self._player.play()
                     return True
@@ -249,6 +303,8 @@ class RadioManager:
 
     def _on_stream_watchdog_timer(self, event):
         """再生停止を検知して再認証・再接続する"""
+        if self._shutting_down:
+            return
         if not self.events.playing:
             return
         if self.playback_mode != "live":
@@ -275,16 +331,20 @@ class RadioManager:
         self.log.info("playing...")
         self._player.play()
 
-    def play(self, id, progs):
+    def play(self, id, progs, program_info=None):
         """再生開始"""
+        if self._shutting_down:
+            return
         if self._player.isPlaying():
             try:
                 self._player.stop()
             except Exception:
                 pass
+        self.clear_timefree_menu_live_ack()
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
         self.current_station_id = id
         self.current_progs = progs
+        self.events.current_playing_station_id = id
         self.playback_mode = "live"
         self._timefree_started_monotonic = None
         self._timefree_resume_position_sec = 0
@@ -292,15 +352,23 @@ class RadioManager:
         self._timefree_info = None
         self.get_streamUrl(id, progs)
         self._player.setNonSeekableInput(True)
-        self._player.setHttpHeaders(None)
+        self._player.setHttpHeaders(self.live_http_headers)
         self._player.setStartPosition(0)
         self.player()
         self.update_program_info()
         self.events.playing = True
+        self._stop_timefree_seek_timer()
+        self._set_timefree_seek_ui_visible(False)
         self.streamWatchdogTimer.Start(self.stream_watchdog_interval_ms)
         self.update_timefree_command_ui()
         if hasattr(self.parent, "program_info_handler"):
-            self.parent.program_info_handler.clear_timefree_program_info()
+            handler = self.parent.program_info_handler
+            handler.clear_timefree_program_info()
+            if self.events.displaying:
+                if program_info:
+                    handler.show_program_info_snapshot(program_info)
+                else:
+                    handler.get_latest_info()
 
         try:
             station_name = self.stid.get(id, id)
@@ -310,6 +378,8 @@ class RadioManager:
 
     def play_timefree(self, stream_url, station_id=None, announce_text=None, headers=None, resume_seconds=0, timefree_info=None):
         """タイムフリーURLで再生開始"""
+        if self._shutting_down:
+            return
         if self._player.isPlaying():
             try:
                 self._player.stop()
@@ -320,6 +390,7 @@ class RadioManager:
         self.log.debug(f"Start timefree playback: station={station_id}, url={stream_url}")
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
         self.current_station_id = station_id
+        self.events.current_playing_station_id = station_id
         self.current_progs = None
         self.playback_mode = "timefree"
         self.m3u8 = stream_url
@@ -354,7 +425,11 @@ class RadioManager:
             self.update_timefree_command_ui()
             raise RuntimeError(f"タイムフリー再生の開始に失敗しました: {last_error}")
         self.events.playing = False
+        self._set_timefree_seek_ui_visible(True)
+        self._sync_timefree_seek_ui_from_player()
+        self._start_timefree_seek_timer()
         self.update_timefree_command_ui()
+        self.update_program_info()
         if hasattr(self.parent, "program_info_handler"):
             self.parent.program_info_handler.show_timefree_program_info(self._timefree_info)
         try:
@@ -366,6 +441,28 @@ class RadioManager:
     def is_timefree_playing(self):
         """聴き逃し再生中かどうか"""
         return self.playback_mode == "timefree"
+
+    def is_playing_timefree_program(self, station_id, start_dt, end_dt):
+        """指定番組が現在の聴き逃し再生対象かどうか"""
+        if self.playback_mode != "timefree":
+            return False
+        info = self._timefree_info or {}
+        if info.get("station_id") != station_id:
+            return False
+        playing_start = info.get("ft_dt")
+        playing_end = info.get("to_dt")
+        if playing_start is not None and playing_end is not None:
+            return start_dt == playing_start and end_dt == playing_end
+        try:
+            playing_start = datetime.datetime.strptime(
+                info.get("start_time", ""), "%Y-%m-%d %H:%M:%S"
+            )
+            playing_end = datetime.datetime.strptime(
+                info.get("end_time", ""), "%Y-%m-%d %H:%M:%S"
+            )
+            return start_dt == playing_start and end_dt == playing_end
+        except (TypeError, ValueError):
+            return False
 
     def has_last_timefree_request(self):
         """再開可能な聴き逃し再生情報があるか"""
@@ -405,7 +502,8 @@ class RadioManager:
         self._last_timefree_request["resume_seconds"] = target
         self._timefree_resume_position_sec = target
         self._timefree_started_monotonic = time.monotonic()
-        self._replay_timefree_at(target, announce=False)
+        if not self._player.seekToSeconds(target):
+            raise RuntimeError("タイムフリーシークに失敗しました。")
 
     def _replay_timefree_at(self, target_seconds, announce=False):
         """seek秒位置でURLを再生成してタイムフリー再生"""
@@ -456,9 +554,12 @@ class RadioManager:
         self.updateInfoTimer.Stop()
         self.streamWatchdogTimer.Stop()
         self.current_station_id = None
+        self.events.current_playing_station_id = None
         self.current_progs = None
         self.playback_mode = None
         self.events.playing = False
+        self._stop_timefree_seek_timer()
+        self._set_timefree_seek_ui_visible(False)
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
         self.update_timefree_command_ui()
         if hasattr(self.parent, "program_info_handler"):
@@ -470,6 +571,7 @@ class RadioManager:
 
     def stop(self):
         """再生停止"""
+        self.clear_timefree_menu_live_ack()
         self._player.stop()
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
         self.log.info("posed")
@@ -481,6 +583,8 @@ class RadioManager:
         self._timefree_started_monotonic = None
         self.log.debug("timer is stoped!")
         self.events.playing = False
+        self._stop_timefree_seek_timer()
+        self._set_timefree_seek_ui_visible(False)
         self.update_timefree_command_ui()
         if hasattr(self.parent, "program_info_handler"):
             self.parent.program_info_handler.clear_timefree_program_info()
@@ -497,35 +601,223 @@ class RadioManager:
 
     def get_latest_programList(self, progs):
         """番組リストを最新に更新"""
+        was_displaying = self.events.displaying
         self.tree.DeleteAllItems()
-        # 番組情報が表示されている場合のみクリア
-        if self.events.displaying:
-            self.parent.program_info_handler.nplist.clear()
-            self.parent.program_info_handler.DSCBOX.Disable()
+        # 放送局リスト更新時は番組情報UIを一旦破棄し、メニューを一時的に無効にする。
+        self.parent.program_info_handler.destroy_program_info_ui(disable_menu=True)
+        self.creator.GetSizer().Layout()
         self.areaDetermination(progs)
         self.setupradio()
         self.setRadioList()
+        self._sync_program_info_menu_after_station_list_reload(was_displaying)
+        self.creator.GetSizer().Layout()
+
+    def _sync_program_info_menu_after_station_list_reload(self, was_displaying):
+        """放送局一覧の再構築後、番組情報の表示設定とメニューを整合させる"""
+        handler = self.parent.program_info_handler
+        menu = self.parent.menu
+        if was_displaying:
+            menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示(&H)"))
+            handler.ensure_program_info_ui()
+            handler._set_program_info_menu_enabled(True)
+            handler.get_latest_info()
+        else:
+            menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示(&P)"))
+            handler._set_program_info_menu_enabled(True)
 
     def exit(self):
         """終了処理"""
+        if self._shutting_down:
+            return
+        self.log.info("RadioManager.exit: stopping timers and shutting down mpv")
+        self._shutting_down = True
+        self.events.playing = False
+        self.playback_mode = None
+        self.current_station_id = None
+        self.current_progs = None
         self.streamWatchdogTimer.Stop()
         self.updateInfoTimer.Stop()
+        self._stop_timefree_seek_timer()
         self._player.exit()
+        self.log.info(
+            "RadioManager.exit: mpv shutdown complete "
+            "(timefree seek daemon thread interrupted by mpv stop)"
+        )
+
+    def _format_hhmmss(self, seconds):
+        total = int(max(0, seconds))
+        hh = total // 3600
+        mm = (total % 3600) // 60
+        ss = total % 60
+        return f"{hh:02d}:{mm:02d}:{ss:02d}"
+
+    def _set_timefree_seek_ui_visible(self, visible):
+        if not hasattr(self, "timefree_seek_slider"):
+            return
+        self.timefree_seek_slider.Show(visible)
+        self.timefree_seek_label.Show(visible)
+        self.timefree_seek_slider.Enable(visible)
+        try:
+            self.parent.hPanel.Layout()
+            self.parent.sizer.Layout()
+        except Exception:
+            pass
+
+    def _sync_timefree_seek_ui_from_player(self):
+        if not hasattr(self, "timefree_seek_slider"):
+            return
+        if not self.is_timefree_playing():
+            return
+        duration = self.get_timefree_duration_seconds()
+        position = self.get_timefree_position_seconds()
+        if duration <= 0:
+            duration = max(position, 1)
+        position = max(0, min(position, duration))
+        self._timefree_seek_updating_ui = True
+        try:
+            self.timefree_seek_slider.SetRange(0, int(duration))
+            self.timefree_seek_slider.SetValue(int(position))
+            self.timefree_seek_label.SetLabel(
+                f"{self._format_hhmmss(position)} / {self._format_hhmmss(duration)}"
+            )
+        finally:
+            self._timefree_seek_updating_ui = False
+
+    def _start_timefree_seek_timer(self):
+        if not self.timefreeSeekTimer.IsRunning():
+            self.timefreeSeekTimer.Start(1000)
+
+    def _stop_timefree_seek_timer(self):
+        if self.timefreeSeekTimer.IsRunning():
+            self.timefreeSeekTimer.Stop()
+        if self.timefreeSeekApplyTimer.IsRunning():
+            self.timefreeSeekApplyTimer.Stop()
+
+    def _on_timefree_seek_timer(self, event):
+        if self.is_timefree_playing():
+            self._sync_timefree_seek_ui_from_player()
+        else:
+            self._stop_timefree_seek_timer()
+
+    def onTimefreeSeekChanged(self, event):
+        if self._timefree_seek_updating_ui:
+            return
+        if not self.is_timefree_playing():
+            return
+        self._pending_seek_seconds = int(self.timefree_seek_slider.GetValue())
+        self.timefree_seek_label.SetLabel(
+            f"{self._format_hhmmss(self._pending_seek_seconds)} / "
+            f"{self._format_hhmmss(max(self.timefree_seek_slider.GetMax(), 1))}"
+        )
+        self.timefreeSeekApplyTimer.Start(40, oneShot=True)
+
+    def _apply_timefree_seek_target(self, target):
+        if target is None or not self.is_timefree_playing():
+            return
+        self._schedule_timefree_seek_apply(int(target))
+
+    def _schedule_timefree_seek_apply(self, target):
+        with self._seek_apply_lock:
+            self._seek_apply_latest = int(target)
+            if self._seek_apply_running:
+                return
+            self._seek_apply_running = True
+        threading.Thread(target=self._timefree_seek_apply_worker, daemon=True).start()
+
+    def _timefree_seek_apply_worker(self):
+        while True:
+            with self._seek_apply_lock:
+                target = self._seek_apply_latest
+                self._seek_apply_latest = None
+            if target is None:
+                with self._seek_apply_lock:
+                    self._seek_apply_running = False
+                return
+            try:
+                self.seek_timefree(int(target))
+            except Exception as e:
+                self.log.error(f"Failed to seek timefree playback: {e}")
+                continue
+            wx.CallAfter(self._sync_timefree_seek_ui_from_player)
+
+    def onTimefreeSeekKeyDown(self, event):
+        if not self.is_timefree_playing():
+            event.Skip()
+            return
+        key = event.GetKeyCode()
+        if key not in (wx.WXK_PAGEUP, wx.WXK_PAGEDOWN):
+            event.Skip()
+            return
+
+        step = 60
+        current = int(self.timefree_seek_slider.GetValue())
+        max_value = int(max(self.timefree_seek_slider.GetMax(), 0))
+        if key == wx.WXK_PAGEUP:
+            target = max(0, current - step)
+        else:
+            target = min(max_value, current + step)
+
+        self.timefree_seek_slider.SetValue(target)
+        self._pending_seek_seconds = target
+        self.timefree_seek_label.SetLabel(
+            f"{self._format_hhmmss(target)} / "
+            f"{self._format_hhmmss(max(max_value, 1))}"
+        )
+        # PgUp/PgDn は即時反映（タイマー待ちなし）
+        self._pending_seek_seconds = None
+        self._apply_timefree_seek_target(target)
+
+    def _on_timefree_seek_apply_timer(self, event):
+        target = self._pending_seek_seconds
+        self._pending_seek_seconds = None
+        self._apply_timefree_seek_target(target)
 
     def is_live_playing(self):
         """ライブ再生中かどうか"""
         return self.playback_mode == "live" and self.events.playing
 
+    def clear_timefree_menu_live_ack(self):
+        """ライブ×別局聴き逃し再開用の「番組表で過去番組を選んだ」フラグを消す"""
+        self._timefree_menu_live_ack_station_id = None
+
+    def set_timefree_menu_live_ack(self, station_id):
+        """番組表で過去番組を選択したとき、対象局を記録する"""
+        self._timefree_menu_live_ack_station_id = station_id
+
+    def should_enable_timefree_menu_command(self):
+        """
+        メニュー「聴き逃し配信の再生/停止」と F2 の有効条件。
+        - 聴き逃し再生中: 停止のため有効
+        - 再開情報なし: 無効（新規開始は番組表ダイアログから）
+        - 無再生かつ再開情報あり: 前回停止位置からの再開が可能なため有効
+        - ライブ再生中かつ再開情報あり:
+            - ライブの局と前回聴き逃しの局が同一 → 有効（確認後に再開）
+            - 異なる局のライブ中 → 現在ライブの局の番組表で過去番組を選択するまで無効
+        """
+        if self.is_timefree_playing():
+            return True
+        if not self.has_last_timefree_request():
+            return False
+        if not self.is_live_playing():
+            return True
+        live_sid = self.current_station_id
+        last_sid = (self._last_timefree_request or {}).get("station_id")
+        if live_sid and last_sid == live_sid:
+            return True
+        ack = self._timefree_menu_live_ack_station_id
+        return bool(live_sid and ack == live_sid)
+
     def update_timefree_command_ui(self):
-        """聴き逃し再生コマンドの有効状態とラベルを更新"""
+        """聴き逃し配信メニュー・ショートカット(F2)のラベルと有効状態を更新"""
         if not hasattr(self.parent, "menu"):
             return
         try:
-            is_timefree = self.is_timefree_playing()
-            is_live = self.is_live_playing()
-            label = _("聴き逃し停止") if is_timefree else _("聴き逃し再生")
+            is_tf = self.is_timefree_playing()
+            label = _("聴き逃し停止") if is_tf else _("聴き逃し再生")
             self.parent.menu.SetMenuLabel("FUNCTION_TIMEFREE_TOGGLE", label)
-            # ライブ再生中(F1で放送中番組再生中)は無効
-            self.parent.menu.EnableMenu("FUNCTION_TIMEFREE_TOGGLE", not is_live)
+            self.parent.menu.EnableMenu(
+                "FUNCTION_TIMEFREE_TOGGLE",
+                self.should_enable_timefree_menu_command(),
+            )
         except Exception as e:
             self.log.error(f"Failed to update timefree command UI: {e}")

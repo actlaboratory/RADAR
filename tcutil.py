@@ -2,7 +2,6 @@
 import ConfigManager
 import getCalendar
 import datetime
-import locale
 
 
 class TimeManager:
@@ -121,6 +120,15 @@ class CalendarUtil:
             base_date = current.date()
         
         return base_date.strftime('%Y%m%d')
+
+    def get_radio_base_datetime(self):
+        """ラジオ基準日の0:00:00 datetimeを返す"""
+        radio_date = self.get_radio_date()
+        return datetime.datetime(
+            int(radio_date[:4]),
+            int(radio_date[4:6]),
+            int(radio_date[6:8]),
+        )
 
     def format_now(self):
         now = datetime.datetime.now()

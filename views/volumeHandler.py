@@ -61,9 +61,10 @@ class VolumeHandler:
             return
         selected = changeDeviceDialog.GetData()
         device_id = "" if not selected else selected["id"]
-        ok = self.parent.radio_manager._player.setDeviceByName(device_id)
-        if ok is False:
-            errorDialog(_("選択した再生デバイスは利用できなかったため、規定のデバイスに戻しました。"))
+        try:
+            self.parent.radio_manager._player.setDeviceByName(device_id)
+        except ValueError as ex:
+            errorDialog(str(ex))
             return
 
         try:

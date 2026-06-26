@@ -13,13 +13,19 @@ class NotificationUtil:
         pass
     
     def notify(self, title, message, app_name='RADAR', timeout=10):
-        """通知を送信"""
-        notification = wx.adv.NotificationMessage(
-            title=constants.APP_NAME if hasattr(constants, 'APP_NAME') else app_name,
-            message=message
-        )
-        notification.Show(timeout)
-        notification.Close()
+        """通知を送信（wx のメインループ上で表示する）。"""
+        def do_show():
+            notification = wx.adv.NotificationMessage(
+                title=constants.APP_NAME if hasattr(constants, 'APP_NAME') else app_name,
+                message=message
+            )
+            notification.Show(timeout)
+
+        app = wx.GetApp()
+        if app is not None:
+            wx.CallAfter(do_show)
+        else:
+            do_show()
 
 # グローバルインスタンス
 notification_util = NotificationUtil()

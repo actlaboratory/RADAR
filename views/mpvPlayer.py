@@ -1,11 +1,64 @@
+import atexit
+import json
 import os
 import subprocess
 import threading
 import time
+import uuid
 from logging import getLogger
 
 import constants
 import globalVars
+from views.audio_output_devices import getDeviceList
+
+
+def _first_nonempty(environ, *keys):
+    for k in keys:
+        v = environ.get(k)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
+def _norm_proxy(value):
+    """手動設定の「host:port」を http:// で補完。Windows IE 複合表記は改変しない。"""
+    if not value or not str(value).strip():
+        return ""
+    v = str(value).strip()
+    if "://" in v:
+        return v
+    if ";" in v and "=" in v:
+        return v
+    return "http://" + v
+
+
+def _mpv_proxy_url():
+    """HTTPS ストリーム想定で mpv --http-proxy に渡す URL。"""
+    val = _first_nonempty(
+        os.environ, "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"
+    )
+    return _norm_proxy(val) if val else ""
+
+
+def _spawn_proxy_env():
+    """子プロセス向けにプロキシ環境変数の大小文字とスキームを揃えた env。"""
+    env = os.environ.copy()
+    for upper, lower in (
+        ("HTTP_PROXY", "http_proxy"),
+        ("HTTPS_PROXY", "https_proxy"),
+    ):
+        val = _first_nonempty(env, upper, lower)
+        if not val:
+            continue
+        norm = _norm_proxy(val)
+        if norm:
+            env[upper] = norm
+            env[lower] = norm
+    no = _first_nonempty(env, "NO_PROXY", "no_proxy")
+    if no:
+        env["NO_PROXY"] = env["no_proxy"] = no
+    return env
+
 
 try:
     from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
@@ -16,31 +69,26 @@ except Exception:
     HAS_PYCAW = False
 
 
-def getDeviceList():
-    """アクティブな再生デバイス一覧を返す。戻り値: [{id, name}]"""
-    if not HAS_PYCAW:
-        return []
-
-    devices = []
+def shutdown_global_mpv_player():
+    """RadioManager.exit を経由できない異常終了経路向けに MPV を停止する。"""
     try:
-        for d in AudioUtilities.GetAllDevices():
-            dev_id = str(getattr(d, "id", ""))
-            state = str(getattr(d, "state", ""))
-            name = getattr(d, "FriendlyName", "")
-            if dev_id.startswith("{0.0.0.") and "Active" in state and name:
-                devices.append({"id": dev_id, "name": name})
+        app = getattr(globalVars, "app", None)
+        if not app:
+            return
+        main_view = getattr(app, "hMainView", None)
+        if not main_view:
+            return
+        radio_manager = getattr(main_view, "radio_manager", None)
+        if not radio_manager:
+            return
+        if getattr(radio_manager, "_shutting_down", False):
+            return
+        radio_manager.exit()
     except Exception:
-        return []
+        pass
 
-    unique = []
-    seen = set()
-    for d in devices:
-        key = (d["id"], d["name"])
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(d)
-    return unique
+
+atexit.register(shutdown_global_mpv_player)
 
 
 class MPVAudioPlayer:
@@ -55,7 +103,8 @@ class MPVAudioPlayer:
         self._process = None
         self._last_error = ""
         self._lock = threading.RLock()
-        self._mpv_path = constants.MPV_PATH
+        self._ipc_pipe_name = f"radar_mpv_{uuid.uuid4().hex}" if os.name == "nt" else ""
+        self._shutdown_done = False
         self._load_device_from_config()
 
     def _load_device_from_config(self):
@@ -97,12 +146,7 @@ class MPVAudioPlayer:
         with self._lock:
             requested = device_id or ""
             if requested and not self._is_active_device_id(requested):
-                self._log.warning("Selected output device is not active: %s", requested)
-                self._device_id = ""
-                self._save_device_to_config()
-                if self._is_running_locked():
-                    self._restart_locked()
-                return False
+                raise ValueError("指定した再生出力は利用できません。")
 
             self._device_id = requested
             self._save_device_to_config()
@@ -117,6 +161,23 @@ class MPVAudioPlayer:
             except Exception:
                 value = 0
             self._start_position_sec = max(0, value)
+
+    def seekToSeconds(self, seconds):
+        """mpv IPC で絶対位置シーク。成功時 True。"""
+        with self._lock:
+            if not self._is_running_locked():
+                return False
+            target = max(0, int(seconds or 0))
+            # 入力中の応答性を優先し、短いリトライで複数コマンドを試す
+            commands = [
+                ["seek", target, "absolute"],
+                ["seek", target, "absolute+exact"],
+                ["set_property", "time-pos", target],
+            ]
+            for cmd in commands:
+                if self._send_mpv_ipc_command_locked(cmd, retries=4, delay_sec=0.01):
+                    return True
+            return False
 
     def setNonSeekableInput(self, enabled):
         with self._lock:
@@ -133,7 +194,12 @@ class MPVAudioPlayer:
             self._stop_locked()
 
     def exit(self):
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
+        self._log.info("MPVAudioPlayer.exit: starting shutdown")
         self.stop()
+        self._log.info("MPVAudioPlayer.exit: shutdown complete")
 
     def isPlaying(self):
         with self._lock:
@@ -149,12 +215,17 @@ class MPVAudioPlayer:
                 return True
         return False
 
+    def _ipc_pipe_path(self):
+        if not self._ipc_pipe_name:
+            return ""
+        return rf"\\.\pipe\{self._ipc_pipe_name}"
+
     def _build_command(self):
         lavf_opts = "reconnect=1,reconnect_streamed=1,reconnect_delay_max=2"
         if self._nonseekable_input:
             lavf_opts += ",http_seekable=0,seekable=0"
         cmd = [
-            self._mpv_path,
+            constants.MPV_PATH,
             "--no-video",
             "--force-window=no",
             "--no-terminal",
@@ -171,6 +242,12 @@ class MPVAudioPlayer:
             header_str = ",".join([f"{k}: {v}" for k, v in self._http_headers.items() if v])
             if header_str:
                 cmd.insert(-1, f"--http-header-fields={header_str}")
+        proxy_url = _mpv_proxy_url()
+        if proxy_url:
+            cmd.insert(-1, f"--http-proxy={proxy_url}")
+        if self._ipc_pipe_name:
+            cmd.insert(-1, f"--input-ipc-server={self._ipc_pipe_path()}")
+        cmd.insert(-1, f"--volume={int(self._volume)}")
         if self._device_id:
             cmd.insert(-1, f"--audio-device=wasapi/{self._device_id}")
         if self._start_position_sec > 0:
@@ -198,6 +275,7 @@ class MPVAudioPlayer:
                 stderr=subprocess.PIPE,
                 startupinfo=startupinfo,
                 creationflags=creationflags,
+                env=_spawn_proxy_env(),
             )
         except Exception as e:
             self._last_error = str(e)
@@ -205,7 +283,6 @@ class MPVAudioPlayer:
             self._log.error("Failed to start mpv: %s", e)
             return
 
-        # 起動直後に終了した場合の理由を保持
         time.sleep(0.6)
         if self._process and self._process.poll() is not None:
             return_code = self._process.returncode
@@ -222,41 +299,59 @@ class MPVAudioPlayer:
             time.sleep(0.8)
             if self._process.poll() is not None:
                 stderr = self._read_process_stderr_locked()
-                self._last_error = stderr
-                self._log.warning("mpv exited after device selection. fallback to default: %s", stderr[:300])
-                self._device_id = ""
-                self._save_device_to_config()
-                try:
-                    self._process = subprocess.Popen(
-                        self._build_command(),
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.PIPE,
-                        startupinfo=startupinfo,
-                        creationflags=creationflags,
-                    )
-                except Exception as e:
-                    self._last_error = str(e)
-                    self._process = None
-                    self._log.error("Failed to restart mpv with default device: %s", e)
-                    return
+                self._last_error = stderr.strip() or "mpv exited after device selection"
+                self._log.error("mpv exited after device selection: %s", self._last_error[:500])
+                self._process = None
+                return
 
         self._apply_runtime_volume_async()
 
     def _stop_locked(self):
         if not self._is_running_locked():
+            self._log.info("mpv shutdown: no running process (skip)")
             self._process = None
             return
-        try:
-            self._process.terminate()
-            self._process.wait(timeout=2)
-        except Exception:
+        proc = self._process
+        pid = proc.pid if proc else None
+        self._log.info("mpv shutdown: starting pid=%s ipc=%s", pid, self._ipc_pipe_name or "(none)")
+        used_kill = False
+        if self._send_mpv_ipc_command_locked(["quit"], retries=8, delay_sec=0.02):
             try:
-                self._process.kill()
-                self._process.wait(timeout=2)
+                rc = proc.wait(timeout=0.5)
+                self._log.info("mpv shutdown: exited after ipc quit pid=%s returncode=%s", pid, rc)
+                self._process = None
+                return
             except Exception:
                 pass
+        try:
+            proc.terminate()
+            rc = proc.wait(timeout=0.5)
+            self._log.info("mpv shutdown: exited after terminate pid=%s returncode=%s", pid, rc)
+        except Exception as e_term:
+            self._log.warning(
+                "mpv shutdown: terminate/wait failed pid=%s: %s; trying kill",
+                pid,
+                e_term,
+            )
+            try:
+                proc.kill()
+                used_kill = True
+                rc = proc.wait(timeout=0.5)
+                self._log.info("mpv shutdown: exited after kill pid=%s returncode=%s", pid, rc)
+            except Exception as e_kill:
+                self._log.error("mpv shutdown: kill failed pid=%s: %s", pid, e_kill)
         finally:
+            try:
+                if proc and proc.poll() is None:
+                    self._log.error(
+                        "mpv still running: pid=%s kill_attempted=%s",
+                        pid,
+                        used_kill,
+                    )
+                else:
+                    self._log.info("mpv shutdown: verified pid=%s poll=%s", pid, proc.poll())
+            except Exception as e_poll:
+                self._log.warning("mpv shutdown: exception while verifying exit pid=%s: %s", pid, e_poll)
             self._process = None
 
     def _restart_locked(self):
@@ -280,8 +375,30 @@ class MPVAudioPlayer:
         except Exception:
             return ""
 
+    def _apply_mpv_ipc_volume_locked(self):
+        vol = max(0, min(100, int(self._volume)))
+        return self._send_mpv_ipc_command_locked(["set_property", "volume", vol])
+
+    def _send_mpv_ipc_command_locked(self, command, retries=30, delay_sec=0.05):
+        if not self._ipc_pipe_name or not self._is_running_locked():
+            return False
+        path = self._ipc_pipe_path()
+        line = json.dumps({"command": command}) + "\n"
+        for _ in range(max(1, int(retries))):
+            try:
+                with open(path, "w", encoding="utf-8", newline="\n") as pipe:
+                    pipe.write(line)
+                return True
+            except OSError:
+                time.sleep(max(0.0, float(delay_sec)))
+        return False
+
     def _apply_runtime_volume_locked(self):
-        if not HAS_PYCAW or not self._is_running_locked():
+        if not self._is_running_locked():
+            return False
+        if self._apply_mpv_ipc_volume_locked():
+            return True
+        if not HAS_PYCAW or ISimpleAudioVolume is None:
             return False
         pid = self._process.pid
         target = max(0.0, min(1.0, self._volume / 100.0))
@@ -298,9 +415,6 @@ class MPVAudioPlayer:
         return False
 
     def _apply_runtime_volume_async(self):
-        if not HAS_PYCAW:
-            return
-
         def _worker():
             for _ in range(12):
                 with self._lock:

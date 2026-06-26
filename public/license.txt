@@ -18,13 +18,23 @@ Copyright (c)2025 mayumi pc,ACT laboratory All rights reserved.
 	AccessibleOutput2　(https://pypi.org/project/accessible-output2/)
 　　dukpy　(https://github.com/amol-/dukpy)
 		Copyright (c) 2015 Alessandro Molina
+	pycaw　(https://github.com/AndreMiras/pycaw)
+		Copyright (c) 2016 AndreMiras
 
 ・MS-PLに基づく以下のライブラリ
 	DotNetZip
 
+・GPLライセンスv2以降に基づく以下のソフトウェア
+	mpv	(https://mpv.io/)
+		Copyright (c) 2000-2026 mpv/MPlayer/mplayer2 projects
+		ソースコード: https://github.com/mpv-player/mpv
 
+・LGPLライセンスv2.1以降に基づく以下のソフトウェア
+	FFmpeg	(https://ffmpeg.org/)
+		Copyright (c) the FFmpeg developers
+		ソースコード: https://github.com/FFmpeg/FFmpeg
 
 
 その他、個別のライセンスに基づく複数のライブラリ
 
-各ライセンスは、licensesディレクトリ内に格納されています。
+各ライセンスは、licenseディレクトリ内に格納されています。

@@ -14,11 +14,12 @@ class dialog(baseDialog.BaseDialog):
     def InstallControls(self):
         """いろんなwidgetを設置する。"""
         creator = ViewCreator.ViewCreator(self.viewMode, self.panel, self.sizer, wx.VERTICAL, 10, style=wx.ALL, margin=20)
-        self.info, prodsc = creator.inputbox(_("番組説明"), defaultValue="\r\n".join(self.dsc), style=wx.TE_MULTILINE|wx.TE_READONLY | wx.TE_NO_VSCROLL | wx.BORDER_RAISED, sizerFlag=wx.EXPAND, x=750, textLayout=None)
-        self.title, prottl = creator.inputbox(_("番組名"), defaultValue="\r\n".join(self.title), style=wx.TE_MULTILINE|wx.TE_READONLY | wx.TE_NO_VSCROLL | wx.BORDER_RAISED, sizerFlag=wx.EXPAND, x=750, textLayout=None)
-        self.pfm, propfm = creator.inputbox(_("出演者"), defaultValue="\r\n".join(self.pfm), style=wx.TE_MULTILINE|wx.TE_READONLY | wx.TE_NO_VSCROLL | wx.BORDER_RAISED, sizerFlag=wx.EXPAND, x=750, textLayout=None)
-        self.starttime, prostat = creator.inputbox(_("開始時間"), defaultValue="\r\n".join(self.st), style=wx.TE_MULTILINE|wx.TE_READONLY | wx.TE_NO_VSCROLL | wx.BORDER_RAISED, sizerFlag=wx.EXPAND, x=750, textLayout=None)
-        self.endtime, proendt = creator.inputbox(_("終了時間"), defaultValue="\r\n".join(self.et), style=wx.TE_MULTILINE|wx.TE_READONLY | wx.TE_NO_VSCROLL | wx.BORDER_RAISED, sizerFlag=wx.EXPAND, x=750, textLayout=None)
+        self.info, prodsc = creator.inputbox(_("番組説明"), defaultValue="\r\n".join(self.dsc), style=wx.TE_MULTILINE|wx.TE_READONLY|wx.TE_NO_VSCROLL|wx.BORDER_RAISED, sizerFlag=wx.EXPAND, x=750, textLayout=wx.VERTICAL)
+        self.title, prottl = creator.inputbox(_("番組名"), defaultValue="\r\n".join(self.title), style=wx.TE_MULTILINE|wx.TE_READONLY|wx.TE_NO_VSCROLL|wx.BORDER_RAISED, sizerFlag=wx.EXPAND, x=750, textLayout=wx.VERTICAL)
+        self.pfm, propfm = creator.inputbox(_("出演者"), defaultValue="\r\n".join(self.pfm), style=wx.TE_MULTILINE|wx.TE_READONLY|wx.TE_NO_VSCROLL|wx.BORDER_RAISED, sizerFlag=wx.EXPAND, x=750, textLayout=wx.VERTICAL)
+        time_creator = ViewCreator.ViewCreator(self.viewMode, creator.GetPanel(), creator.GetSizer(), wx.HORIZONTAL, style=wx.ALL, margin=5)
+        self.starttime, prostat = time_creator.inputbox(_("開始時間"), defaultValue="\r\n".join(self.st), style=wx.TE_READONLY|wx.BORDER_RAISED, textLayout=wx.VERTICAL)
+        self.endtime, proendt = time_creator.inputbox(_("終了時間"), defaultValue="\r\n".join(self.et), style=wx.TE_READONLY|wx.BORDER_RAISED, textLayout=wx.VERTICAL)
         f = self.info.GetFont()
         f.SetPointSize((int)(f.GetPointSize() * (2/3)))
         self.info.SetFont(f)

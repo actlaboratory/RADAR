@@ -27,6 +27,7 @@ from views import programInfoHandler
 from views import volumeHandler
 from views import programCacheController
 from views import programSearchDialog
+import shutdown_log
 
 
 class MainView(BaseView):
@@ -178,9 +179,14 @@ class Events(BaseEvents):
 
 	def onUpdateProcess(self, event):
 		"""番組情報を定期的に更新"""
+		if not hasattr(self.parent, 'program_info_handler'):
+			return
+		radio_manager = getattr(self.parent, 'radio_manager', None)
+		if radio_manager and radio_manager.is_timefree_playing():
+			self.parent.program_info_handler.get_latest_info()
+			return
 		if self.playing and self.current_playing_station_id:
-			if hasattr(self.parent, 'program_info_handler'):
-				self.parent.program_info_handler.get_latest_info()
+			self.parent.program_info_handler.get_latest_info()
 
 	def onHide(self, event):
 		"""最小化メニューが選択されたときの処理"""
@@ -216,13 +222,13 @@ class Events(BaseEvents):
 		self.exit(event, from_close_event=False)
 
 	def exit(self, event=None, from_close_event=False):
+		sd = shutdown_log.get_shutdown_logger()
 		if self._exit_in_progress:
+			sd.warning("Shutdown already in progress; ignoring duplicate exit request")
 			return
 		self._exit_in_progress = True
-		try:
-			self.log.info("Attempting to terminate process...")
-		except:
-			pass
+		self.log.info("Application shutdown sequence started")
+		sd.info("[Shutdown] Phase 1: Confirm exit (recording in progress / pending schedules)")
 		active_recorders = recorder_manager.get_active_recorders()
 		
 		if active_recorders:
@@ -232,117 +238,95 @@ class Events(BaseEvents):
 			result = yesNoDialog(_("録音中の終了確認"), message)
 			if result == wx.ID_NO:
 				self._exit_in_progress = False
+				sd.info("[Shutdown] User cancelled exit (recording in progress)")
 				if from_close_event and event and event.CanVeto():
 					event.Veto()
 				return
 		
-		if self._has_schedule_data():
-			schedule_count = len(schedule_manager.schedules)
-			if schedule_count > 0:
-				message = f"録音予約が{schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
-				
-				result = yesNoDialog(_("予約データ削除の確認"), message)
-				if result == wx.ID_NO:
-					self._exit_in_progress = False
-					if from_close_event and event and event.CanVeto():
-						event.Veto()
-					return
+		pending_schedule_count = schedule_manager.count_pending_schedules_for_exit_warning()
+		if pending_schedule_count > 0:
+			message = f"録音予約が{pending_schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
+			
+			result = yesNoDialog(_("予約データ削除の確認"), message)
+			if result == wx.ID_NO:
+				self._exit_in_progress = False
+				sd.info("[Shutdown] User cancelled exit (pending schedules)")
+				if from_close_event and event and event.CanVeto():
+					event.Veto()
+				return
 		
+		sd.info("[Shutdown] Phase 2: Cleanup (recording handler, radio/mpv, schedule data)")
 		self._cleanup_recording_handler()
 		self._cleanup_radio_manager()
+		self._cleanup_program_cache()
 		self._cleanup_schedule_data()
-
-		try:
-			self.log.info("Application cleanup completed")
-		except:
-			pass
-		
+		sd.info(
+			"[Shutdown] Phase 2 complete (program cache sqlite closed; MainLoop ends next)"
+		)
+		self.log.info("Tearing down UI resources")
 		globalVars.app.tb.Destroy()
+		shutdown_log.flush_app_log_handlers()
 
-		try:
-			self.log.info("Exiting...")
-		except:
-			pass
+		sd.info("[Shutdown] Phase 3: Close main window (MainLoop will end)")
 
 		if from_close_event:
 			if event:
 				event.Skip()
 		else:
 			self.parent.hFrame.Destroy()
+		shutdown_log.flush_app_log_handlers()
 
 	def _cleanup_recording_handler(self):
 		"""録音ハンドラーのクリーンアップ"""
 		if hasattr(self.parent, 'recording_handler'):
 			try:
+				shutdown_log.get_shutdown_logger().info("[Shutdown] Running recording_handler.cleanup")
 				self.parent.recording_handler.cleanup()
 			except Exception as e:
-				try:
-					self.log.error(f"Error during recording handler cleanup: {e}")
-				except:
-					pass
+				self.log.error("recording_handler cleanup failed: %s", e, exc_info=True)
 
 	def _cleanup_radio_manager(self):
 		"""ラジオマネージャーのクリーンアップ"""
 		if hasattr(self.parent, 'radio_manager'):
 			try:
+				shutdown_log.get_shutdown_logger().info("[Shutdown] Running radio_manager.exit (mpv)")
 				self.parent.radio_manager.exit()
 			except Exception as e:
-				try:
-					self.log.error(f"Error during radio manager cleanup: {e}")
-				except:
-					pass
+				self.log.error("radio_manager cleanup failed: %s", e, exc_info=True)
 
-	def _has_schedule_data(self):
-		"""スケジュールデータの存在確認"""
-		try:
-			if schedule_manager.schedules:
-				return True
-
-			schedule_file = schedule_manager.schedule_file
-			if os.path.exists(schedule_file):
-				if os.path.getsize(schedule_file) > 0:
-					return True
-
-			return False
-			
-		except Exception as e:
+	def _cleanup_program_cache(self):
+		"""番組キャッシュのクリーンアップ"""
+		if hasattr(self.parent, 'program_cache_controller'):
 			try:
-				self.log.error(f"Error checking schedule data: {e}")
-			except:
-				pass
-			return False
+				shutdown_log.get_shutdown_logger().info(
+					"[Shutdown] Running program_cache_controller.cleanup (sqlite)"
+				)
+				self.parent.program_cache_controller.cleanup()
+			except Exception as e:
+				self.log.error("program_cache_controller cleanup failed: %s", e, exc_info=True)
 
 	def _cleanup_schedule_data(self):
 		"""スケジュール録音データの完全削除"""
 		try:
+			shutdown_log.get_shutdown_logger().info(
+				"[Shutdown] Removing schedule file and in-memory schedules"
+			)
 			schedule_file = schedule_manager.schedule_file
 			if os.path.exists(schedule_file):
 				os.remove(schedule_file)
-				try:
-					self.log.info(f"Schedule file deleted: {schedule_file}")
-				except:
-					pass
+				self.log.info("Deleted schedule file: %s", schedule_file)
 
 			schedule_manager.cleanup()
 
 			with schedule_manager.lock:
 				removed_count = len(schedule_manager.schedules)
 				schedule_manager.schedules.clear()
-				try:
-					self.log.info(f"All schedule data cleared: {removed_count} schedules removed")
-				except:
-					pass
+				self.log.info("Cleared %s schedule entries from memory", removed_count)
 
-			try:
-				self.log.info("Schedule data cleanup completed")
-			except:
-				pass
-			
+			self.log.info("Schedule data cleanup completed")
+
 		except Exception as e:
-			try:
-				self.log.error(f"Error during schedule data cleanup: {e}")
-			except:
-				pass
+			self.log.error("Schedule data cleanup failed: %s", e, exc_info=True)
 
 
 	def option(self, event):
@@ -405,6 +389,17 @@ class Events(BaseEvents):
 	def onRadioActivated(self, event):
 		if not hasattr(self.parent, 'radio_manager'):
 			return
+		if self.parent.radio_manager.is_timefree_playing():
+			result = yesNoDialog(
+				_("聴き逃し再生中"),
+				_("現在、聴き逃し配信を再生中です。\nライブ再生へ切り替えますか？")
+			)
+			if result != wx.ID_YES:
+				return
+			try:
+				self.parent.radio_manager.stop_timefree()
+			except Exception as e:
+				self.log.error(f"Failed to stop timefree before live playback: {e}")
 		
 		self.current_playing_station_id = self.parent.radio_manager.tree.GetItemData(
 			self.parent.radio_manager.tree.GetFocusedItem()
@@ -439,7 +434,7 @@ class Events(BaseEvents):
 		self.parent.radio_manager.stop()
 
 	def onTimefreeToggle(self, event):
-		"""聴き逃し再生/停止（グローバル）"""
+		"""聴き逃し停止、または前回停止した聴き逃しを再開（無再生時は確認なし・ライブ中は確認あり）"""
 		if not hasattr(self.parent, "radio_manager"):
 			return
 
@@ -448,45 +443,26 @@ class Events(BaseEvents):
 			radio_manager.stop_timefree()
 			return
 
+		if not radio_manager.should_enable_timefree_menu_command():
+			return
+
+		if not radio_manager.has_last_timefree_request():
+			return
+
 		if radio_manager.is_live_playing():
-			station_id = self._resolve_timefree_station_id()
-			if not station_id:
-				errorDialog(_("放送局を選択してから聴き逃し再生を実行してください。"))
+			result = yesNoDialog(
+				_("確認"),
+				_("ライブ再生を終了し、前回停止した聴き逃し再生を再開しますか？"),
+				self.parent.hFrame,
+			)
+			if result != wx.ID_YES:
 				return
-			if hasattr(self.parent, "program_info_handler"):
-				self.parent.program_info_handler.initializeInfoView(station_id)
-			return
 
-		if radio_manager.has_last_timefree_request():
-			try:
-				radio_manager.replay_last_timefree()
-				return
-			except Exception as e:
-				self.log.warning(f"Failed to replay last timefree stream: {e}")
-
-		station_id = self._resolve_timefree_station_id()
-		if not station_id:
-			errorDialog(_("放送局を選択してから聴き逃し再生を実行してください。"))
-			return
-
-		if hasattr(self.parent, "program_info_handler"):
-			self.parent.program_info_handler.initializeInfoView(station_id)
-
-	def _resolve_timefree_station_id(self):
-		"""聴き逃し再生コマンドの対象放送局IDを解決"""
-		if self.current_selected_station_id:
-			return self.current_selected_station_id
-		if self.current_playing_station_id:
-			return self.current_playing_station_id
-		if hasattr(self.parent, "radio_manager") and hasattr(self.parent.radio_manager, "tree"):
-			try:
-				item = self.parent.radio_manager.tree.GetFocusedItem()
-				station_id = self.parent.radio_manager.tree.GetItemData(item)
-				if station_id:
-					return station_id
-			except Exception:
-				return None
-		return None
+		try:
+			radio_manager.replay_last_timefree()
+		except Exception as e:
+			self.log.warning(f"Failed to replay last timefree stream: {e}")
+			errorDialog(_("聴き逃し再生の再開に失敗しました。\n%(detail)s") % {"detail": str(e)}, self.parent.hFrame)
 
 	def _update_program_info_display(self):
 		"""番組情報表示の更新"""
@@ -497,6 +473,7 @@ class Events(BaseEvents):
 			return
 		
 		handler = self.parent.program_info_handler
+		handler.ensure_program_info_ui()
 		handler.nplist.Enable()
 		handler.nplist.clear()
 		self.show_program_info()

@@ -9,8 +9,8 @@ import os.path
 APP_FULL_NAME = "Radio Audio Data Archive and Recorder "#アプリケーションの完全な名前
 APP_NAME="RADAR"#アプリケーションの名前
 APP_ICON = "radar.ico"
-APP_VERSION="1.0.1"
-APP_LAST_RELEASE_DATE="2026-03-20"
+APP_VERSION="1.1.0"
+APP_LAST_RELEASE_DATE="2026-06-26"
 APP_COPYRIGHT_YEAR="2026"
 APP_LICENSE="Apache License 2.0"
 APP_DEVELOPERS="actlaboratory,mayumi pc"
@@ -27,6 +27,9 @@ SETTING_FILE_NAME="settings.ini"
 KEYMAP_FILE_NAME="keymap.ini"
 FFMPEG_LOG_FILE = "ffmpeg_log.txt"
 PROGRAM_CACHE_DB_NAME = "program_cache.db"
+
+# 過去1週間の日付表示チェック 初期値
+SHOW_PAST_WEEK_DATES_DEFAULT = False
 
 
 

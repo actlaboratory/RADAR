@@ -1,0 +1,10 @@
+mpv media player
+
+Copyright (c) 2000-2026 mpv/MPlayer/mplayer2 projects
+
+本ソフトウェアに同梱されている mpv（bin/mpv.exe）は、GNU General Public License
+version 2 or later（GPLv2+）の条件に従って提供されています。
+ライセンス全文は common/GPL-2.0.txt を参照してください。
+
+対応するソースコードは、以下より取得できます。
+https://github.com/mpv-player/mpv
