@@ -29,7 +29,7 @@ class Dialog(BaseDialog):
 		self.mail, self.mailStatic = self.creator.inputbox(_("メールアドレス(&M)"), defaultValue=self.defaultMail, x=400)
 		self.password, self.passwordStatic = self.creator.inputbox(_("パスワード(&P)"), x=400, style=wx.TE_PASSWORD)
 		self.save = self.creator.checkbox(_("ログイン情報を保存し、起動時に自動でログインする(&S)"), state=True)
-		self.creator.staticText(_("ログインできない場合は、「ブラウザでログイン」からradikoのページで直接ログインしてください。ブラウザでログインした場合は、セッションが切れたときに再度ログインが必要です。"), x=400)
+		self.creator.staticText(_("ログインできない場合は、「ブラウザでログイン」からradikoのページで直接ログインしてください。\nブラウザでログインした場合は、セッションが切れたときに再度ログインが必要です。"),proportion=1)
 
 		self.creator = views.ViewCreator.ViewCreator(self.viewMode, self.panel, self.sizer, wx.HORIZONTAL, 20, style=wx.ALIGN_RIGHT)
 		self.bOk = self.creator.okbutton(_("ログイン"), self.ok)
