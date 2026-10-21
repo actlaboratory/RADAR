@@ -8,7 +8,9 @@ from logging import getLogger
 import requests
 import constants
 import datetime
+import urllib.error
 import urllib.parse
+from views import premium
 from views import token
 
 LIVE_PLAYLIST_URL = "https://alliance-stream-radiko.smartstream.ne.jp/so/playlist.m3u8"
@@ -24,16 +26,27 @@ class ProgramManager:
         self.partialkey = None
         self.area_id = ""
         self._timefree_playlist_base_cache = {}
+        self._areafree_playlist_base_cache = {}
         self.jpCode()
 
-    def refresh_auth_session(self):
+    def refresh_auth_session(self, _retried=False):
         """radiko認証セッションを毎回更新する"""
         self.gettoken = token.Token()
         res = self.gettoken.auth1()
         ret = self.gettoken.get_partial_key(res)
         self.token = ret[1]
         self.partialkey = ret[0]
-        auth2_text = self.gettoken.auth2(self.partialkey, self.token)
+        radiko_session = premium.session.get_session()
+        try:
+            auth2_text = self.gettoken.auth2(self.partialkey, self.token, radiko_session=radiko_session)
+        except urllib.error.HTTPError as e:
+            if not radiko_session or _retried:
+                raise
+            # プレミアムセッション期限切れの可能性があるため、1回だけ再ログインして認証し直す
+            self.log.warning("auth2 with premium session failed (%s); trying relogin", e.code)
+            if not premium.session.relogin():
+                raise
+            return self.refresh_auth_session(_retried=True)
         self.area_id = self._extract_area_id(auth2_text)
         return self.token
 
@@ -60,8 +73,43 @@ class ProgramManager:
             "lsid": self._make_lsid(),
             "type": "b",
         })
-        url = f"{LIVE_PLAYLIST_URL}?{params}"
+        playlist_base = LIVE_PLAYLIST_URL
+        if premium.session.is_areafree():
+            playlist_base = self._get_areafree_playlist_base_url(station_id, timefree=False)
+        url = f"{playlist_base}?{params}"
         return url, self._live_auth_headers()
+
+    def _get_areafree_playlist_base_url(self, station_id, timefree):
+        """エリアフリー用 (areafree="1") の playlist ベース URL を返す（取得できなければ通常のURL）"""
+        cache_key = (station_id, timefree)
+        cached = self._areafree_playlist_base_cache.get(cache_key)
+        if cached:
+            return cached
+        default_url = TIMEFREE_PLAYLIST_URL if timefree else LIVE_PLAYLIST_URL
+        suffix = "/tf/playlist.m3u8" if timefree else "/so/playlist.m3u8"
+        base_url = default_url
+        try:
+            url = f"{RADIKO_API_BASE}/station/stream/pc_html5/{station_id}.xml"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+            candidates = []
+            for item in root.findall(".//url"):
+                if item.get("timefree") != ("1" if timefree else "0") or item.get("areafree") != "1":
+                    continue
+                playlist = item.find("playlist_create_url")
+                if playlist is not None and playlist.text:
+                    candidates.append(playlist.text.strip())
+            preferred = [c for c in candidates if c.endswith(suffix)]
+            if preferred or candidates:
+                base_url = (preferred or candidates)[0]
+            else:
+                self.log.warning("areafree playlist_create_url not found for %s (timefree=%s); using default", station_id, timefree)
+        except Exception as e:
+            self.log.warning("failed to get areafree playlist url for %s (timefree=%s): %s", station_id, timefree, e)
+            return base_url
+        self._areafree_playlist_base_cache[cache_key] = base_url
+        return base_url
 
     def get_authenticated_stream_url(self, station_id):
         """認証済みライブ再生URLとHTTPヘッダーを返す"""
@@ -87,20 +135,24 @@ class ProgramManager:
     def get_timefree_playback_source_with_seek(self, station_id, ft_dt, to_dt, seek_seconds=0, stream_type="b"):
         """seek位置を指定してタイムフリー再生URLとヘッダーを返す"""
         self.refresh_auth_session()
+        url = self.build_timefree_seek_url(station_id, ft_dt, to_dt, seek_seconds, stream_type)
+        return url, self._live_auth_headers()
+
+    def build_timefree_seek_url(self, station_id, ft_dt, to_dt, seek_seconds=0, stream_type="b"):
+        """認証を更新せずに seek 位置付きのタイムフリー再生URLを返す（既存トークンを使い回す場合用）"""
         if seek_seconds is None:
             seek_seconds = 0
         seek_seconds = max(0, int(seek_seconds))
         total_duration = max(1, int((to_dt - ft_dt).total_seconds()))
         seek_seconds = min(seek_seconds, total_duration - 1)
         seek_dt = ft_dt + datetime.timedelta(seconds=seek_seconds)
-        url = self._build_timefree_playlist_url(
+        return self._build_timefree_playlist_url(
             station_id,
             ft_dt,
             to_dt,
             seek_dt=seek_dt,
             stream_type=stream_type,
         )
-        return url, self._live_auth_headers()
 
     def get_timefree_recording_segments(self, station_id, ft_dt, to_dt):
         """タイムフリー録音用セグメント (url, headers, duration_sec) のリスト。
@@ -138,6 +190,8 @@ class ProgramManager:
 
     def _get_timefree_playlist_base_url(self, station_id):
         """放送局ごとのタイムフリー playlist ベース URL を返す"""
+        if premium.session.is_areafree():
+            return self._get_areafree_playlist_base_url(station_id, timefree=True)
         cached = self._timefree_playlist_base_cache.get(station_id)
         if cached:
             return cached

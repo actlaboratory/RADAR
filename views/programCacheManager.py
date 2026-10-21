@@ -273,6 +273,32 @@ class ProgramCacheManager:
                 self.log.error(f"Failed to get last update time: {e}")
                 return None
     
+    def get_metadata(self, key):
+        """キャッシュメタデータの値を取得"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT value FROM cache_metadata WHERE key = ?", (key,))
+                result = cursor.fetchone()
+                return result[0] if result else None
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to get metadata {key}: {e}")
+                return None
+
+    def set_metadata(self, key, value):
+        """キャッシュメタデータの値を保存"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO cache_metadata (key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                ''', (key, value))
+                self.conn.commit()
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to set metadata {key}: {e}")
+                self.conn.rollback()
+
     def cleanup_old_data(self, days=7):
         """古いデータの削除"""
         with self.lock:

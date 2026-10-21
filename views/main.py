@@ -20,6 +20,8 @@ from simpleDialog import *
 from views import globalKeyConfig
 from views import settingsDialog
 from views import versionDialog
+from views import premium
+from views import premiumLoginDialog
 from views import programmanager
 from views import radioManager
 from views import recordingHandler
@@ -53,6 +55,10 @@ class MainView(BaseView):
 		self.recording_handler = recordingHandler.RecordingHandler(self)
 		self.program_info_handler = programInfoHandler.ProgramInfoHandler(self)
 		self.volume_handler = volumeHandler.VolumeHandler(self)
+
+		# 保存済みのプレミアム認証情報があれば、エリア判定（auth2）より前にログインしておく
+		premium.auto_login(self.app.config)
+		self.events.update_premium_menu_label()
 
 		self.radio_manager.areaDetermination(self.progs)
 
@@ -145,6 +151,7 @@ class Menu(BaseMenu):
 			"OPTION_OPTION": self.parent.events.option,
 			"OPTION_KEY_CONFIG": self.parent.events.keyConfig,
 			"OPTION_STARTUP": self.parent.events.registerStartup,
+			"OPTION_PREMIUM_LOGIN": self.parent.events.premiumLogin,
 		})
 
 		self.RegisterMenuCommand(self.hHelpMenu, {
@@ -260,6 +267,7 @@ class Events(BaseEvents):
 		self._cleanup_radio_manager()
 		self._cleanup_program_cache()
 		self._cleanup_schedule_data()
+		self._cleanup_premium_session()
 		sd.info(
 			"[Shutdown] Phase 2 complete (program cache sqlite closed; MainLoop ends next)"
 		)
@@ -328,6 +336,13 @@ class Events(BaseEvents):
 		except Exception as e:
 			self.log.error("Schedule data cleanup failed: %s", e, exc_info=True)
 
+	def _cleanup_premium_session(self):
+		"""プレミアム会員セッションからログアウト"""
+		try:
+			premium.session.logout()
+		except Exception as e:
+			self.log.error("premium logout failed: %s", e, exc_info=True)
+
 
 	def option(self, event):
 		d = settingsDialog.Dialog()
@@ -339,6 +354,7 @@ class Events(BaseEvents):
 			self.parent.menu.InitShortcut()
 			self.parent.menu.ApplyShortcut(self.parent.hFrame)
 			self.parent.menu.Apply(self.parent.hFrame)
+			self.update_premium_menu_label()
 
 	def checkUpdate(self, event):
 		update.checkUpdate()
@@ -587,6 +603,74 @@ class Events(BaseEvents):
 		"""音量変更時の処理"""
 		if hasattr(self.parent, 'volume_handler'):
 			self.parent.volume_handler.onVolumeChanged(event)
+
+	def update_premium_menu_label(self):
+		"""ログイン状態に応じてプレミアムメニューの表記を切り替える"""
+		if premium.session.is_areafree():
+			self.parent.menu.SetMenuLabel("OPTION_PREMIUM_LOGIN", _("radikoプレミアムからログアウト(&L)"))
+		else:
+			self.parent.menu.SetMenuLabel("OPTION_PREMIUM_LOGIN")
+
+	def premiumLogin(self, event):
+		"""radikoプレミアムへのログイン/ログアウト"""
+		config = globalVars.app.config
+		if premium.session.is_areafree():
+			result = yesNoDialog(
+				_("確認"),
+				_("radikoプレミアムからログアウトしますか？\n保存されている認証情報も削除されます。"),
+			)
+			if result != wx.ID_YES:
+				return
+			premium.session.logout()
+			premium.clear_credentials(config)
+			config.write()
+			self.update_premium_menu_label()
+			self.onUpdateProgram(None)
+			self._refresh_program_cache_scope()
+			dialog(_("ログアウト"), _("ログアウトしました。お住まいのエリアの放送局一覧に戻ります。"))
+			return
+
+		d = premiumLoginDialog.Dialog(config[premium.CONFIG_SECTION]["mail"])
+		d.Initialize()
+		if d.Show() == wx.ID_CANCEL:
+			return
+		mail, password, save = d.GetValue()
+		try:
+			with wx.BusyCursor():
+				premium.session.login(mail, password)
+		except premium.PremiumAuthError as e:
+			if e.kind == premium.PremiumAuthError.NOT_AREAFREE:
+				message = _("ログインには成功しましたが、このアカウントではエリアフリーが有効になっていません。\nエリアフリープランの契約状況をご確認ください。")
+			elif e.kind == premium.PremiumAuthError.INVALID_CREDENTIALS:
+				message = _("ログインに失敗しました。メールアドレスとパスワードをご確認ください。")
+			else:
+				message = _("radikoへの接続に失敗しました。インターネットの接続状況をご確認ください。")
+			errorDialog(message)
+			return
+
+		if save:
+			premium.save_credentials(config, mail, password)
+		else:
+			premium.clear_credentials(config)
+			config[premium.CONFIG_SECTION]["mail"] = mail
+		config.write()
+		self.update_premium_menu_label()
+		self.onUpdateProgram(None)
+		message = _("エリアフリーが有効になりました。全国の放送局を聴取できます。")
+		if self._refresh_program_cache_scope():
+			message += "\n" + _("番組検索用に全国の番組データをバックグラウンドで取得します。完了までしばらく時間がかかります。")
+		dialog(_("ログイン"), message)
+
+	def _refresh_program_cache_scope(self):
+		"""ログイン状態に合わせて番組検索用キャッシュの収集範囲を切り替える"""
+		controller = getattr(self.parent, "program_cache_controller", None)
+		if not controller:
+			return False
+		try:
+			return controller.on_station_scope_changed()
+		except Exception as e:
+			self.log.error("Failed to refresh program cache scope: %s", e, exc_info=True)
+			return False
 
 	def onProgramSearch(self, event):
 		"""番組検索ダイアログを表示"""

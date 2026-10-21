@@ -35,6 +35,7 @@ dic={
 	"OPTION_OPTION":_("設定(&O)")+"...",
 	"OPTION_KEY_CONFIG":_("ショートカットキーの設定(&K)")+"...",
 	"OPTION_STARTUP":_("Windows起動時の自動起動を有効化(&W)"),
+	"OPTION_PREMIUM_LOGIN":_("radikoプレミアムにログイン(&L)")+"...",
 
 	"HELP_UPDATE":_("最新バージョンを確認(&U)")+"...",
 	"HELP_VERSIONINFO":_("バージョン情報(&V)")+"...",

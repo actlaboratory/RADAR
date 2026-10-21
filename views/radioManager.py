@@ -16,6 +16,7 @@ import globalVars
 import urllib
 from simpleDialog import *
 from views.mpvPlayer import MPVAudioPlayer
+from views import premium
 from views import programmanager
 
 
@@ -65,6 +66,9 @@ class RadioManager:
         self._seek_apply_lock = threading.Lock()
         self._seek_apply_running = False
         self._seek_apply_latest = None
+        # シーク(mpv 再起動)と再生開始/停止の競合を防ぐ。世代は再生開始/停止ごとに進める。
+        self._playback_lock = threading.RLock()
+        self._playback_generation = 0
         # ライブ再生中に「番組表で過去番組を選択した」ことを示す局 ID（メニュー再開可否用）
         self._timefree_menu_live_ack_station_id = None
         self.streamWatchdogTimer.Bind(wx.EVT_TIMER, self._on_stream_watchdog_timer)
@@ -193,6 +197,14 @@ class RadioManager:
             self.tree.SelectItem(root, select=True)
             return
 
+        if premium.session.is_areafree() and self._append_areafree_stations(root):
+            self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
+            self.tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.events.onRadioSelected)
+            self.tree.SetFocus()
+            self.tree.Expand(root)
+            self.tree.SelectItem(root, select=True)
+            return
+
         url = f"https://radiko.jp/v2/station/list/{self.area}.xml"
         success, result = self.get_radio_stations(url)
         if not success:
@@ -258,6 +270,55 @@ class RadioManager:
         self.tree.SetFocus()
         self.tree.Expand(root)
         self.tree.SelectItem(root, select=True)
+
+    def _append_areafree_stations(self, root):
+        """エリアフリー時、全国の放送局を地方ごとのノードに分けてツリーへ追加する。
+
+        失敗した場合は False を返し、呼び出し側で通常のエリア内一覧にフォールバックする。
+        """
+        success, result = self.get_radio_stations("https://radiko.jp/v3/station/region/full.xml")
+        if not success:
+            self.log.warning(f"Failed to fetch full station list for areafree: {result}")
+            return False
+        try:
+            parsed = ET.fromstring(result.encode('utf-8'))
+        except ET.ParseError:
+            self.log.error("Failed to parse full station list xml for areafree")
+            return False
+
+        stid = {}
+        own_region_item = None
+        for region in parsed:
+            region_label = region.get("region_name") or region.get("ascii_name") or ""
+            is_zenkoku = region.get("ascii_name") == "ZENKOKU"
+            region_item = None
+            for station in region.findall("station"):
+                name_element = station.find("name")
+                id_element = station.find("id")
+                if name_element is None or id_element is None:
+                    continue
+                station_name = name_element.text or ""
+                station_id = id_element.text or ""
+                if not station_name or not station_id or station_id in stid:
+                    continue
+                if region_item is None:
+                    region_item = self.tree.AppendItem(root, region_label)
+                self.tree.AppendItem(region_item, station_name, data=station_id)
+                stid[station_id] = station_name
+                area_element = station.find("area_id")
+                if own_region_item is None and not is_zenkoku and area_element is not None and area_element.text == self.area:
+                    own_region_item = region_item
+
+        if not stid:
+            self.log.warning("Full station list for areafree is empty")
+            self.tree.DeleteChildren(root)
+            return False
+        # 番組キャッシュ（番組検索）も self.stid を参照するため、全国の局が収集対象になる
+        self.stid = stid
+        if own_region_item is not None:
+            self.tree.Expand(own_region_item)
+        self.log.info(f"areafree station list: {len(stid)} stations")
+        return True
 
     def areaDetermination(self, progs):
         """エリアを判定する"""
@@ -335,6 +396,7 @@ class RadioManager:
         """再生開始"""
         if self._shutting_down:
             return
+        self._begin_playback_change()
         if self._player.isPlaying():
             try:
                 self._player.stop()
@@ -380,6 +442,7 @@ class RadioManager:
         """タイムフリーURLで再生開始"""
         if self._shutting_down:
             return
+        self._begin_playback_change()
         if self._player.isPlaying():
             try:
                 self._player.stop()
@@ -491,19 +554,81 @@ class RadioManager:
         """現在の聴き逃し番組の尺(秒)"""
         return int(max(0, self._timefree_duration_sec))
 
-    def seek_timefree(self, seconds):
-        """聴き逃し再生位置を移動"""
-        if not self._last_timefree_request:
+    def _get_program_manager(self):
+        """共有の ProgramManager を返す（生成時の放送局一覧取得を毎回行わないため）"""
+        return getattr(self.parent, "progs", None) or programmanager.ProgramManager()
+
+    def _begin_playback_change(self):
+        """再生開始/停止の前に呼び、実行中のシーク処理を無効化する（シーク中の再起動完了を待つ）"""
+        with self._playback_lock:
+            self._playback_generation += 1
+
+    def seek_timefree(self, seconds, generation=None):
+        """聴き逃し再生位置を移動
+
+        radiko のタイムフリー playlist は l=15 秒ずつ返るライブ形式のため、
+        mpv 内でのシークは効かない。seek 指定で URL を作り直して mpv を再起動する。
+        generation はシーク要求時点の再生世代。停止・別番組への切替後は何もしない。
+        """
+        if generation is None:
+            generation = self._playback_generation
+        req = self._last_timefree_request
+        if not req:
+            raise RuntimeError("シーク可能な聴き逃し再生情報がありません。")
+        ft_dt = req.get("ft_dt")
+        to_dt = req.get("to_dt")
+        station_id = req.get("station_id")
+        stream_type = req.get("stream_type", "b")
+        if not (ft_dt and to_dt and station_id):
             raise RuntimeError("シーク可能な聴き逃し再生情報がありません。")
         target = max(0, int(seconds or 0))
         duration = self.get_timefree_duration_seconds()
         if duration > 0:
             target = min(target, duration)
-        self._last_timefree_request["resume_seconds"] = target
-        self._timefree_resume_position_sec = target
-        self._timefree_started_monotonic = time.monotonic()
-        if not self._player.seekToSeconds(target):
-            raise RuntimeError("タイムフリーシークに失敗しました。")
+
+        pm = self._get_program_manager()
+        # 認証(auth1/auth2)は時間がかかるため、まず再生中のトークンを使い回す
+        headers = req.get("headers") or {}
+        stream_url = pm.build_timefree_seek_url(station_id, ft_dt, to_dt, target, stream_type)
+        result = self._restart_timefree_player_at(generation, req, stream_url, headers, target)
+        if result is False:
+            # トークン期限切れの可能性があるため、認証を更新して1回だけ再試行
+            self.log.warning("timefree seek with cached token failed; refreshing auth")
+            stream_url, headers = pm.get_timefree_playback_source_with_seek(
+                station_id=station_id,
+                ft_dt=ft_dt,
+                to_dt=to_dt,
+                seek_seconds=target,
+                stream_type=stream_type,
+            )
+            result = self._restart_timefree_player_at(generation, req, stream_url, headers, target)
+        if result is False:
+            raise RuntimeError(
+                f"タイムフリーシークに失敗しました: {self._player.getLastError() or 'unknown'}"
+            )
+
+    def _restart_timefree_player_at(self, generation, req, stream_url, headers, target):
+        """シーク先 URL で mpv を起動し直す。
+
+        戻り値: 起動成功 True / 失敗 False / 停止・切替済みで何もしなかった None
+        """
+        with self._playback_lock:
+            if generation != self._playback_generation or not self.is_timefree_playing():
+                return None
+            self._player.setNonSeekableInput(True)
+            self._player.setHttpHeaders(headers)
+            self._player.setStartPosition(0)
+            self._player.setSource(stream_url)
+            self._player.play()
+            if not self._player.isPlaying():
+                return False
+            req["stream_url"] = stream_url
+            req["headers"] = headers
+            req["resume_seconds"] = target
+            self.m3u8 = stream_url
+            self._timefree_resume_position_sec = target
+            self._timefree_started_monotonic = time.monotonic()
+            return True
 
     def _replay_timefree_at(self, target_seconds, announce=False):
         """seek秒位置でURLを再生成してタイムフリー再生"""
@@ -514,7 +639,7 @@ class RadioManager:
         stream_type = req.get("stream_type", "b")
 
         if ft_dt and to_dt and station_id:
-            pm = programmanager.ProgramManager()
+            pm = self._get_program_manager()
             stream_url, headers = pm.get_timefree_playback_source_with_seek(
                 station_id=station_id,
                 ft_dt=ft_dt,
@@ -545,6 +670,7 @@ class RadioManager:
 
     def stop_timefree(self):
         """聴き逃し再生を停止"""
+        self._begin_playback_change()
         current_pos = self.get_timefree_position_seconds()
         if self._last_timefree_request is not None:
             self._last_timefree_request["resume_seconds"] = current_pos
@@ -571,6 +697,7 @@ class RadioManager:
 
     def stop(self):
         """再生停止"""
+        self._begin_playback_change()
         self.clear_timefree_menu_live_ack()
         self._player.stop()
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
@@ -631,6 +758,7 @@ class RadioManager:
             return
         self.log.info("RadioManager.exit: stopping timers and shutting down mpv")
         self._shutting_down = True
+        self._begin_playback_change()
         self.events.playing = False
         self.playback_mode = None
         self.current_station_id = None
@@ -695,6 +823,9 @@ class RadioManager:
 
     def _on_timefree_seek_timer(self, event):
         if self.is_timefree_playing():
+            # 操作中・シーク反映中はスライダーを旧位置へ戻さない
+            if self._pending_seek_seconds is not None or self._seek_apply_running:
+                return
             self._sync_timefree_seek_ui_from_player()
         else:
             self._stop_timefree_seek_timer()
@@ -709,7 +840,8 @@ class RadioManager:
             f"{self._format_hhmmss(self._pending_seek_seconds)} / "
             f"{self._format_hhmmss(max(self.timefree_seek_slider.GetMax(), 1))}"
         )
-        self.timefreeSeekApplyTimer.Start(40, oneShot=True)
+        # シークは mpv の再起動を伴うため、ドラッグ/キー連打が落ち着いてから1回だけ反映する
+        self.timefreeSeekApplyTimer.Start(300, oneShot=True)
 
     def _apply_timefree_seek_target(self, target):
         if target is None or not self.is_timefree_playing():
@@ -718,7 +850,7 @@ class RadioManager:
 
     def _schedule_timefree_seek_apply(self, target):
         with self._seek_apply_lock:
-            self._seek_apply_latest = int(target)
+            self._seek_apply_latest = (int(target), self._playback_generation)
             if self._seek_apply_running:
                 return
             self._seek_apply_running = True
@@ -727,17 +859,16 @@ class RadioManager:
     def _timefree_seek_apply_worker(self):
         while True:
             with self._seek_apply_lock:
-                target = self._seek_apply_latest
+                latest = self._seek_apply_latest
                 self._seek_apply_latest = None
-            if target is None:
-                with self._seek_apply_lock:
+                if latest is None:
                     self._seek_apply_running = False
-                return
+                    return
+            target, generation = latest
             try:
-                self.seek_timefree(int(target))
+                self.seek_timefree(target, generation=generation)
             except Exception as e:
                 self.log.error(f"Failed to seek timefree playback: {e}")
-                continue
             wx.CallAfter(self._sync_timefree_seek_ui_from_player)
 
     def onTimefreeSeekKeyDown(self, event):

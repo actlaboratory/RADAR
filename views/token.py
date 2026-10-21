@@ -54,8 +54,11 @@ class Token:
 
         return [partialkey,authtoken]
 
-    def auth2(self, partialkey, auth_token ) :
+    def auth2(self, partialkey, auth_token, radiko_session=None) :
         url = "https://radiko.jp/v2/api/auth2"
+        if radiko_session:
+            # プレミアム会員セッションを付けるとエリアフリーの権限が付与される
+            url += "?" + urllib.parse.urlencode({"radiko_session": radiko_session})
         headers =  {
             "X-Radiko-AuthToken": auth_token,
             "X-Radiko-Partialkey": partialkey,
