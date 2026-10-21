@@ -22,6 +22,7 @@ from views import settingsDialog
 from views import versionDialog
 from views import premium
 from views import premiumLoginDialog
+from views import premiumBrowserLoginDialog
 from views import programmanager
 from views import radioManager
 from views import recordingHandler
@@ -80,7 +81,7 @@ class MainView(BaseView):
 				self.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示(&P)"))
 
 		# 再ログイン失敗でセッションが裏で無効化されたとき、UI スレッドで画面に反映する
-		premium.session.add_invalidated_listener(lambda: wx.CallAfter(self.events.onPremiumInvalidated))
+		premium.session.add_invalidated_listener(lambda error: wx.CallAfter(self.events.onPremiumInvalidated, error))
 		if auto_login_error is not None:
 			wx.CallAfter(self.events.notifyPremiumAutoLoginFailed, auto_login_error)
 
@@ -653,19 +654,36 @@ class Events(BaseEvents):
 		d.Initialize()
 		if d.Show() == wx.ID_CANCEL:
 			return
-		mail, password, save = d.GetValue()
-		try:
-			with wx.BusyCursor():
-				premium.session.login(mail, password)
-		except premium.PremiumAuthError as e:
-			errorDialog(premium.describe_auth_error(e))
-			return
+		method, mail, password, save = d.GetValue()
+		if method == premium.METHOD_PASSWORD:
+			try:
+				with wx.BusyCursor():
+					premium.session.login(mail, password)
+			except premium.PremiumAuthError as e:
+				if e.kind != premium.PremiumAuthError.BLOCKED or not premiumBrowserLoginDialog.is_available():
+					errorDialog(premium.describe_auth_error(e))
+					return
+				# アプリからのログインがボット対策で拒否された。ブラウザでのログインに切り替えてもらう
+				result = yesNoDialog(
+					_("ログイン"),
+					premium.describe_auth_error(e) + "\n\n" + _("ブラウザでログインしますか？"),
+				)
+				if result != wx.ID_YES:
+					return
+				method = premium.METHOD_BROWSER
+		if method == premium.METHOD_BROWSER:
+			radiko_session = self._premiumBrowserLogin()
+			if not radiko_session:
+				return
 
-		if save:
-			premium.save_credentials(config, mail, password)
-		else:
+		if not save:
 			premium.clear_credentials(config)
+			config[premium.CONFIG_SECTION]["method"] = method
 			config[premium.CONFIG_SECTION]["mail"] = mail
+		elif method == premium.METHOD_BROWSER:
+			premium.save_browser_session(config, radiko_session)
+		else:
+			premium.save_credentials(config, mail, password)
 		config.write()
 		self.update_premium_menu_label()
 		self.onUpdateProgram(None)
@@ -674,8 +692,23 @@ class Events(BaseEvents):
 			message += "\n" + _("番組検索用に全国の番組データをバックグラウンドで取得します。完了までしばらく時間がかかります。")
 		dialog(_("ログイン"), message)
 
-	def onPremiumInvalidated(self):
-		"""再ログイン失敗でプレミアムのセッションが無効化されたときに UI スレッドで呼ばれる"""
+	def _premiumBrowserLogin(self):
+		"""埋め込みブラウザでログインしてもらい、セッションを検証する。成功すれば radiko_session"""
+		d = premiumBrowserLoginDialog.Dialog()
+		d.Initialize()
+		if d.Show() == wx.ID_CANCEL:
+			return None
+		radiko_session, areafree = d.GetValue()
+		try:
+			with wx.BusyCursor():
+				premium.session.login_with_session(radiko_session, assume_areafree=areafree)
+		except premium.PremiumAuthError as e:
+			errorDialog(premium.describe_auth_error(e))
+			return None
+		return radiko_session
+
+	def onPremiumInvalidated(self, error=None):
+		"""再ログイン失敗やセッション切れでプレミアムのセッションが無効化されたときに UI スレッドで呼ばれる"""
 		self.update_premium_menu_label()
 		if premium.session.is_areafree():
 			# 通知が届くまでの間にユーザーが再ログインした
@@ -686,6 +719,13 @@ class Events(BaseEvents):
 			# 再生は止めずに、エリア内の放送局一覧へ作り直す
 			self.parent.get_latest_programList()
 			self._refresh_program_cache_scope()
+		if error is not None and error.kind == premium.PremiumAuthError.SESSION_EXPIRED:
+			# ブラウザでログインしたセッションは自動で再ログインできないため、保存済みのセッションも消す
+			config = globalVars.app.config
+			premium.clear_saved_session(config)
+			config.write()
+			errorDialog(_("radikoプレミアムのセッションが切れました。再度ログインを行ってください。\nお住まいのエリアの放送局一覧に戻ります。エリアフリーを使うには、オプションメニューからログインしてください。"))
+			return
 		errorDialog(_("radikoプレミアムのログインが無効になりました。お住まいのエリアの放送局一覧に戻ります。\nエリアフリーを使うには、オプションメニューから再度ログインしてください。"))
 
 	def notifyPremiumAutoLoginFailed(self, error):
