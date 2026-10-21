@@ -131,6 +131,10 @@ class build:
 		if ret != 0:
 			sys.exit(ret)
 
+		# 埋め込みブラウザ(Edge WebView2)のローダーは実行時に読み込まれるため、pyinstallerが収集しない。exeと同じ場所に置く
+		import wx
+		shutil.copyfile(os.path.join(os.path.dirname(wx.__file__), "WebView2Loader.dll"), os.path.join(package_path, "WebView2Loader.dll"))
+
 		shutil.copytree("locale\\",os.path.join(package_path, "locale"), ignore=shutil.ignore_patterns("*.po", "*.pot", "*.po~"))
 		for item in constants.PACKAGE_CONTAIN_ITEMS:
 			if os.path.isdir(item):

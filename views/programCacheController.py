@@ -9,13 +9,19 @@ from logging import getLogger
 import constants
 import globalVars
 from tcutil import CalendarUtil
+from views import premium
 from views.programCacheManager import ProgramCacheManager
 from views.programDataCollector import ProgramDataCollector
 from views.programSearchEngine import ProgramSearchEngine
 
+# キャッシュがどの放送局範囲で収集されたか（"area": 自エリアのみ / "areafree": 全国）
+STATION_SCOPE_KEY = "station_scope"
+STATION_SCOPE_AREA = "area"
+STATION_SCOPE_AREAFREE = "areafree"
+
 class ProgramCacheController:
     """番組キャッシュの制御クラス（起動時チェック・例外処理）"""
-    
+
     def __init__(self, radio_manager=None):
         self.log = getLogger(f"{constants.LOG_PREFIX}.ProgramCacheController")
         self.radio_manager = radio_manager
@@ -32,6 +38,8 @@ class ProgramCacheController:
         # データベースファイルのパス
         self.db_path = constants.PROGRAM_CACHE_DB_NAME
         self._cleanup_done = False
+        # 週間収集の同時実行を防ぐ（ログイン直後の再収集と起動時収集が重ならないように）
+        self._weekly_collect_lock = threading.Lock()
         
         # 初期化を実行
         self._initialize_cache_system()
@@ -90,8 +98,33 @@ class ProgramCacheController:
         return (
             self.last_update_date is None or
             self.last_update_date != today_date or
-            not is_weekly_complete
+            not is_weekly_complete or
+            self._station_scope_mismatch()
         )
+
+    @staticmethod
+    def _current_station_scope():
+        return STATION_SCOPE_AREAFREE if premium.session.is_areafree() else STATION_SCOPE_AREA
+
+    def _station_scope_mismatch(self):
+        """キャッシュの収集範囲が現在のログイン状態と一致しないか"""
+        if not self.cache_manager:
+            return False
+        stored = self.cache_manager.get_metadata(STATION_SCOPE_KEY) or STATION_SCOPE_AREA
+        return stored != self._current_station_scope()
+
+    def on_station_scope_changed(self):
+        """ログイン/ログアウトで放送局一覧が変わったときに呼ぶ。
+
+        キャッシュの収集範囲が変わる場合はバックグラウンドで再収集し、True を返す。
+        """
+        if not self._station_scope_mismatch():
+            return False
+        self.log.info(f"Station scope changed to {self._current_station_scope()}; recollecting program cache")
+        if not self.data_collector:
+            self._initialize_services()
+        self._schedule_weekly_update_background()
+        return True
     
     def _perform_database_update(self):
         """データベース更新を実行"""
@@ -105,6 +138,8 @@ class ProgramCacheController:
             reasons.append(f"基準日変更 ({self.last_update_date} → {today_date})")
         if not is_weekly_complete:
             reasons.append("週間データ不完全")
+        if self._station_scope_mismatch():
+            reasons.append(f"収集範囲変更 ({self._current_station_scope()})")
         
         self.log.info(f"Database update needed: {', '.join(reasons)}")
         self._update_database()
@@ -190,16 +225,21 @@ class ProgramCacheController:
     def _collect_weekly_data(self, progress=None):
         """週間データ収集を実行（progress 指定時のみ進捗UI）"""
         success = False
-        try:
-            if progress and self.data_collector:
-                self.data_collector.set_progress_callback(progress.report)
-            success = self.data_collector.collect_weekly_data(force_refresh=True)
-            if success:
-                self.last_update_date = CalendarUtil().get_radio_date()
-            return success
-        finally:
-            if self.data_collector:
-                self.data_collector.set_progress_callback(None)
+        with self._weekly_collect_lock:
+            # 収集中にログイン状態が変わった場合は、次回のチェックで再収集されるよう開始時点の範囲を記録する
+            scope = self._current_station_scope()
+            try:
+                if progress and self.data_collector:
+                    self.data_collector.set_progress_callback(progress.report)
+                success = self.data_collector.collect_weekly_data(force_refresh=True)
+                if success:
+                    self.last_update_date = CalendarUtil().get_radio_date()
+                    if self.cache_manager:
+                        self.cache_manager.set_metadata(STATION_SCOPE_KEY, scope)
+                return success
+            finally:
+                if self.data_collector:
+                    self.data_collector.set_progress_callback(None)
 
     def _schedule_weekly_update_background(self):
         """週間データ更新をバックグラウンドで実行"""

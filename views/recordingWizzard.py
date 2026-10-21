@@ -9,6 +9,7 @@ import simpleDialog
 from views import showRadioProgramScheduleListBase
 import views.ViewCreator
 from views import programmanager
+from views import radioManager
 import tcutil
 from recorder import (
     RECORDING_END_TIME_BUFFER,
@@ -311,7 +312,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 self._update_timefree_button_label()
                 return
             except Exception as e:
-                self.log.warning(f"timefree playback primary source failed: {e}")
+                if self.progs.uses_areafree(self.stid):
+                    # エリアフリーでは最初から type=c のため、互換ソースで再試行しても結果は同じ
+                    raise
+                self.log.warning(f"timefree playback primary source failed: {e!r}; retrying with compat source (type=c)")
 
             stream_url, headers = self.progs.get_timefree_playback_source_compat(self.stid, start_dt, end_dt)
             main_view.radio_manager.play_timefree(
@@ -324,8 +328,8 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             )
             self._update_timefree_button_label()
         except Exception as e:
-            self.log.error(f"Error in onPlayTimeFree: {e}")
-            simpleDialog.errorDialog(f"聴き逃し再生に失敗しました: {e}")
+            self.log.error(f"Error in onPlayTimeFree: {e!r}", exc_info=not isinstance(e, radioManager.PlaybackError))
+            simpleDialog.errorDialog(f"聴き逃し再生に失敗しました。\n{radioManager.describe_playback_exception(e)}")
             self._update_timefree_button_label()
 
     def onRecordTimeFree(self, event):

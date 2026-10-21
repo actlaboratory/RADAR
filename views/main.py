@@ -20,6 +20,9 @@ from simpleDialog import *
 from views import globalKeyConfig
 from views import settingsDialog
 from views import versionDialog
+from views import premium
+from views import premiumLoginDialog
+from views import premiumBrowserLoginDialog
 from views import programmanager
 from views import radioManager
 from views import recordingHandler
@@ -54,7 +57,19 @@ class MainView(BaseView):
 		self.program_info_handler = programInfoHandler.ProgramInfoHandler(self)
 		self.volume_handler = volumeHandler.VolumeHandler(self)
 
-		self.radio_manager.areaDetermination(self.progs)
+		# 保存済みのプレミアム認証情報があれば、エリア判定（auth2）より前にログインしておく
+		auto_login_error = None
+		try:
+			premium.auto_login(self.app.config)
+		except premium.PremiumAuthError as e:
+			auto_login_error = e
+		self.events.update_premium_menu_label()
+
+		try:
+			self.radio_manager.areaDetermination(self.progs)
+		except Exception as e:
+			# エリアが取得できなかった旨は放送局一覧の作成時に表示する
+			self.log.error("Failed to determine area: %r", e)
 
 		self.program_cache_controller = programCacheController.ProgramCacheController(self.radio_manager)
 
@@ -64,6 +79,11 @@ class MainView(BaseView):
 		else:
 			if hasattr(self, 'menu'):
 				self.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示(&P)"))
+
+		# 再ログイン失敗でセッションが裏で無効化されたとき、UI スレッドで画面に反映する
+		premium.session.add_invalidated_listener(lambda error: wx.CallAfter(self.events.onPremiumInvalidated, error))
+		if auto_login_error is not None:
+			wx.CallAfter(self.events.notifyPremiumAutoLoginFailed, auto_login_error)
 
 	def _ensure_output_directory(self):
 		"""outputディレクトリの存在をチェックし、存在しない場合は作成する"""
@@ -145,6 +165,7 @@ class Menu(BaseMenu):
 			"OPTION_OPTION": self.parent.events.option,
 			"OPTION_KEY_CONFIG": self.parent.events.keyConfig,
 			"OPTION_STARTUP": self.parent.events.registerStartup,
+			"OPTION_PREMIUM_LOGIN": self.parent.events.premiumLogin,
 		})
 
 		self.RegisterMenuCommand(self.hHelpMenu, {
@@ -260,6 +281,7 @@ class Events(BaseEvents):
 		self._cleanup_radio_manager()
 		self._cleanup_program_cache()
 		self._cleanup_schedule_data()
+		self._cleanup_premium_session()
 		sd.info(
 			"[Shutdown] Phase 2 complete (program cache sqlite closed; MainLoop ends next)"
 		)
@@ -328,6 +350,14 @@ class Events(BaseEvents):
 		except Exception as e:
 			self.log.error("Schedule data cleanup failed: %s", e, exc_info=True)
 
+	def _cleanup_premium_session(self):
+		"""プレミアム会員セッションからログアウト"""
+		try:
+			# ブラウザでログインしたセッションは再ログインできないため、次回起動時に使えるよう残す
+			premium.session.logout(keep_browser_session=True)
+		except Exception as e:
+			self.log.error("premium logout failed: %s", e, exc_info=True)
+
 
 	def option(self, event):
 		d = settingsDialog.Dialog()
@@ -339,6 +369,7 @@ class Events(BaseEvents):
 			self.parent.menu.InitShortcut()
 			self.parent.menu.ApplyShortcut(self.parent.hFrame)
 			self.parent.menu.Apply(self.parent.hFrame)
+			self.update_premium_menu_label()
 
 	def checkUpdate(self, event):
 		update.checkUpdate()
@@ -389,6 +420,12 @@ class Events(BaseEvents):
 	def onRadioActivated(self, event):
 		if not hasattr(self.parent, 'radio_manager'):
 			return
+		station_id = self.parent.radio_manager.tree.GetItemData(
+			self.parent.radio_manager.tree.GetFocusedItem()
+		)
+		if station_id is None:
+			# ルートや地方ノード。再生中の局情報を書き換えず、再生状態も変えない
+			return
 		if self.parent.radio_manager.is_timefree_playing():
 			result = yesNoDialog(
 				_("聴き逃し再生中"),
@@ -401,32 +438,32 @@ class Events(BaseEvents):
 			except Exception as e:
 				self.log.error(f"Failed to stop timefree before live playback: {e}")
 		
-		self.current_playing_station_id = self.parent.radio_manager.tree.GetItemData(
-			self.parent.radio_manager.tree.GetFocusedItem()
-		)
-		if self.current_playing_station_id is None:
-			return
-		
+		self.current_playing_station_id = station_id
+
 		self.parent.log.info("activated" + self.current_playing_station_id)
-		self._handle_playback_toggle()
+		if not self._handle_playback_toggle():
+			return
 		self._update_program_info_display()
 
 	def _handle_playback_toggle(self):
-		"""再生/停止の切り替え処理"""
+		"""再生/停止の切り替え処理。再生開始に失敗した場合は False"""
 		if not self.playing:
-			if not self._start_playback():
-				return
-		else:
-			self._stop_playback()
+			return self._start_playback()
+		self._stop_playback()
+		return True
 
 	def _start_playback(self):
 		"""再生開始処理"""
 		try:
 			self.parent.radio_manager.play(self.current_playing_station_id, self.parent.progs)
 			return True
-		except urllib.request.HTTPError as error:
-			errorDialog(_("再生に失敗しました。聴取可能な都道府県内であることをご確認ください。\nこの症状が引き続き発生する場合は、放送局一覧を再描画してからお試しください。"))
-			self.parent.log.error("Playback failure!" + str(error))
+		except Exception as error:
+			if isinstance(error, radioManager.PlaybackError):
+				# 原因は RadioManager 側で記録済み
+				self.parent.log.error("Playback failure! station=%s: %s", self.current_playing_station_id, error)
+			else:
+				self.parent.log.exception("Unexpected playback failure! station=%s", self.current_playing_station_id)
+			errorDialog(_("再生に失敗しました。\n%(detail)s") % {"detail": radioManager.describe_playback_exception(error)})
 			return False
 
 	def _stop_playback(self):
@@ -461,8 +498,8 @@ class Events(BaseEvents):
 		try:
 			radio_manager.replay_last_timefree()
 		except Exception as e:
-			self.log.warning(f"Failed to replay last timefree stream: {e}")
-			errorDialog(_("聴き逃し再生の再開に失敗しました。\n%(detail)s") % {"detail": str(e)}, self.parent.hFrame)
+			self.log.warning(f"Failed to replay last timefree stream: {e!r}", exc_info=not isinstance(e, radioManager.PlaybackError))
+			errorDialog(_("聴き逃し再生の再開に失敗しました。\n%(detail)s") % {"detail": radioManager.describe_playback_exception(e)}, self.parent.hFrame)
 
 	def _update_program_info_display(self):
 		"""番組情報表示の更新"""
@@ -587,6 +624,132 @@ class Events(BaseEvents):
 		"""音量変更時の処理"""
 		if hasattr(self.parent, 'volume_handler'):
 			self.parent.volume_handler.onVolumeChanged(event)
+
+	def update_premium_menu_label(self):
+		"""ログイン状態に応じてプレミアムメニューの表記を切り替える"""
+		if premium.session.is_areafree():
+			self.parent.menu.SetMenuLabel("OPTION_PREMIUM_LOGIN", _("radikoプレミアムからログアウト(&L)"))
+		else:
+			self.parent.menu.SetMenuLabel("OPTION_PREMIUM_LOGIN")
+
+	def premiumLogin(self, event):
+		"""radikoプレミアムへのログイン/ログアウト"""
+		config = globalVars.app.config
+		if premium.session.is_areafree():
+			result = yesNoDialog(
+				_("確認"),
+				_("radikoプレミアムからログアウトしますか？\n保存されている認証情報も削除されます。"),
+			)
+			if result != wx.ID_YES:
+				return
+			premium.session.logout()
+			premium.clear_credentials(config)
+			config.write()
+			self.update_premium_menu_label()
+			self.onUpdateProgram(None)
+			self._refresh_program_cache_scope()
+			dialog(_("ログアウト"), _("ログアウトしました。お住まいのエリアの放送局一覧に戻ります。"))
+			return
+
+		d = premiumLoginDialog.Dialog(config[premium.CONFIG_SECTION]["mail"])
+		d.Initialize()
+		if d.Show() == wx.ID_CANCEL:
+			return
+		method, mail, password, save = d.GetValue()
+		if method == premium.METHOD_PASSWORD:
+			try:
+				with wx.BusyCursor():
+					premium.session.login(mail, password)
+			except premium.PremiumAuthError as e:
+				if e.kind != premium.PremiumAuthError.BLOCKED or not premiumBrowserLoginDialog.is_available():
+					errorDialog(premium.describe_auth_error(e))
+					return
+				# アプリからのログインがボット対策で拒否された。ブラウザでのログインに切り替えてもらう
+				result = yesNoDialog(
+					_("ログイン"),
+					premium.describe_auth_error(e) + "\n\n" + _("ブラウザでログインしますか？"),
+				)
+				if result != wx.ID_YES:
+					return
+				method = premium.METHOD_BROWSER
+		if method == premium.METHOD_BROWSER:
+			radiko_session = self._premiumBrowserLogin()
+			if not radiko_session:
+				return
+
+		if not save:
+			premium.clear_credentials(config)
+			config[premium.CONFIG_SECTION]["method"] = method
+			config[premium.CONFIG_SECTION]["mail"] = mail
+		elif method == premium.METHOD_BROWSER:
+			premium.save_browser_session(config, radiko_session)
+		else:
+			premium.save_credentials(config, mail, password)
+		config.write()
+		self.update_premium_menu_label()
+		self.onUpdateProgram(None)
+		message = _("エリアフリーが有効になりました。全国の放送局を聴取できます。")
+		if self._refresh_program_cache_scope():
+			message += "\n" + _("番組検索用に全国の番組データをバックグラウンドで取得します。完了までしばらく時間がかかります。")
+		dialog(_("ログイン"), message)
+
+	def _premiumBrowserLogin(self):
+		"""埋め込みブラウザでログインしてもらい、セッションを検証する。成功すれば radiko_session"""
+		d = premiumBrowserLoginDialog.Dialog()
+		d.Initialize()
+		if d.Show() == wx.ID_CANCEL:
+			return None
+		radiko_session, areafree = d.GetValue()
+		try:
+			with wx.BusyCursor():
+				premium.session.login_with_session(radiko_session, assume_areafree=areafree)
+		except premium.PremiumAuthError as e:
+			if e.kind == premium.PremiumAuthError.BLOCKED:
+				# 既にブラウザでログインしているため、ブラウザでのログインを勧める説明は使わない
+				errorDialog(_("ログイン状態の確認が、サーバー側の不正アクセス対策によって拒否されました。\n時間をおいて再度お試しください。"))
+			else:
+				errorDialog(premium.describe_auth_error(e))
+			return None
+		return radiko_session
+
+	def onPremiumInvalidated(self, error=None):
+		"""再ログイン失敗やセッション切れでプレミアムのセッションが無効化されたときに UI スレッドで呼ばれる"""
+		self.update_premium_menu_label()
+		if premium.session.is_areafree():
+			# 通知が届くまでの間にユーザーが再ログインした
+			return
+		self.log.warning("premium session invalidated in background; reloading station list")
+		radio_manager = getattr(self.parent, "radio_manager", None)
+		if radio_manager and radio_manager.station_list_areafree:
+			# 再生は止めずに、エリア内の放送局一覧へ作り直す
+			self.parent.get_latest_programList()
+			self._refresh_program_cache_scope()
+		if error is not None and error.kind == premium.PremiumAuthError.SESSION_EXPIRED:
+			# ブラウザでログインしたセッションは自動で再ログインできないため、保存済みのセッションも消す
+			config = globalVars.app.config
+			premium.clear_saved_session(config)
+			config.write()
+			errorDialog(_("radikoプレミアムのセッションが切れました。再度ログインを行ってください。\nお住まいのエリアの放送局一覧に戻ります。エリアフリーを使うには、オプションメニューからログインしてください。"))
+			return
+		errorDialog(_("radikoプレミアムのログインが無効になりました。お住まいのエリアの放送局一覧に戻ります。\nエリアフリーを使うには、オプションメニューから再度ログインしてください。"))
+
+	def notifyPremiumAutoLoginFailed(self, error):
+		"""起動時の自動ログインに失敗したことを知らせる"""
+		errorDialog(
+			_("radikoプレミアムへの自動ログインに失敗しました。\n%(detail)s\n\nエリアフリーを使うには、オプションメニューから再度ログインしてください。")
+			% {"detail": premium.describe_auth_error(error)}
+		)
+
+	def _refresh_program_cache_scope(self):
+		"""ログイン状態に合わせて番組検索用キャッシュの収集範囲を切り替える"""
+		controller = getattr(self.parent, "program_cache_controller", None)
+		if not controller:
+			return False
+		try:
+			return controller.on_station_scope_changed()
+		except Exception as e:
+			self.log.error("Failed to refresh program cache scope: %s", e, exc_info=True)
+			return False
 
 	def onProgramSearch(self, event):
 		"""番組検索ダイアログを表示"""

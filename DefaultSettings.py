@@ -36,6 +36,13 @@ class DefaultSettings:
 			"createStationSubDir": True,	  # 番組ごとにサブフォルダを作成
 			"output_directory": "OUTPUT"  # 録音ファイルの出力先フォルダ
 		}
+		config["premium"] = {
+			"autoLogin": False,
+			"method": "password",  # password または browser
+			"mail": "",
+			"password": "",  # DPAPIで暗号化して保存
+			"session": ""  # ブラウザでログインしたセッション。DPAPIで暗号化して保存
+		}
 		return config
 
 initialValues={

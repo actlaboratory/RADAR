@@ -10,6 +10,7 @@ import signal
 import locale
 import re
 import shutil
+import log_util
 from notification_util import notify as notification_notify
 from logging import getLogger
 from views import programmanager
@@ -323,8 +324,9 @@ class Recorder:
             self._ensure_output_directory()
 
             cmd = self._build_ffmpeg_command(ffmpeg_path)
-            self.last_ffmpeg_cmd = " ".join(cmd)
-            self.logger.debug(f"FFmpeg command: {' '.join(cmd)}")
+            # エラーログにも使うため、認証トークンを伏せた形で保持する
+            self.last_ffmpeg_cmd = log_util.mask_command(cmd)
+            self.logger.debug(f"FFmpeg command: {self.last_ffmpeg_cmd}")
             # Windows環境でffmpegプロンプトを非表示にする
             startupinfo = None
             if os.name == 'nt':  # Windows
