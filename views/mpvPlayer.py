@@ -234,12 +234,26 @@ class MPVAudioPlayer:
             return ""
         return rf"\\.\pipe\{self._ipc_pipe_name}"
 
+    def _http_header_list(self):
+        return [f"{k}: {v}" for k, v in self._http_headers.items() if v]
+
     def _build_command(self):
         lavf_opts = "reconnect=1,reconnect_streamed=1,reconnect_delay_max=2"
         if self._nonseekable_input:
             lavf_opts += ",http_seekable=0,seekable=0"
         cmd = [
             constants.MPV_PATH,
+            # 起動短縮: ユーザー設定ファイルや音声再生に不要な内蔵スクリプトを読み込まない
+            "--no-config",
+            "--ytdl=no",
+            "--load-scripts=no",
+            "--load-stats-overlay=no",
+            "--load-console=no",
+            "--load-auto-profiles=no",
+            "--load-select=no",
+            "--load-positioning=no",
+            "--load-commands=no",
+            "--osc=no",
             "--no-video",
             "--force-window=no",
             "--no-terminal",
@@ -252,10 +266,9 @@ class MPVAudioPlayer:
             f"--stream-lavf-o={lavf_opts}",
             self._source,
         ]
-        if self._http_headers:
-            header_str = ",".join([f"{k}: {v}" for k, v in self._http_headers.items() if v])
-            if header_str:
-                cmd.insert(-1, f"--http-header-fields={header_str}")
+        header_list = self._http_header_list()
+        if header_list:
+            cmd.insert(-1, f"--http-header-fields={','.join(header_list)}")
         proxy_url = _mpv_proxy_url()
         if proxy_url:
             cmd.insert(-1, f"--http-proxy={proxy_url}")
@@ -277,6 +290,17 @@ class MPVAudioPlayer:
         with self._lock:
             self._source = source
             self._http_headers = dict(headers or {})
+            # 起動中の mpv があれば、プロセスを作り直さず loadfile で差し替える（最速）。
+            # 読み込みに失敗すると mpv は終了する(--idle=no)ため、呼び出し側の監視で検知できる。
+            if self._is_running_locked() and self._send_mpv_ipc_commands_locked(
+                [
+                    ["set_property", "http-header-fields", self._http_header_list()],
+                    ["loadfile", self._source, "replace"],
+                ],
+                retries=4,
+                delay_sec=0.005,
+            ):
+                return True
             self._kill_locked()
             if not self._spawn_locked():
                 return False
@@ -436,14 +460,18 @@ class MPVAudioPlayer:
         return self._send_mpv_ipc_command_locked(["set_property", "volume", vol])
 
     def _send_mpv_ipc_command_locked(self, command, retries=30, delay_sec=0.05):
+        return self._send_mpv_ipc_commands_locked([command], retries, delay_sec)
+
+    def _send_mpv_ipc_commands_locked(self, commands, retries=30, delay_sec=0.05):
+        """複数コマンドを1接続で送る（mpv は接続ごとに処理するため、順序を保証するには同一接続が必要）"""
         if not self._ipc_pipe_name or not self._is_running_locked():
             return False
         path = self._ipc_pipe_path()
-        line = json.dumps({"command": command}) + "\n"
+        data = "".join(json.dumps({"command": c}) + "\n" for c in commands)
         for _ in range(max(1, int(retries))):
             try:
                 with open(path, "w", encoding="utf-8", newline="\n") as pipe:
-                    pipe.write(line)
+                    pipe.write(data)
                 return True
             except OSError:
                 time.sleep(max(0.0, float(delay_sec)))

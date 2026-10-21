@@ -69,6 +69,7 @@ class RadioManager:
         self._shutting_down = False
         self._timefree_seek_updating_ui = False
         self._pending_seek_seconds = None
+        self._last_requested_seek_seconds = None
         self._seek_apply_lock = threading.Lock()
         self._seek_apply_running = False
         self._seek_apply_latest = None
@@ -861,7 +862,11 @@ class RadioManager:
     def _on_timefree_seek_timer(self, event):
         if self.is_timefree_playing():
             # 操作中・シーク反映中はスライダーを旧位置へ戻さない
-            if self._pending_seek_seconds is not None or self._seek_apply_running:
+            if (
+                self._pending_seek_seconds is not None
+                or self._seek_apply_running
+                or self.timefreeSeekApplyTimer.IsRunning()
+            ):
                 return
             if not self._player.isPlaying():
                 self._handle_timefree_player_exit()
@@ -906,12 +911,19 @@ class RadioManager:
             return
         if not self.is_timefree_playing():
             return
-        self._pending_seek_seconds = int(self.timefree_seek_slider.GetValue())
+        target = int(self.timefree_seek_slider.GetValue())
         self.timefree_seek_label.SetLabel(
-            f"{self._format_hhmmss(self._pending_seek_seconds)} / "
+            f"{self._format_hhmmss(target)} / "
             f"{self._format_hhmmss(max(self.timefree_seek_slider.GetMax(), 1))}"
         )
-        # シークは mpv の再起動を伴うため、ドラッグ/キー連打が落ち着いてから1回だけ反映する
+        if not self.timefreeSeekApplyTimer.IsRunning():
+            # 最初の操作は待たずに即反映する
+            self._pending_seek_seconds = None
+            self._last_requested_seek_seconds = target
+            self._apply_timefree_seek_target(target)
+        elif target != self._last_requested_seek_seconds:
+            # 続く操作（ドラッグ・キーリピート）はまとめ、落ち着いたら最後の位置を1回だけ反映する
+            self._pending_seek_seconds = target
         self.timefreeSeekApplyTimer.Start(200, oneShot=True)
 
     def _apply_timefree_seek_target(self, target, refresh_auth=False):
@@ -967,11 +979,15 @@ class RadioManager:
         )
         # PgUp/PgDn は即時反映（タイマー待ちなし）
         self._pending_seek_seconds = None
+        self._last_requested_seek_seconds = target
         self._apply_timefree_seek_target(target)
 
     def _on_timefree_seek_apply_timer(self, event):
         target = self._pending_seek_seconds
         self._pending_seek_seconds = None
+        if target is None or target == self._last_requested_seek_seconds:
+            return
+        self._last_requested_seek_seconds = target
         self._apply_timefree_seek_target(target)
 
     def is_live_playing(self):
