@@ -20,6 +20,12 @@ from views import premium
 from views import programmanager
 
 
+# 聴き逃し再生の終了判定の余裕(秒)と、途中終了時の自動再接続の上限
+TIMEFREE_END_MARGIN_SEC = 60
+TIMEFREE_RECONNECT_MAX = 3
+TIMEFREE_RECONNECT_RESET_SEC = 60
+
+
 def _has_proxy_env():
     """HTTP(S)_PROXY のいずれかがあれば True（直結 TCP 事前検査を省略）。"""
     for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
@@ -69,6 +75,10 @@ class RadioManager:
         # シーク(mpv 再起動)と再生開始/停止の競合を防ぐ。世代は再生開始/停止ごとに進める。
         self._playback_lock = threading.RLock()
         self._playback_generation = 0
+        # 聴き逃し再生中に mpv が途中終了したときの自動再接続回数
+        self._timefree_reconnect_count = 0
+        self._timefree_last_reconnect_monotonic = None
+        self._player.setRestartSourceProvider(self._timefree_restart_source)
         # ライブ再生中に「番組表で過去番組を選択した」ことを示す局 ID（メニュー再開可否用）
         self._timefree_menu_live_ack_station_id = None
         self.streamWatchdogTimer.Bind(wx.EVT_TIMER, self._on_stream_watchdog_timer)
@@ -458,6 +468,8 @@ class RadioManager:
         self.playback_mode = "timefree"
         self.m3u8 = stream_url
         resume_seconds = max(0, int(resume_seconds or 0))
+        self._timefree_reconnect_count = 0
+        self._timefree_last_reconnect_monotonic = None
         self._timefree_resume_position_sec = resume_seconds
         self._timefree_started_monotonic = time.monotonic()
         self._timefree_info = dict(timefree_info or {})
@@ -563,7 +575,7 @@ class RadioManager:
         with self._playback_lock:
             self._playback_generation += 1
 
-    def seek_timefree(self, seconds, generation=None):
+    def seek_timefree(self, seconds, generation=None, refresh_auth=False):
         """聴き逃し再生位置を移動
 
         radiko のタイムフリー playlist は l=15 秒ずつ返るライブ形式のため、
@@ -587,13 +599,7 @@ class RadioManager:
             target = min(target, duration)
 
         pm = self._get_program_manager()
-        # 認証(auth1/auth2)は時間がかかるため、まず再生中のトークンを使い回す
-        headers = req.get("headers") or {}
-        stream_url = pm.build_timefree_seek_url(station_id, ft_dt, to_dt, target, stream_type)
-        result = self._restart_timefree_player_at(generation, req, stream_url, headers, target)
-        if result is False:
-            # トークン期限切れの可能性があるため、認証を更新して1回だけ再試行
-            self.log.warning("timefree seek with cached token failed; refreshing auth")
+        if refresh_auth:
             stream_url, headers = pm.get_timefree_playback_source_with_seek(
                 station_id=station_id,
                 ft_dt=ft_dt,
@@ -601,7 +607,12 @@ class RadioManager:
                 seek_seconds=target,
                 stream_type=stream_type,
             )
-            result = self._restart_timefree_player_at(generation, req, stream_url, headers, target)
+        else:
+            # 認証(auth1/auth2)は時間がかかるため、再生中のトークンを使い回す。
+            # 期限切れなら mpv が終了し、_handle_timefree_player_exit が認証し直して再接続する。
+            headers = req.get("headers") or {}
+            stream_url = pm.build_timefree_seek_url(station_id, ft_dt, to_dt, target, stream_type)
+        result = self._restart_timefree_player_at(generation, req, stream_url, headers, target)
         if result is False:
             raise RuntimeError(
                 f"タイムフリーシークに失敗しました: {self._player.getLastError() or 'unknown'}"
@@ -616,11 +627,8 @@ class RadioManager:
             if generation != self._playback_generation or not self.is_timefree_playing():
                 return None
             self._player.setNonSeekableInput(True)
-            self._player.setHttpHeaders(headers)
             self._player.setStartPosition(0)
-            self._player.setSource(stream_url)
-            self._player.play()
-            if not self._player.isPlaying():
+            if not self._player.restartWithSource(stream_url, headers):
                 return False
             req["stream_url"] = stream_url
             req["headers"] = headers
@@ -629,6 +637,32 @@ class RadioManager:
             self._timefree_resume_position_sec = target
             self._timefree_started_monotonic = time.monotonic()
             return True
+
+    def _timefree_restart_source(self):
+        """音量/デバイス変更で mpv が再起動されるとき、現在位置から再開する (URL, ヘッダー) を返す。
+
+        聴き逃し再生中以外は None を返し、元のソースのまま再起動させる。
+        mpv のロック内から呼ばれるため、ここでは _playback_lock を取らない（取得順の逆転を避ける）。
+        """
+        req = self._last_timefree_request
+        if not req or not self.is_timefree_playing():
+            return None
+        ft_dt = req.get("ft_dt")
+        to_dt = req.get("to_dt")
+        station_id = req.get("station_id")
+        if not (ft_dt and to_dt and station_id):
+            return None
+        target = self.get_timefree_position_seconds()
+        stream_url = self._get_program_manager().build_timefree_seek_url(
+            station_id, ft_dt, to_dt, target, req.get("stream_type", "b")
+        )
+        headers = req.get("headers") or {}
+        req["stream_url"] = stream_url
+        req["resume_seconds"] = target
+        self.m3u8 = stream_url
+        self._timefree_resume_position_sec = target
+        self._timefree_started_monotonic = time.monotonic()
+        return stream_url, headers
 
     def _replay_timefree_at(self, target_seconds, announce=False):
         """seek秒位置でURLを再生成してタイムフリー再生"""
@@ -668,10 +702,13 @@ class RadioManager:
             timefree_info=req.get("timefree_info"),
         )
 
-    def stop_timefree(self):
-        """聴き逃し再生を停止"""
+    def stop_timefree(self, announce_text="聴き逃し再生停止", resume_seconds=None):
+        """聴き逃し再生を停止（resume_seconds 指定時は次回再開位置をその値にする）"""
         self._begin_playback_change()
-        current_pos = self.get_timefree_position_seconds()
+        if resume_seconds is None:
+            current_pos = self.get_timefree_position_seconds()
+        else:
+            current_pos = max(0, int(resume_seconds))
         if self._last_timefree_request is not None:
             self._last_timefree_request["resume_seconds"] = current_pos
         self._timefree_resume_position_sec = current_pos
@@ -691,7 +728,7 @@ class RadioManager:
         if hasattr(self.parent, "program_info_handler"):
             self.parent.program_info_handler.clear_timefree_program_info()
         try:
-            self.parent.app.say("聴き逃し再生停止", interrupt=True)
+            self.parent.app.say(announce_text, interrupt=True)
         except Exception as e:
             self.log.error(f"Failed to announce timefree playback stop: {e}")
 
@@ -826,9 +863,43 @@ class RadioManager:
             # 操作中・シーク反映中はスライダーを旧位置へ戻さない
             if self._pending_seek_seconds is not None or self._seek_apply_running:
                 return
+            if not self._player.isPlaying():
+                self._handle_timefree_player_exit()
+                return
             self._sync_timefree_seek_ui_from_player()
         else:
             self._stop_timefree_seek_timer()
+
+    def _handle_timefree_player_exit(self):
+        """聴き逃し再生中に mpv が終了したとき、番組終了なら停止し、途中なら現在位置から再接続する"""
+        position = self.get_timefree_position_seconds()
+        duration = self.get_timefree_duration_seconds()
+        return_code = self._player.getReturnCode()
+        # 推定位置はバッファ待ちの分だけ実際より遅れるため、終端判定には余裕を持たせる
+        if return_code == 0 and duration > 0 and position >= duration - TIMEFREE_END_MARGIN_SEC:
+            self.log.info(f"timefree playback reached end: position={position}, duration={duration}")
+            self.stop_timefree(announce_text="聴き逃し再生終了", resume_seconds=0)
+            return
+
+        now = time.monotonic()
+        last = self._timefree_last_reconnect_monotonic
+        if last is not None and now - last > TIMEFREE_RECONNECT_RESET_SEC:
+            self._timefree_reconnect_count = 0
+        if self._timefree_reconnect_count >= TIMEFREE_RECONNECT_MAX:
+            self.log.error(
+                f"timefree playback stopped unexpectedly and reconnect gave up: "
+                f"returncode={return_code}, last error={(self._player.getLastError() or '')[:300]}"
+            )
+            self.stop_timefree(announce_text="聴き逃し再生が中断されました", resume_seconds=position)
+            return
+        self._timefree_reconnect_count += 1
+        self._timefree_last_reconnect_monotonic = now
+        self.log.warning(
+            f"timefree playback stopped unexpectedly (returncode={return_code}); "
+            f"reconnecting at {position}s ({self._timefree_reconnect_count}/{TIMEFREE_RECONNECT_MAX})"
+        )
+        # トークン期限切れで終了した可能性もあるため、再接続時は認証し直す
+        self._apply_timefree_seek_target(position, refresh_auth=True)
 
     def onTimefreeSeekChanged(self, event):
         if self._timefree_seek_updating_ui:
@@ -841,16 +912,16 @@ class RadioManager:
             f"{self._format_hhmmss(max(self.timefree_seek_slider.GetMax(), 1))}"
         )
         # シークは mpv の再起動を伴うため、ドラッグ/キー連打が落ち着いてから1回だけ反映する
-        self.timefreeSeekApplyTimer.Start(300, oneShot=True)
+        self.timefreeSeekApplyTimer.Start(200, oneShot=True)
 
-    def _apply_timefree_seek_target(self, target):
+    def _apply_timefree_seek_target(self, target, refresh_auth=False):
         if target is None or not self.is_timefree_playing():
             return
-        self._schedule_timefree_seek_apply(int(target))
+        self._schedule_timefree_seek_apply(int(target), refresh_auth)
 
-    def _schedule_timefree_seek_apply(self, target):
+    def _schedule_timefree_seek_apply(self, target, refresh_auth=False):
         with self._seek_apply_lock:
-            self._seek_apply_latest = (int(target), self._playback_generation)
+            self._seek_apply_latest = (int(target), self._playback_generation, refresh_auth)
             if self._seek_apply_running:
                 return
             self._seek_apply_running = True
@@ -864,9 +935,9 @@ class RadioManager:
                 if latest is None:
                     self._seek_apply_running = False
                     return
-            target, generation = latest
+            target, generation, refresh_auth = latest
             try:
-                self.seek_timefree(target, generation=generation)
+                self.seek_timefree(target, generation=generation, refresh_auth=refresh_auth)
             except Exception as e:
                 self.log.error(f"Failed to seek timefree playback: {e}")
             wx.CallAfter(self._sync_timefree_seek_ui_from_player)

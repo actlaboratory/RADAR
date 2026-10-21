@@ -105,6 +105,8 @@ class MPVAudioPlayer:
         self._lock = threading.RLock()
         self._ipc_pipe_name = f"radar_mpv_{uuid.uuid4().hex}" if os.name == "nt" else ""
         self._shutdown_done = False
+        # 音量/デバイス変更で再起動するとき、再生位置に合わせたソースを返すコールバック
+        self._restart_source_provider = None
         self._load_device_from_config()
 
     def _load_device_from_config(self):
@@ -134,6 +136,11 @@ class MPVAudioPlayer:
     def setHttpHeaders(self, headers):
         with self._lock:
             self._http_headers = dict(headers or {})
+
+    def setRestartSourceProvider(self, provider):
+        """再起動時に呼ぶ provider() -> (source, headers) または None を登録する。None で解除。"""
+        with self._lock:
+            self._restart_source_provider = provider
 
     def setVolume(self, value):
         with self._lock:
@@ -209,6 +216,13 @@ class MPVAudioPlayer:
         with self._lock:
             return self._last_error
 
+    def getReturnCode(self):
+        """mpv が自然終了した場合の終了コード。実行中・未起動なら None。"""
+        with self._lock:
+            if self._process is None:
+                return None
+            return self._process.poll()
+
     def _is_active_device_id(self, device_id):
         for d in getDeviceList():
             if d["id"] == device_id:
@@ -254,8 +268,63 @@ class MPVAudioPlayer:
             cmd.insert(-1, f"--start={self._start_position_sec}")
         return cmd
 
+    def restartWithSource(self, source, headers):
+        """シーク用の高速再起動。旧プロセスの正常終了や起動確認を待たずに新しいソースで再生する。
+
+        起動直後の失敗は検知しないため、呼び出し側で isPlaying() を監視すること。
+        プロセスを起動できたら True。
+        """
+        with self._lock:
+            self._source = source
+            self._http_headers = dict(headers or {})
+            self._kill_locked()
+            if not self._spawn_locked():
+                return False
+            self._apply_runtime_volume_async()
+            return True
+
+    def _kill_locked(self):
+        """終了処理を待たずに mpv を即座に終了させる"""
+        proc = self._process
+        self._process = None
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            proc.kill()
+            proc.wait(timeout=0.5)
+        except Exception as e:
+            self._log.warning("mpv kill failed pid=%s: %s", proc.pid, e)
+
     def _start_locked(self):
         self._stop_locked()
+        if not self._spawn_locked():
+            return
+
+        time.sleep(0.6)
+        if self._process and self._process.poll() is not None:
+            return_code = self._process.returncode
+            stderr = self._read_process_stderr_locked()
+            if stderr.strip():
+                self._last_error = stderr.strip()
+            else:
+                self._last_error = f"mpv exited immediately (returncode={return_code})"
+            self._log.error("mpv exited immediately: %s", self._last_error)
+            self._process = None
+            return
+
+        if self._device_id:
+            time.sleep(0.8)
+            if self._process.poll() is not None:
+                stderr = self._read_process_stderr_locked()
+                self._last_error = stderr.strip() or "mpv exited after device selection"
+                self._log.error("mpv exited after device selection: %s", self._last_error[:500])
+                self._process = None
+                return
+
+        self._apply_runtime_volume_async()
+
+    def _spawn_locked(self):
+        """mpv プロセスを起動する。起動できたら True。"""
         self._last_error = ""
 
         startupinfo = None
@@ -281,30 +350,8 @@ class MPVAudioPlayer:
             self._last_error = str(e)
             self._process = None
             self._log.error("Failed to start mpv: %s", e)
-            return
-
-        time.sleep(0.6)
-        if self._process and self._process.poll() is not None:
-            return_code = self._process.returncode
-            stderr = self._read_process_stderr_locked()
-            if stderr.strip():
-                self._last_error = stderr.strip()
-            else:
-                self._last_error = f"mpv exited immediately (returncode={return_code})"
-            self._log.error("mpv exited immediately: %s", self._last_error)
-            self._process = None
-            return
-
-        if self._device_id:
-            time.sleep(0.8)
-            if self._process.poll() is not None:
-                stderr = self._read_process_stderr_locked()
-                self._last_error = stderr.strip() or "mpv exited after device selection"
-                self._log.error("mpv exited after device selection: %s", self._last_error[:500])
-                self._process = None
-                return
-
-        self._apply_runtime_volume_async()
+            return False
+        return True
 
     def _stop_locked(self):
         if not self._is_running_locked():
@@ -357,6 +404,15 @@ class MPVAudioPlayer:
     def _restart_locked(self):
         if not self._source:
             return
+        if self._restart_source_provider:
+            try:
+                restart_source = self._restart_source_provider()
+            except Exception as e:
+                self._log.warning("restart source provider failed: %s", e)
+                restart_source = None
+            if restart_source:
+                self._source, headers = restart_source
+                self._http_headers = dict(headers or {})
         self._stop_locked()
         time.sleep(0.05)
         self._start_locked()
