@@ -19,10 +19,26 @@ class PremiumAuthError(Exception):
     INVALID_CREDENTIALS = "invalid_credentials"
     NOT_AREAFREE = "not_areafree"
     NETWORK = "network"
+    # Cloudflare 等のボット対策で弾かれた。認証情報の誤りとは区別する
+    BLOCKED = "blocked"
 
     def __init__(self, kind, message=""):
         super().__init__(message or kind)
         self.kind = kind
+
+
+def _is_bot_challenge(response):
+    """Cloudflare のチャレンジ・ブロック応答かどうか
+
+    API は本来 JSON を返すため、Cloudflare の印が付いた HTML 応答はブロックとみなす。
+    radiko 自体が Cloudflare 経由の場合に備え、Server ヘッダーだけでは判定しない。
+    """
+    headers = response.headers
+    if headers.get("cf-mitigated"):
+        return True
+    is_html = "text/html" in headers.get("Content-Type", "").lower()
+    from_cloudflare = "cloudflare" in headers.get("Server", "").lower() or "cf-ray" in headers
+    return is_html and from_cloudflare
 
 
 class PremiumSession:
@@ -74,6 +90,15 @@ class PremiumSession:
             self.log.warning("premium login request failed: %s", e)
             raise PremiumAuthError(PremiumAuthError.NETWORK, str(e))
 
+        # 403 等をそのまま認証情報の誤りとして扱わないよう、ステータスより先に判定する
+        if _is_bot_challenge(response):
+            self.log.warning(
+                "premium login blocked by bot protection: status=%s, cf-mitigated=%s, cf-ray=%s",
+                response.status_code,
+                response.headers.get("cf-mitigated"),
+                response.headers.get("cf-ray"),
+            )
+            raise PremiumAuthError(PremiumAuthError.BLOCKED, "HTTP %s" % response.status_code)
         if response.status_code in (400, 401, 403):
             self.log.info("premium login rejected: status=%s", response.status_code)
             raise PremiumAuthError(PremiumAuthError.INVALID_CREDENTIALS)
@@ -130,7 +155,8 @@ class PremiumSession:
             return self.login(mail, password, _generation=generation, _logout_old=False)
         except PremiumAuthError as e:
             self.log.warning("premium relogin failed: %s", e.kind)
-            if e.kind != PremiumAuthError.NETWORK:
+            # 通信障害・ブロックは一時的な可能性があるため、セッションと認証情報を残しておく
+            if e.kind not in (PremiumAuthError.NETWORK, PremiumAuthError.BLOCKED):
                 self.invalidate(generation)
             return False
 
@@ -242,4 +268,6 @@ def describe_auth_error(error):
         return _("ログインには成功しましたが、このアカウントではエリアフリーが有効になっていません。\nエリアフリープランの契約状況をご確認ください。")
     if error.kind == PremiumAuthError.INVALID_CREDENTIALS:
         return _("ログインに失敗しました。メールアドレスとパスワードをご確認ください。")
+    if error.kind == PremiumAuthError.BLOCKED:
+        return _("radikoへのログインが、サーバー側の不正アクセス対策によって拒否されました。\nメールアドレスやパスワードの誤りではありません。時間をおいて再度お試しください。\n解消しない場合は、radiko側の仕様変更によりこのアプリからログインできなくなった可能性があります。")
     return _("radikoへの接続に失敗しました。インターネットの接続状況をご確認ください。")
