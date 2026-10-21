@@ -64,6 +64,13 @@ class ProgramManager:
     def _live_auth_headers(self):
         return {"X-Radiko-AuthToken": self.token}
 
+    @staticmethod
+    def _resolve_stream_type(stream_type):
+        """playlist の type を返す。type=a/b はエリア内専用で、エリアフリーの局外再生は type=c でないと 403 になる"""
+        if premium.session.is_areafree():
+            return "c"
+        return stream_type
+
     def get_live_playback_source(self, station_id):
         """認証済みライブ再生URLとHTTPヘッダーを返す"""
         self.refresh_auth_session()
@@ -71,7 +78,7 @@ class ProgramManager:
             "station_id": station_id,
             "l": 15,
             "lsid": self._make_lsid(),
-            "type": "b",
+            "type": self._resolve_stream_type("b"),
         })
         playlist_base = LIVE_PLAYLIST_URL
         if premium.session.is_areafree():
@@ -237,7 +244,7 @@ class ProgramManager:
             "to": to,
             "l": str(int(l_value)),
             "lsid": lsid or self._make_lsid(),
-            "type": stream_type,
+            "type": self._resolve_stream_type(stream_type),
         })
         playlist_base = self._get_timefree_playlist_base_url(station_id)
         return f"{playlist_base}?{query}"
