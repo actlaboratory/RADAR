@@ -56,6 +56,10 @@ class Dialog(BaseDialog):
 		self.radiko_session = None
 		self.areafree = None
 		self.timer = None
+		# 最初のページが読み込まれるまではスクリプトを実行しない（WebView2 の初期化前に実行すると失敗する）
+		self.loaded = False
+		# 結果が確定したら以降のメッセージを無視する（タイマーと読み込み完了の両方から確認が走るため、複数届くことがある）
+		self.finished = False
 
 	def Initialize(self):
 		self.log.debug("created")
@@ -93,6 +97,7 @@ class Dialog(BaseDialog):
 
 	def onLoaded(self, event):
 		self.log.debug("page loaded")
+		self.loaded = True
 		self.checkLogin()
 		event.Skip()
 
@@ -104,7 +109,7 @@ class Dialog(BaseDialog):
 		self.checkLogin()
 
 	def checkLogin(self):
-		if self.radiko_session:
+		if self.finished or not self.loaded:
 			return
 		try:
 			self.web.RunScriptAsync(CHECK_SCRIPT)
@@ -112,24 +117,24 @@ class Dialog(BaseDialog):
 			self.log.warning("failed to run login check script: %s", e)
 
 	def onScriptMessage(self, event):
-		if self.radiko_session or event.GetMessageHandler() != MESSAGE_HANDLER:
+		if self.finished or event.GetMessageHandler() != MESSAGE_HANDLER:
 			return
 		try:
 			data = json.loads(event.GetString())
 		except ValueError:
 			self.log.warning("invalid message from login page")
 			return
+		self.finished = True
+		self.timer.Stop()
 		session = str(data.get("session") or "").strip()
 		if not session:
 			self.log.error("logged in on browser but radiko_session cookie is not readable")
-			self.timer.Stop()
 			simpleDialog.errorDialog(_("ログインは確認できましたが、ログイン情報を取得できませんでした。\nradiko側の仕様変更により、ブラウザでのログインが使えなくなった可能性があります。"), self.wnd)
 			self.wnd.EndModal(wx.ID_CANCEL)
 			return
 		self.log.info("browser login detected")
 		self.radiko_session = session
 		self.areafree = premium.is_areafree_flag(data.get("areafree"))
-		self.timer.Stop()
 		self.wnd.EndModal(wx.ID_OK)
 
 	def Destroy(self):

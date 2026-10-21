@@ -250,17 +250,27 @@ class PremiumSession:
                 self.invalidate(generation, e)
             return False
 
-    def logout(self):
+    def logout(self, keep_browser_session=False):
+        """ログアウトする
+
+        keep_browser_session が True のとき、ブラウザでログインしたセッションはサーバーへログアウトしない。
+        アプリ終了時に使う（保存したセッションを次回起動時の自動ログインに使うため）。
+        """
         with self._lock:
             radiko_session = self._radiko_session
+            is_browser_session = not self._mail or not self._password
             self._radiko_session = None
             self._areafree = False
             self._mail = None
             self._password = None
             self._generation += 1
-        if radiko_session:
-            self._post_logout(radiko_session)
-            self.log.info("premium logout")
+        if not radiko_session:
+            return
+        if keep_browser_session and is_browser_session:
+            self.log.info("premium session released (browser session kept on server)")
+            return
+        self._post_logout(radiko_session)
+        self.log.info("premium logout")
 
     def invalidate(self, _generation=None, error=None):
         """セッションを無効化する（サーバーへのログアウトは行わない）"""

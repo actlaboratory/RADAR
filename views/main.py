@@ -353,7 +353,8 @@ class Events(BaseEvents):
 	def _cleanup_premium_session(self):
 		"""プレミアム会員セッションからログアウト"""
 		try:
-			premium.session.logout()
+			# ブラウザでログインしたセッションは再ログインできないため、次回起動時に使えるよう残す
+			premium.session.logout(keep_browser_session=True)
 		except Exception as e:
 			self.log.error("premium logout failed: %s", e, exc_info=True)
 
@@ -703,7 +704,11 @@ class Events(BaseEvents):
 			with wx.BusyCursor():
 				premium.session.login_with_session(radiko_session, assume_areafree=areafree)
 		except premium.PremiumAuthError as e:
-			errorDialog(premium.describe_auth_error(e))
+			if e.kind == premium.PremiumAuthError.BLOCKED:
+				# 既にブラウザでログインしているため、ブラウザでのログインを勧める説明は使わない
+				errorDialog(_("ログイン状態の確認が、サーバー側の不正アクセス対策によって拒否されました。\n時間をおいて再度お試しください。"))
+			else:
+				errorDialog(premium.describe_auth_error(e))
 			return None
 		return radiko_session
 
