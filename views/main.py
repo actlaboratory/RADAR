@@ -57,10 +57,18 @@ class MainView(BaseView):
 		self.volume_handler = volumeHandler.VolumeHandler(self)
 
 		# 保存済みのプレミアム認証情報があれば、エリア判定（auth2）より前にログインしておく
-		premium.auto_login(self.app.config)
+		auto_login_error = None
+		try:
+			premium.auto_login(self.app.config)
+		except premium.PremiumAuthError as e:
+			auto_login_error = e
 		self.events.update_premium_menu_label()
 
-		self.radio_manager.areaDetermination(self.progs)
+		try:
+			self.radio_manager.areaDetermination(self.progs)
+		except Exception as e:
+			# エリアが取得できなかった旨は放送局一覧の作成時に表示する
+			self.log.error("Failed to determine area: %r", e)
 
 		self.program_cache_controller = programCacheController.ProgramCacheController(self.radio_manager)
 
@@ -70,6 +78,11 @@ class MainView(BaseView):
 		else:
 			if hasattr(self, 'menu'):
 				self.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示(&P)"))
+
+		# 再ログイン失敗でセッションが裏で無効化されたとき、UI スレッドで画面に反映する
+		premium.session.add_invalidated_listener(lambda: wx.CallAfter(self.events.onPremiumInvalidated))
+		if auto_login_error is not None:
+			wx.CallAfter(self.events.notifyPremiumAutoLoginFailed, auto_login_error)
 
 	def _ensure_output_directory(self):
 		"""outputディレクトリの存在をチェックし、存在しない場合は作成する"""
@@ -405,6 +418,12 @@ class Events(BaseEvents):
 	def onRadioActivated(self, event):
 		if not hasattr(self.parent, 'radio_manager'):
 			return
+		station_id = self.parent.radio_manager.tree.GetItemData(
+			self.parent.radio_manager.tree.GetFocusedItem()
+		)
+		if station_id is None:
+			# ルートや地方ノード。再生中の局情報を書き換えず、再生状態も変えない
+			return
 		if self.parent.radio_manager.is_timefree_playing():
 			result = yesNoDialog(
 				_("聴き逃し再生中"),
@@ -417,12 +436,8 @@ class Events(BaseEvents):
 			except Exception as e:
 				self.log.error(f"Failed to stop timefree before live playback: {e}")
 		
-		self.current_playing_station_id = self.parent.radio_manager.tree.GetItemData(
-			self.parent.radio_manager.tree.GetFocusedItem()
-		)
-		if self.current_playing_station_id is None:
-			return
-		
+		self.current_playing_station_id = station_id
+
 		self.parent.log.info("activated" + self.current_playing_station_id)
 		if not self._handle_playback_toggle():
 			return
@@ -643,13 +658,7 @@ class Events(BaseEvents):
 			with wx.BusyCursor():
 				premium.session.login(mail, password)
 		except premium.PremiumAuthError as e:
-			if e.kind == premium.PremiumAuthError.NOT_AREAFREE:
-				message = _("ログインには成功しましたが、このアカウントではエリアフリーが有効になっていません。\nエリアフリープランの契約状況をご確認ください。")
-			elif e.kind == premium.PremiumAuthError.INVALID_CREDENTIALS:
-				message = _("ログインに失敗しました。メールアドレスとパスワードをご確認ください。")
-			else:
-				message = _("radikoへの接続に失敗しました。インターネットの接続状況をご確認ください。")
-			errorDialog(message)
+			errorDialog(premium.describe_auth_error(e))
 			return
 
 		if save:
@@ -664,6 +673,27 @@ class Events(BaseEvents):
 		if self._refresh_program_cache_scope():
 			message += "\n" + _("番組検索用に全国の番組データをバックグラウンドで取得します。完了までしばらく時間がかかります。")
 		dialog(_("ログイン"), message)
+
+	def onPremiumInvalidated(self):
+		"""再ログイン失敗でプレミアムのセッションが無効化されたときに UI スレッドで呼ばれる"""
+		self.update_premium_menu_label()
+		if premium.session.is_areafree():
+			# 通知が届くまでの間にユーザーが再ログインした
+			return
+		self.log.warning("premium session invalidated in background; reloading station list")
+		radio_manager = getattr(self.parent, "radio_manager", None)
+		if radio_manager and radio_manager.station_list_areafree:
+			# 再生は止めずに、エリア内の放送局一覧へ作り直す
+			self.parent.get_latest_programList()
+			self._refresh_program_cache_scope()
+		errorDialog(_("radikoプレミアムのログインが無効になりました。お住まいのエリアの放送局一覧に戻ります。\nエリアフリーを使うには、オプションメニューから再度ログインしてください。"))
+
+	def notifyPremiumAutoLoginFailed(self, error):
+		"""起動時の自動ログインに失敗したことを知らせる"""
+		errorDialog(
+			_("radikoプレミアムへの自動ログインに失敗しました。\n%(detail)s\n\nエリアフリーを使うには、オプションメニューから再度ログインしてください。")
+			% {"detail": premium.describe_auth_error(error)}
+		)
 
 	def _refresh_program_cache_scope(self):
 		"""ログイン状態に合わせて番組検索用キャッシュの収集範囲を切り替える"""

@@ -3,6 +3,7 @@
 import hashlib
 import random
 import re
+import threading
 import lxml.etree as ET
 from logging import getLogger
 import requests
@@ -16,6 +17,37 @@ from views import token
 LIVE_PLAYLIST_URL = "https://alliance-stream-radiko.smartstream.ne.jp/so/playlist.m3u8"
 TIMEFREE_PLAYLIST_URL = "https://tf-f-rpaa-radiko.smartstream.ne.jp/tf/playlist.m3u8"
 RADIKO_API_BASE = "https://radiko.jp/v3"
+AREA_STATION_LIST_URL = "https://radiko.jp/v2/station/list/{area_id}.xml"
+
+# エリアコード -> そのエリアで聴取できる放送局IDの集合（全 ProgramManager で共有）
+_area_station_ids_cache = {}
+_area_station_ids_lock = threading.Lock()
+
+
+def get_area_station_ids(area_id):
+    """エリア内で聴取できる放送局IDの集合を返す。取得できなければ None"""
+    if not area_id:
+        return None
+    with _area_station_ids_lock:
+        cached = _area_station_ids_cache.get(area_id)
+    if cached is not None:
+        return cached
+    try:
+        response = requests.get(AREA_STATION_LIST_URL.format(area_id=area_id), timeout=10)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+        ids = frozenset(e.text.strip() for e in root.findall(".//station/id") if e.text and e.text.strip())
+    except Exception as e:
+        getLogger("%s.%s" % (constants.LOG_PREFIX, "ProgramManager")).warning(
+            "failed to get station list for area %s: %s", area_id, e
+        )
+        return None
+    if not ids:
+        return None
+    with _area_station_ids_lock:
+        _area_station_ids_cache[area_id] = ids
+    return ids
+
 
 class ProgramManager:
     def __init__(self):
@@ -45,8 +77,12 @@ class ProgramManager:
             # プレミアムセッション期限切れの可能性があるため、1回だけ再ログインして認証し直す
             self.log.warning("auth2 with premium session failed (%s); trying relogin", e.code)
             if not premium.session.relogin():
-                self.log.error("premium relogin failed; auth2 cannot be completed")
-                raise
+                if premium.session.get_session():
+                    # 通信エラー等でセッションは残っている。エリアフリーなしに切り替えず失敗とする
+                    self.log.error("premium relogin failed; auth2 cannot be completed")
+                    raise
+                # セッションが無効化された。エリア内の局は聴けるよう、プレミアムなしで認証し直す
+                self.log.warning("premium session invalidated; retrying auth2 without premium")
             return self.refresh_auth_session(_retried=True)
         self.area_id = self._extract_area_id(auth2_text)
         self.log.debug("radiko auth refreshed: area=%s, premium=%s", self.area_id, bool(radiko_session))
@@ -66,10 +102,20 @@ class ProgramManager:
     def _live_auth_headers(self):
         return {"X-Radiko-AuthToken": self.token}
 
-    @staticmethod
-    def _resolve_stream_type(stream_type):
+    def uses_areafree(self, station_id):
+        """この局をエリアフリー用の配信（areafree="1" の URL, type=c）で再生するか。
+
+        エリア内の局は通常の配信で再生する（エリアフリー非対応の NHK 局などもエリア内なら聴ける）。
+        エリア内の局一覧が取得できない場合は、エリアフリー用の配信を使う。
+        """
+        if not premium.session.is_areafree():
+            return False
+        local_ids = get_area_station_ids(self.area_id)
+        return local_ids is None or station_id not in local_ids
+
+    def _resolve_stream_type(self, station_id, stream_type):
         """playlist の type を返す。type=a/b はエリア内専用で、エリアフリーの局外再生は type=c でないと 403 になる"""
-        if premium.session.is_areafree():
+        if self.uses_areafree(station_id):
             return "c"
         return stream_type
 
@@ -80,10 +126,10 @@ class ProgramManager:
             "station_id": station_id,
             "l": 15,
             "lsid": self._make_lsid(),
-            "type": self._resolve_stream_type("b"),
+            "type": self._resolve_stream_type(station_id, "b"),
         })
         playlist_base = LIVE_PLAYLIST_URL
-        if premium.session.is_areafree():
+        if self.uses_areafree(station_id):
             playlist_base = self._get_areafree_playlist_base_url(station_id, timefree=False)
         url = f"{playlist_base}?{params}"
         return url, self._live_auth_headers()
@@ -110,10 +156,11 @@ class ProgramManager:
                 if playlist is not None and playlist.text:
                     candidates.append(playlist.text.strip())
             preferred = [c for c in candidates if c.endswith(suffix)]
-            if preferred or candidates:
-                base_url = (preferred or candidates)[0]
-            else:
+            if not (preferred or candidates):
+                # 一時的な応答不備の可能性もあるため、既定の URL はキャッシュせず次回また取得する
                 self.log.warning("areafree playlist_create_url not found for %s (timefree=%s); using default", station_id, timefree)
+                return base_url
+            base_url = (preferred or candidates)[0]
         except Exception as e:
             self.log.warning("failed to get areafree playlist url for %s (timefree=%s): %s", station_id, timefree, e)
             return base_url
@@ -199,7 +246,7 @@ class ProgramManager:
 
     def _get_timefree_playlist_base_url(self, station_id):
         """放送局ごとのタイムフリー playlist ベース URL を返す"""
-        if premium.session.is_areafree():
+        if self.uses_areafree(station_id):
             return self._get_areafree_playlist_base_url(station_id, timefree=True)
         cached = self._timefree_playlist_base_cache.get(station_id)
         if cached:
@@ -246,7 +293,7 @@ class ProgramManager:
             "to": to,
             "l": str(int(l_value)),
             "lsid": lsid or self._make_lsid(),
-            "type": self._resolve_stream_type(stream_type),
+            "type": self._resolve_stream_type(station_id, stream_type),
         })
         playlist_base = self._get_timefree_playlist_base_url(station_id)
         return f"{playlist_base}?{query}"

@@ -812,6 +812,9 @@ class ProgramSearchDialog(BaseDialog):
                     timefree_info=timefree_info,
                 )
             except Exception as e1:
+                if progs.uses_areafree(stid):
+                    # エリアフリーでは最初から type=c のため、互換ソースで再試行しても結果は同じ
+                    raise
                 self.log.warning(f"timefree playback primary failed: {e1!r}; retrying with compat source (type=c)")
                 stream_url, headers = progs.get_timefree_playback_source_compat(stid, start_dt, end_dt)
                 rm.play_timefree(

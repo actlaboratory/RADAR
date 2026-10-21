@@ -312,6 +312,9 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 self._update_timefree_button_label()
                 return
             except Exception as e:
+                if self.progs.uses_areafree(self.stid):
+                    # エリアフリーでは最初から type=c のため、互換ソースで再試行しても結果は同じ
+                    raise
                 self.log.warning(f"timefree playback primary source failed: {e!r}; retrying with compat source (type=c)")
 
             stream_url, headers = self.progs.get_timefree_playback_source_compat(self.stid, start_dt, end_dt)

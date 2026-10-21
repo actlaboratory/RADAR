@@ -78,6 +78,8 @@ class RadioManager:
         self.stid = {}
         self.region = region_dic.REGION
         self.area = None
+        # 放送局一覧をエリアフリー（全国）で作成したか
+        self.station_list_areafree = False
         self.m3u8 = None
         self.live_http_headers = {}
         self.current_station_id = None
@@ -227,6 +229,7 @@ class RadioManager:
         """ラジオ局リストを設定"""
         root = self.tree.GetRootItem()
         self.stid = {}
+        self.station_list_areafree = False
 
         # 認証で得たエリアコードの放送局一覧を取得（再生可能局のみ）
         if not self.area:
@@ -237,6 +240,7 @@ class RadioManager:
             return
 
         if premium.session.is_areafree() and self._append_areafree_stations(root):
+            self.station_list_areafree = True
             self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
             self.tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.events.onRadioSelected)
             self.tree.SetFocus()
@@ -325,6 +329,8 @@ class RadioManager:
             self.log.error("Failed to parse full station list xml for areafree")
             return False
 
+        # エリアフリー非対応（<areafree>0</areafree>。NHK の地域局など）の局は、エリア内で聴ける局だけ載せる
+        local_ids = programmanager.get_area_station_ids(self.area)
         stid = {}
         own_region_item = None
         for region in parsed:
@@ -340,11 +346,19 @@ class RadioManager:
                 station_id = id_element.text or ""
                 if not station_name or not station_id or station_id in stid:
                     continue
+                area_element = station.find("area_id")
+                areafree_element = station.find("areafree")
+                if areafree_element is not None and (areafree_element.text or "").strip() == "0":
+                    if local_ids is not None:
+                        listenable = station_id in local_ids
+                    else:
+                        listenable = area_element is not None and area_element.text == self.area
+                    if not listenable:
+                        continue
                 if region_item is None:
                     region_item = self.tree.AppendItem(root, region_label)
                 self.tree.AppendItem(region_item, station_name, data=station_id)
                 stid[station_id] = station_name
-                area_element = station.find("area_id")
                 if own_region_item is None and not is_zenkoku and area_element is not None and area_element.text == self.area:
                     own_region_item = region_item
 
@@ -398,6 +412,7 @@ class RadioManager:
         途中で停止・別の局への切替があった場合（世代が変わった場合）は何もせずに終わる。
         失敗しても次回の watchdog で再試行（または中断）されるため、ここでは例外を送出しない。
         """
+        relogged_in = False
         for attempt in range(1, max_attempts + 1):
             if self._shutting_down or generation != self._playback_generation:
                 self.log.info(f"live reconnect cancelled (playback changed): station={station_id}")
@@ -430,6 +445,14 @@ class RadioManager:
                 f"live reconnect: player failed to start ({attempt}/{max_attempts}): station={station_id}, "
                 f"player error={(self._player.getLastError() or 'unknown')[:300]}"
             )
+            if (
+                not relogged_in
+                and self._probe_stream_status(stream_url, headers) == 403
+                and self._relogin_for_forbidden_stream(station_id, progs)
+            ):
+                # 次の試行で新しいセッションの URL を取得し直す
+                relogged_in = True
+                continue
             time.sleep(0.5)
         self.log.error(f"live reconnect failed after {max_attempts} attempts: station={station_id}")
 
@@ -514,17 +537,43 @@ class RadioManager:
             "LiveReconnect",
         )
 
-    def _diagnose_stream_failure(self, stream_url, headers):
-        """mpv が再生できなかった原因を、playlist を取得し直して推定しユーザー向けの説明を返す"""
+    def _probe_stream_status(self, stream_url, headers):
+        """playlist を取得し直して HTTP ステータスを返す。URL がない・通信できない場合は None"""
         if not stream_url:
-            return "再生 URL を取得できませんでした。"
+            return None
         try:
             response = requests.get(stream_url, headers=headers or {}, timeout=STREAM_PROBE_TIMEOUT_SEC)
         except requests.RequestException as e:
             self.log.warning(f"stream probe failed: {e}")
+            return None
+        self.log.info(f"stream probe: status={response.status_code}")
+        return response.status_code
+
+    def _relogin_for_forbidden_stream(self, station_id, progs):
+        """エリアフリーで再生している局が 403 のとき、プレミアムのセッション切れとみて再ログインする。
+
+        auth2 はセッションが切れていてもエラーにならない場合があるため、配信側の 403 を契機にする。
+        再ログインできたら True（呼び出し側で URL を取得し直して再試行する）。
+        """
+        try:
+            if not progs or not progs.uses_areafree(station_id):
+                return False
+        except Exception as e:
+            self.log.warning(f"failed to check areafree for {station_id}: {e!r}")
+            return False
+        self.log.warning(f"areafree stream is forbidden (403); trying premium relogin: station={station_id}")
+        return premium.session.relogin()
+
+    def _diagnose_stream_failure(self, stream_url, headers):
+        """mpv が再生できなかった原因を、playlist を取得し直して推定しユーザー向けの説明を返す"""
+        if not stream_url:
+            return "再生 URL を取得できませんでした。"
+        return self._describe_stream_status(self._probe_stream_status(stream_url, headers))
+
+    def _describe_stream_status(self, status):
+        """_probe_stream_status の結果から、再生できなかった原因のユーザー向けの説明を返す"""
+        if status is None:
             return NETWORK_ERROR_MESSAGE
-        status = response.status_code
-        self.log.info(f"stream probe: status={status}")
         if status == 403:
             if premium.session.is_areafree():
                 return "この放送局を再生する権限がありません。radikoプレミアムのログイン状態をご確認ください。"
@@ -603,8 +652,22 @@ class RadioManager:
         self._player.setNonSeekableInput(True)
         self._player.setHttpHeaders(self.live_http_headers)
         self._player.setStartPosition(0)
-        if not self.player():
-            reason = self._diagnose_stream_failure(self.m3u8, self.live_http_headers)
+        started = self.player()
+        status = None
+        if not started:
+            status = self._probe_stream_status(self.m3u8, self.live_http_headers)
+            if status == 403 and self._relogin_for_forbidden_stream(id, progs):
+                try:
+                    self.get_streamUrl(id, progs)
+                    if self.m3u8:
+                        self._player.setHttpHeaders(self.live_http_headers)
+                        started = self.player()
+                except Exception as e:
+                    self.log.warning(f"Failed to retry live playback after relogin: station={id}: {e!r}")
+                if not started:
+                    status = self._probe_stream_status(self.m3u8, self.live_http_headers)
+        if not started:
+            reason = self._describe_stream_status(status) if self.m3u8 else "再生 URL を取得できませんでした。"
             self.log.error(
                 f"Failed to start live playback: station={id}, reason={reason}, "
                 f"player error={(self._player.getLastError() or '')[:300]}"
@@ -981,12 +1044,18 @@ class RadioManager:
 
     def get_latest_programList(self, progs):
         """番組リストを最新に更新"""
+        # 認証（エリア判定）を先に行い、失敗したら今の一覧を残す（消してから失敗すると一覧が空になる）
+        try:
+            self.areaDetermination(progs)
+        except Exception as e:
+            self.log.error(f"Failed to determine area while reloading station list: {e!r}")
+            errorDialog(_("エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください"))
+            return
         was_displaying = self.events.displaying
         self.tree.DeleteAllItems()
         # 放送局リスト更新時は番組情報UIを一旦破棄し、メニューを一時的に無効にする。
         self.parent.program_info_handler.destroy_program_info_ui(disable_menu=True)
         self.creator.GetSizer().Layout()
-        self.areaDetermination(progs)
         self.setupradio()
         self.setRadioList()
         self._sync_program_info_menu_after_station_list_reload(was_displaying)

@@ -39,3 +39,7 @@ class Dialog(BaseDialog):
 
 	def GetData(self):
 		return self.mail.GetValue().strip(), self.password.GetValue(), self.save.GetValue()
+
+	def GetValue(self):
+		# 基底クラスは値をログに出力するため、パスワードを含む値はログに残さずに返す
+		return self.value

@@ -39,9 +39,31 @@ class PremiumSession:
         self._areafree = False
         self._mail = None
         self._password = None
+        # ログアウトのたびに進める。ログアウト前に始まった再ログインの結果を捨てるために使う
+        self._generation = 0
+        # ユーザー操作以外（再ログイン失敗）でセッションが無効化されたときに呼ぶコールバック。
+        # 認証処理のスレッドから呼ばれるため、UI 操作は呼び出し側で UI スレッドへ回すこと
+        self._invalidated_listeners = []
 
-    def login(self, mail, password):
-        """ログインしてエリアフリー契約を検証する。失敗時は PremiumAuthError"""
+    def add_invalidated_listener(self, listener):
+        """listener() をセッションが無効化されたときに呼ぶよう登録する"""
+        with self._lock:
+            self._invalidated_listeners.append(listener)
+
+    def _notify_invalidated(self):
+        with self._lock:
+            listeners = list(self._invalidated_listeners)
+        for listener in listeners:
+            try:
+                listener()
+            except Exception as e:
+                self.log.warning("premium invalidated listener failed: %s", e)
+
+    def login(self, mail, password, _generation=None, _logout_old=True):
+        """ログインしてエリアフリー契約を検証する。失敗時は PremiumAuthError
+
+        _generation を渡した場合、その間にログアウトされていたら結果を破棄して False を返す。
+        """
         try:
             response = requests.post(
                 LOGIN_URL,
@@ -76,12 +98,21 @@ class PremiumSession:
             raise PremiumAuthError(PremiumAuthError.NOT_AREAFREE)
 
         with self._lock:
-            old_session = self._radiko_session
-            self._radiko_session = radiko_session
-            self._areafree = True
-            self._mail = mail
-            self._password = password
-        if old_session and old_session != radiko_session:
+            if _generation is not None and _generation != self._generation:
+                discarded = True
+            else:
+                discarded = False
+                old_session = self._radiko_session
+                self._radiko_session = radiko_session
+                self._areafree = True
+                self._mail = mail
+                self._password = password
+        if discarded:
+            # 再ログイン中にユーザーがログアウトした。復活させずに破棄する
+            self.log.info("premium relogin result discarded (logged out meanwhile)")
+            self._post_logout(radiko_session)
+            return False
+        if _logout_old and old_session and old_session != radiko_session:
             self._post_logout(old_session)
         self.log.info("premium login succeeded (areafree enabled)")
         return True
@@ -90,14 +121,17 @@ class PremiumSession:
         """保持している認証情報で再ログインする。成功すれば True"""
         with self._lock:
             mail, password = self._mail, self._password
+            generation = self._generation
         if not mail or not password:
             return False
         try:
-            return self.login(mail, password)
+            # 旧セッションはサーバーへログアウトしない。
+            # 再生中・録音中のトークンに影響しないよう、期限切れに任せる
+            return self.login(mail, password, _generation=generation, _logout_old=False)
         except PremiumAuthError as e:
             self.log.warning("premium relogin failed: %s", e.kind)
             if e.kind != PremiumAuthError.NETWORK:
-                self.invalidate()
+                self.invalidate(generation)
             return False
 
     def logout(self):
@@ -107,15 +141,22 @@ class PremiumSession:
             self._areafree = False
             self._mail = None
             self._password = None
+            self._generation += 1
         if radiko_session:
             self._post_logout(radiko_session)
             self.log.info("premium logout")
 
-    def invalidate(self):
+    def invalidate(self, _generation=None):
         """セッションを無効化する（サーバーへのログアウトは行わない）"""
         with self._lock:
+            if _generation is not None and _generation != self._generation:
+                return
+            was_areafree = bool(self._radiko_session) and self._areafree
             self._radiko_session = None
             self._areafree = False
+        if was_areafree:
+            self.log.warning("premium session invalidated")
+            self._notify_invalidated()
 
     def get_session(self):
         with self._lock:
@@ -178,7 +219,11 @@ def load_credentials(config):
 
 
 def auto_login(config):
-    """保存済み認証情報で自動ログインする。失敗しても例外は投げない"""
+    """保存済み認証情報で自動ログインする。
+
+    認証情報がなければ False。ログインに失敗した場合は PremiumAuthError を送出する
+    （ユーザーに知らせないと、保存済みの認証情報で毎回黙って失敗し続けるため）。
+    """
     credentials = load_credentials(config)
     if not credentials:
         return False
@@ -188,4 +233,13 @@ def auto_login(config):
         getLogger("%s.%s" % (constants.LOG_PREFIX, "PremiumSession")).warning(
             "premium auto login failed: %s", e.kind
         )
-        return False
+        raise
+
+
+def describe_auth_error(error):
+    """PremiumAuthError をユーザー向けの説明に変換する"""
+    if error.kind == PremiumAuthError.NOT_AREAFREE:
+        return _("ログインには成功しましたが、このアカウントではエリアフリーが有効になっていません。\nエリアフリープランの契約状況をご確認ください。")
+    if error.kind == PremiumAuthError.INVALID_CREDENTIALS:
+        return _("ログインに失敗しました。メールアドレスとパスワードをご確認ください。")
+    return _("radikoへの接続に失敗しました。インターネットの接続状況をご確認ください。")
