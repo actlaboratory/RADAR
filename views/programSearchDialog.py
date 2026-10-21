@@ -18,6 +18,7 @@ from views.programSearchEngine import ProgramSearchEngine
 from views.programDataCollector import ProgramDataCollector
 from views.databaseUpdateProgress import DatabaseUpdateProgress
 from views import programmanager
+from views import radioManager
 from searchHistoryManager import SearchHistoryManager
 from recorder import (
     RECORDING_END_TIME_BUFFER,
@@ -811,7 +812,7 @@ class ProgramSearchDialog(BaseDialog):
                     timefree_info=timefree_info,
                 )
             except Exception as e1:
-                self.log.warning(f"timefree playback primary failed: {e1}")
+                self.log.warning(f"timefree playback primary failed: {e1!r}; retrying with compat source (type=c)")
                 stream_url, headers = progs.get_timefree_playback_source_compat(stid, start_dt, end_dt)
                 rm.play_timefree(
                     stream_url,
@@ -824,8 +825,8 @@ class ProgramSearchDialog(BaseDialog):
             if hasattr(mv, "program_info_handler"):
                 mv.program_info_handler.show_timefree_program_info(timefree_info)
         except Exception as e:
-            self.log.error(f"on_play_timefree: {e}")
-            simpleDialog.errorDialog(_("聴き逃し再生に失敗しました。") + f"\n{e}")
+            self.log.error(f"on_play_timefree: {e!r}", exc_info=not isinstance(e, radioManager.PlaybackError))
+            simpleDialog.errorDialog(_("聴き逃し再生に失敗しました。") + f"\n{radioManager.describe_playback_exception(e)}")
 
     def on_record_timefree(self, event):
         try:

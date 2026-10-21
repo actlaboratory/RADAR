@@ -424,25 +424,29 @@ class Events(BaseEvents):
 			return
 		
 		self.parent.log.info("activated" + self.current_playing_station_id)
-		self._handle_playback_toggle()
+		if not self._handle_playback_toggle():
+			return
 		self._update_program_info_display()
 
 	def _handle_playback_toggle(self):
-		"""再生/停止の切り替え処理"""
+		"""再生/停止の切り替え処理。再生開始に失敗した場合は False"""
 		if not self.playing:
-			if not self._start_playback():
-				return
-		else:
-			self._stop_playback()
+			return self._start_playback()
+		self._stop_playback()
+		return True
 
 	def _start_playback(self):
 		"""再生開始処理"""
 		try:
 			self.parent.radio_manager.play(self.current_playing_station_id, self.parent.progs)
 			return True
-		except urllib.request.HTTPError as error:
-			errorDialog(_("再生に失敗しました。聴取可能な都道府県内であることをご確認ください。\nこの症状が引き続き発生する場合は、放送局一覧を再描画してからお試しください。"))
-			self.parent.log.error("Playback failure!" + str(error))
+		except Exception as error:
+			if isinstance(error, radioManager.PlaybackError):
+				# 原因は RadioManager 側で記録済み
+				self.parent.log.error("Playback failure! station=%s: %s", self.current_playing_station_id, error)
+			else:
+				self.parent.log.exception("Unexpected playback failure! station=%s", self.current_playing_station_id)
+			errorDialog(_("再生に失敗しました。\n%(detail)s") % {"detail": radioManager.describe_playback_exception(error)})
 			return False
 
 	def _stop_playback(self):
@@ -477,8 +481,8 @@ class Events(BaseEvents):
 		try:
 			radio_manager.replay_last_timefree()
 		except Exception as e:
-			self.log.warning(f"Failed to replay last timefree stream: {e}")
-			errorDialog(_("聴き逃し再生の再開に失敗しました。\n%(detail)s") % {"detail": str(e)}, self.parent.hFrame)
+			self.log.warning(f"Failed to replay last timefree stream: {e!r}", exc_info=not isinstance(e, radioManager.PlaybackError))
+			errorDialog(_("聴き逃し再生の再開に失敗しました。\n%(detail)s") % {"detail": radioManager.describe_playback_exception(e)}, self.parent.hFrame)
 
 	def _update_program_info_display(self):
 		"""番組情報表示の更新"""

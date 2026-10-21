@@ -9,6 +9,7 @@ from logging import getLogger
 
 import constants
 import globalVars
+import log_util
 from views.audio_output_devices import getDeviceList
 
 
@@ -58,6 +59,7 @@ def _spawn_proxy_env():
     if no:
         env["NO_PROXY"] = env["no_proxy"] = no
     return env
+
 
 
 try:
@@ -191,10 +193,12 @@ class MPVAudioPlayer:
             self._nonseekable_input = bool(enabled)
 
     def play(self):
+        """再生を開始する。起動直後に mpv が終了しなければ True（失敗理由は getLastError()）"""
         with self._lock:
             if not self._source:
-                return
-            self._start_locked()
+                self._last_error = "no source"
+                return False
+            return self._start_locked()
 
     def stop(self):
         with self._lock:
@@ -320,9 +324,10 @@ class MPVAudioPlayer:
             self._log.warning("mpv kill failed pid=%s: %s", proc.pid, e)
 
     def _start_locked(self):
+        """mpv を起動し、起動直後に終了していなければ True"""
         self._stop_locked()
         if not self._spawn_locked():
-            return
+            return False
 
         time.sleep(0.6)
         if self._process and self._process.poll() is not None:
@@ -334,18 +339,19 @@ class MPVAudioPlayer:
                 self._last_error = f"mpv exited immediately (returncode={return_code})"
             self._log.error("mpv exited immediately: %s", self._last_error)
             self._process = None
-            return
+            return False
 
         if self._device_id:
             time.sleep(0.8)
-            if self._process.poll() is not None:
+            if self._process is None or self._process.poll() is not None:
                 stderr = self._read_process_stderr_locked()
                 self._last_error = stderr.strip() or "mpv exited after device selection"
                 self._log.error("mpv exited after device selection: %s", self._last_error[:500])
                 self._process = None
-                return
+                return False
 
         self._apply_runtime_volume_async()
+        return True
 
     def _spawn_locked(self):
         """mpv プロセスを起動する。起動できたら True。"""
@@ -360,9 +366,10 @@ class MPVAudioPlayer:
             creationflags = subprocess.CREATE_NO_WINDOW
 
         try:
-            self._log.debug("Starting mpv command: %s", " ".join(self._build_command()))
+            cmd = self._build_command()
+            self._log.debug("Starting mpv command: %s", log_util.mask_command(cmd))
             self._process = subprocess.Popen(
-                self._build_command(),
+                cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
@@ -375,6 +382,7 @@ class MPVAudioPlayer:
             self._process = None
             self._log.error("Failed to start mpv: %s", e)
             return False
+        self._log.debug("mpv started: pid=%s", self._process.pid)
         return True
 
     def _stop_locked(self):

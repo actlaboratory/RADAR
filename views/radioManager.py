@@ -14,6 +14,8 @@ import socket
 import constants
 import globalVars
 import urllib
+import urllib.error
+import requests
 from simpleDialog import *
 from views.mpvPlayer import MPVAudioPlayer
 from views import premium
@@ -24,6 +26,28 @@ from views import programmanager
 TIMEFREE_END_MARGIN_SEC = 60
 TIMEFREE_RECONNECT_MAX = 3
 TIMEFREE_RECONNECT_RESET_SEC = 60
+# ライブ再生が途切れたときの自動再接続の上限（この秒数以上安定して再生できたら回数をリセット）
+LIVE_RECONNECT_MAX = 3
+LIVE_RECONNECT_RESET_SEC = 60
+# 再生失敗時に原因を調べるため playlist を取得し直すときのタイムアウト(秒)
+STREAM_PROBE_TIMEOUT_SEC = 8
+
+NETWORK_ERROR_MESSAGE = "radiko に接続できませんでした。インターネットの接続状況をご確認ください。"
+
+
+class PlaybackError(RuntimeError):
+    """再生を開始できなかったときの例外。メッセージはそのままユーザーに表示できる文言にする"""
+
+
+def describe_playback_exception(error):
+    """再生準備（認証・URL取得）中の例外を、ユーザー向けの説明に変換する"""
+    if isinstance(error, PlaybackError):
+        return str(error)
+    if isinstance(error, urllib.error.HTTPError):
+        return f"radiko の認証に失敗しました (HTTP {error.code})。時間をおいて再度お試しください。"
+    if isinstance(error, (urllib.error.URLError, requests.RequestException, socket.timeout, ConnectionError)):
+        return NETWORK_ERROR_MESSAGE
+    return f"再生の準備中にエラーが発生しました: {error}"
 
 
 def _has_proxy_env():
@@ -65,7 +89,8 @@ class RadioManager:
         self._timefree_duration_sec = 0
         self._timefree_info = None
         self.stream_watchdog_interval_ms = 5000
-        self._refresh_in_progress = False
+        # ライブ再生の復旧処理（再接続・中断理由の判定）を別スレッドで実行中か
+        self._live_recovery_running = False
         self._shutting_down = False
         self._timefree_seek_updating_ui = False
         self._pending_seek_seconds = None
@@ -79,6 +104,9 @@ class RadioManager:
         # 聴き逃し再生中に mpv が途中終了したときの自動再接続回数
         self._timefree_reconnect_count = 0
         self._timefree_last_reconnect_monotonic = None
+        # ライブ再生中に mpv が途中終了したときの自動再接続回数
+        self._live_reconnect_count = 0
+        self._live_last_reconnect_monotonic = None
         self._player.setRestartSourceProvider(self._timefree_restart_source)
         # ライブ再生中に「番組表で過去番組を選択した」ことを示す局 ID（メニュー再開可否用）
         self._timefree_menu_live_ack_station_id = None
@@ -339,81 +367,251 @@ class RadioManager:
         """ストリームURLを取得"""
         self.m3u8, self.live_http_headers = progs.get_authenticated_stream_url(stationid)
 
-    def _refresh_playback_stream(self, max_retries=3, force_reconnect=False):
-        """再生中のストリームURLを再取得してプレイヤーへ反映"""
-        if self._shutting_down:
-            return False
-        if not self.current_station_id or not self.current_progs:
-            return False
-        if self._refresh_in_progress:
-            return False
+    def _start_live_recovery_thread(self, target, args, name):
+        """ライブ再生の復旧処理（再接続・中断理由の判定）を別スレッドで開始する。
 
-        self._refresh_in_progress = True
+        認証や配信サーバーへの通信で UI スレッドを止めないため、通信はすべてこのスレッドで行う。
+        同時に実行するのは1つだけ。
+        """
+        if self._live_recovery_running:
+            self.log.debug(f"live recovery already running; skip {name}")
+            return
+        self._live_recovery_running = True
+
+        def _run():
+            try:
+                target(*args)
+            except Exception:
+                self.log.exception(f"unexpected error in {name}")
+            finally:
+                self._live_recovery_running = False
+
         try:
-            for attempt in range(max_retries):
-                try:
-                    self.get_streamUrl(self.current_station_id, self.current_progs)
-                    if not self.m3u8:
-                        raise RuntimeError("empty stream url")
-                    self._player.setHttpHeaders(self.live_http_headers)
-                    self._player.setSource(self.m3u8)
-                    self._player.play()
-                    return True
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        raise
-                    self.log.warning(f"stream refresh retry {attempt + 1}/{max_retries - 1}: {e}")
-                    if force_reconnect:
-                        try:
-                            self._player.stop()
-                        except Exception:
-                            pass
-                    time.sleep(0.5)
-        finally:
-            self._refresh_in_progress = False
-        return False
+            threading.Thread(target=_run, name=name, daemon=True).start()
+        except Exception:
+            self._live_recovery_running = False
+            self.log.exception(f"failed to start {name} thread")
+
+    def _live_reconnect_worker(self, generation, station_id, progs, max_attempts=2):
+        """（別スレッド）ストリームURLを取得し直して mpv を起動し直す。
+
+        途中で停止・別の局への切替があった場合（世代が変わった場合）は何もせずに終わる。
+        失敗しても次回の watchdog で再試行（または中断）されるため、ここでは例外を送出しない。
+        """
+        for attempt in range(1, max_attempts + 1):
+            if self._shutting_down or generation != self._playback_generation:
+                self.log.info(f"live reconnect cancelled (playback changed): station={station_id}")
+                return
+            try:
+                stream_url, headers = progs.get_authenticated_stream_url(station_id)
+                if not stream_url:
+                    raise RuntimeError("empty stream url")
+            except Exception as e:
+                self.log.warning(
+                    f"live reconnect: failed to get stream url ({attempt}/{max_attempts}): "
+                    f"station={station_id}: {e!r}"
+                )
+                time.sleep(0.5)
+                continue
+            # 停止・切替との競合を防ぐため、世代の確認と mpv の起動はロック内で行う
+            with self._playback_lock:
+                if self._shutting_down or generation != self._playback_generation:
+                    self.log.info(f"live reconnect discarded (playback changed): station={station_id}")
+                    return
+                self.m3u8 = stream_url
+                self.live_http_headers = headers
+                self._player.setHttpHeaders(headers)
+                self._player.setSource(stream_url)
+                started = self._player.play()
+            if started:
+                self.log.info(f"live reconnect succeeded: station={station_id} (attempt {attempt}/{max_attempts})")
+                return
+            self.log.warning(
+                f"live reconnect: player failed to start ({attempt}/{max_attempts}): station={station_id}, "
+                f"player error={(self._player.getLastError() or 'unknown')[:300]}"
+            )
+            time.sleep(0.5)
+        self.log.error(f"live reconnect failed after {max_attempts} attempts: station={station_id}")
+
+    def _live_give_up_worker(self, generation, station_id, stream_url, headers, last_error):
+        """（別スレッド）中断理由を判定し、UI スレッドで停止・通知する"""
+        reason = self._diagnose_stream_failure(stream_url, headers)
+        wx.CallAfter(self._finish_live_give_up, generation, station_id, reason, last_error)
+
+    def _finish_live_give_up(self, generation, station_id, reason, last_error):
+        """（UI スレッド）再接続を諦めて停止し、理由を読み上げる"""
+        if self._shutting_down or generation != self._playback_generation:
+            self.log.info(f"live give-up discarded (playback changed): station={station_id}")
+            return
+        self.log.error(
+            f"live playback gave up after {LIVE_RECONNECT_MAX} reconnects: station={station_id}, "
+            f"reason={reason}, last player error={last_error[:300] or '(none)'}"
+        )
+        self._reset_playback_state()
+        try:
+            self.parent.app.say(f"再生が中断されました。{reason}", interrupt=True)
+        except Exception as e:
+            self.log.error(f"Failed to announce playback interruption: {e}")
 
     def _on_stream_watchdog_timer(self, event):
-        """再生停止を検知して再認証・再接続する"""
+        """再生停止を検知して再認証・再接続する（通信は別スレッドで行う）"""
+        try:
+            self._check_live_stream()
+        except Exception:
+            self.log.exception("stream watchdog failed")
+
+    def _check_live_stream(self):
         if self._shutting_down:
             return
         if not self.events.playing:
             return
         if self.playback_mode != "live":
             return
-        if self._player.isPlaying():
+        if self._live_recovery_running:
             return
+        now = time.monotonic()
+        last = self._live_last_reconnect_monotonic
+        if self._player.isPlaying():
+            # 一定時間安定して再生できていれば、再接続回数をリセットする
+            if last is not None and now - last > LIVE_RECONNECT_RESET_SEC:
+                self.log.info("live playback stable; reset reconnect count")
+                self._live_reconnect_count = 0
+                self._live_last_reconnect_monotonic = None
+            return
+        last_error = self._player.getLastError() or ""
+        return_code = self._player.getReturnCode()
+        generation = self._playback_generation
+        station_id = self.current_station_id
+        if self._live_reconnect_count >= LIVE_RECONNECT_MAX:
+            self.log.warning(
+                f"live playback stopped again after {LIVE_RECONNECT_MAX} reconnects; diagnosing: station={station_id}"
+            )
+            self._start_live_recovery_thread(
+                self._live_give_up_worker,
+                (generation, station_id, self.m3u8, dict(self.live_http_headers or {}), last_error),
+                "LiveGiveUp",
+            )
+            return
+        if not station_id or not self.current_progs:
+            # 再接続できない不整合な状態。watchdog が同じログを出し続けないよう停止する
+            self.log.error("live playback stopped but station info is missing; cannot reconnect. stopping")
+            self._reset_playback_state()
+            try:
+                self.parent.app.say("再生が中断されました。", interrupt=True)
+            except Exception as e:
+                self.log.error(f"Failed to announce playback interruption: {e}")
+            return
+        self._live_reconnect_count += 1
+        self._live_last_reconnect_monotonic = now
+        self.log.warning(
+            f"live playback stopped unexpectedly (returncode={return_code}); reconnecting "
+            f"({self._live_reconnect_count}/{LIVE_RECONNECT_MAX}): station={station_id}, "
+            f"last player error={last_error[:300] or '(none)'}"
+        )
+        self._start_live_recovery_thread(
+            self._live_reconnect_worker,
+            (generation, station_id, self.current_progs),
+            "LiveReconnect",
+        )
+
+    def _diagnose_stream_failure(self, stream_url, headers):
+        """mpv が再生できなかった原因を、playlist を取得し直して推定しユーザー向けの説明を返す"""
+        if not stream_url:
+            return "再生 URL を取得できませんでした。"
         try:
-            last_error = ""
-            if hasattr(self._player, "getLastError"):
-                last_error = self._player.getLastError() or ""
-            if last_error:
-                self.log.warning(f"playback stopped unexpectedly. last player error: {last_error[:300]}")
-            else:
-                self.log.warning("playback stopped unexpectedly. trying forced reconnect")
-            if self._refresh_playback_stream(max_retries=3, force_reconnect=True):
-                self.log.info("forced reconnect succeeded")
+            response = requests.get(stream_url, headers=headers or {}, timeout=STREAM_PROBE_TIMEOUT_SEC)
+        except requests.RequestException as e:
+            self.log.warning(f"stream probe failed: {e}")
+            return NETWORK_ERROR_MESSAGE
+        status = response.status_code
+        self.log.info(f"stream probe: status={status}")
+        if status == 403:
+            if premium.session.is_areafree():
+                return "この放送局を再生する権限がありません。radikoプレミアムのログイン状態をご確認ください。"
+            return (
+                "この放送局は現在の地域では聴取できません。"
+                "エリア外の放送局を聴くには、radikoプレミアム（エリアフリー）へのログインが必要です。"
+            )
+        if status == 401:
+            return "radiko の認証の有効期限が切れました。もう一度再生してください。"
+        if status == 404:
+            return "配信が見つかりませんでした。放送局一覧を再描画してからお試しください。"
+        if status >= 400:
+            return f"配信サーバーがエラーを返しました (HTTP {status})。時間をおいて再度お試しください。"
+        # 配信は取得できるのにプレイヤーが終了した場合は、出力デバイスなど再生側の問題
+        last_error = (self._player.getLastError() or "").strip()
+        detail = f"（{last_error[:200]}）" if last_error else ""
+        return f"プレイヤーで再生できませんでした。再生出力デバイスの設定をご確認ください。{detail}"
+
+    def _reset_playback_state(self):
+        """再生失敗・中断時に、停止状態へ戻す（読み上げはしない）"""
+        self._begin_playback_change()
+        try:
+            self._player.stop()
         except Exception as e:
-            self.log.error(f"forced reconnect failed: {e}")
+            self.log.warning(f"Failed to stop player while resetting playback state: {e}")
+        self.updateInfoTimer.Stop()
+        self.streamWatchdogTimer.Stop()
+        self.current_station_id = None
+        self.events.current_playing_station_id = None
+        self.current_progs = None
+        self.playback_mode = None
+        self._timefree_started_monotonic = None
+        self.events.playing = False
+        self._live_reconnect_count = 0
+        self._live_last_reconnect_monotonic = None
+        try:
+            self._stop_timefree_seek_timer()
+            self._set_timefree_seek_ui_visible(False)
+            self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
+            self.update_timefree_command_ui()
+            if hasattr(self.parent, "program_info_handler"):
+                self.parent.program_info_handler.clear_timefree_program_info()
+        except Exception as e:
+            self.log.error(f"Failed to reset playback UI: {e}")
 
     def player(self):
-        """再生用関数"""
+        """再生用関数。mpv が起動できたら True"""
         self._player.setSource(self.m3u8)
         self._player.setVolume(self.volume.GetValue())
         self.log.info("playing...")
-        self._player.play()
+        return self._player.play()
 
     def play(self, id, progs, program_info=None):
-        """再生開始"""
+        """再生開始。開始できなかった場合は停止状態に戻して PlaybackError を送出する"""
         if self._shutting_down:
+            self.log.info(f"live playback request ignored during shutdown: station={id}")
             return
+        self.log.info(f"live playback requested: station={id}, areafree={premium.session.is_areafree()}")
         self._begin_playback_change()
         if self._player.isPlaying():
             try:
                 self._player.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                self.log.warning(f"Failed to stop previous playback: {e}")
         self.clear_timefree_menu_live_ack()
+        self.streamWatchdogTimer.Stop()
+        try:
+            self.get_streamUrl(id, progs)
+            if not self.m3u8:
+                raise RuntimeError("empty stream url")
+        except Exception as e:
+            self.log.error(f"Failed to get stream url: station={id}: {e!r}")
+            self._reset_playback_state()
+            raise PlaybackError(describe_playback_exception(e)) from e
+
+        self._player.setNonSeekableInput(True)
+        self._player.setHttpHeaders(self.live_http_headers)
+        self._player.setStartPosition(0)
+        if not self.player():
+            reason = self._diagnose_stream_failure(self.m3u8, self.live_http_headers)
+            self.log.error(
+                f"Failed to start live playback: station={id}, reason={reason}, "
+                f"player error={(self._player.getLastError() or '')[:300]}"
+            )
+            self._reset_playback_state()
+            raise PlaybackError(reason)
+
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
         self.current_station_id = id
         self.current_progs = progs
@@ -423,25 +621,27 @@ class RadioManager:
         self._timefree_resume_position_sec = 0
         self._timefree_duration_sec = 0
         self._timefree_info = None
-        self.get_streamUrl(id, progs)
-        self._player.setNonSeekableInput(True)
-        self._player.setHttpHeaders(self.live_http_headers)
-        self._player.setStartPosition(0)
-        self.player()
-        self.update_program_info()
+        self._live_reconnect_count = 0
+        self._live_last_reconnect_monotonic = None
         self.events.playing = True
-        self._stop_timefree_seek_timer()
-        self._set_timefree_seek_ui_visible(False)
         self.streamWatchdogTimer.Start(self.stream_watchdog_interval_ms)
-        self.update_timefree_command_ui()
-        if hasattr(self.parent, "program_info_handler"):
-            handler = self.parent.program_info_handler
-            handler.clear_timefree_program_info()
-            if self.events.displaying:
-                if program_info:
-                    handler.show_program_info_snapshot(program_info)
-                else:
-                    handler.get_latest_info()
+        self.log.info(f"live playback started: station={id}")
+        # 以降は表示まわりの更新のみ。失敗しても再生は継続させる
+        try:
+            self.update_program_info()
+            self._stop_timefree_seek_timer()
+            self._set_timefree_seek_ui_visible(False)
+            self.update_timefree_command_ui()
+            if hasattr(self.parent, "program_info_handler"):
+                handler = self.parent.program_info_handler
+                handler.clear_timefree_program_info()
+                if self.events.displaying:
+                    if program_info:
+                        handler.show_program_info_snapshot(program_info)
+                    else:
+                        handler.get_latest_info()
+        except Exception as e:
+            self.log.error(f"Failed to update UI after playback start: {e}")
 
         try:
             station_name = self.stid.get(id, id)
@@ -452,13 +652,18 @@ class RadioManager:
     def play_timefree(self, stream_url, station_id=None, announce_text=None, headers=None, resume_seconds=0, timefree_info=None):
         """タイムフリーURLで再生開始"""
         if self._shutting_down:
+            self.log.info(f"timefree playback request ignored during shutdown: station={station_id}")
             return
+        self.log.info(
+            f"timefree playback requested: station={station_id}, resume={resume_seconds}s, "
+            f"areafree={premium.session.is_areafree()}"
+        )
         self._begin_playback_change()
         if self._player.isPlaying():
             try:
                 self._player.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                self.log.warning(f"Failed to stop previous playback: {e}")
         self.updateInfoTimer.Stop()
         self.streamWatchdogTimer.Stop()
         self.log.debug(f"Start timefree playback: station={station_id}, url={stream_url}")
@@ -490,24 +695,31 @@ class RadioManager:
         self._player.setNonSeekableInput(True)
         self._player.setHttpHeaders(headers or {})
         self._player.setStartPosition(0)
-        self.player()
-        time.sleep(0.9)
-        if not self._player.isPlaying():
-            last_error = self._player.getLastError() or "unknown"
-            self.events.playing = False
-            self.playback_mode = None
-            self._timefree_started_monotonic = None
-            self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
-            self.update_timefree_command_ui()
-            raise RuntimeError(f"タイムフリー再生の開始に失敗しました: {last_error}")
+        started = self.player()
+        if started:
+            time.sleep(0.9)
+        if not started or not self._player.isPlaying():
+            reason = self._diagnose_stream_failure(stream_url, headers)
+            self.log.error(
+                f"Failed to start timefree playback: station={station_id}, reason={reason}, "
+                f"player error={(self._player.getLastError() or '')[:300]}"
+            )
+            # 再開位置などの再生情報(_last_timefree_request)は残し、メニューから再試行できるようにする
+            self._reset_playback_state()
+            raise PlaybackError(reason)
         self.events.playing = False
-        self._set_timefree_seek_ui_visible(True)
-        self._sync_timefree_seek_ui_from_player()
-        self._start_timefree_seek_timer()
-        self.update_timefree_command_ui()
-        self.update_program_info()
-        if hasattr(self.parent, "program_info_handler"):
-            self.parent.program_info_handler.show_timefree_program_info(self._timefree_info)
+        self.log.info(f"timefree playback started: station={station_id}, position={resume_seconds}s")
+        # 以降は表示まわりの更新のみ。失敗しても再生は継続させる
+        try:
+            self._set_timefree_seek_ui_visible(True)
+            self._sync_timefree_seek_ui_from_player()
+            self._start_timefree_seek_timer()
+            self.update_timefree_command_ui()
+            self.update_program_info()
+            if hasattr(self.parent, "program_info_handler"):
+                self.parent.program_info_handler.show_timefree_program_info(self._timefree_info)
+        except Exception as e:
+            self.log.error(f"Failed to update UI after timefree playback start: {e}")
         try:
             if announce_text:
                 self.parent.app.say(announce_text, interrupt=True)
@@ -714,6 +926,9 @@ class RadioManager:
             self._last_timefree_request["resume_seconds"] = current_pos
         self._timefree_resume_position_sec = current_pos
         self._timefree_started_monotonic = None
+        self.log.info(
+            f"timefree playback stopped: station={self.current_station_id}, resume={current_pos}s, reason={announce_text}"
+        )
         self._player.stop()
         self.updateInfoTimer.Stop()
         self.streamWatchdogTimer.Stop()
@@ -739,7 +954,7 @@ class RadioManager:
         self.clear_timefree_menu_live_ack()
         self._player.stop()
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
-        self.log.info("posed")
+        self.log.info(f"playback stopped by user: station={self.current_station_id}, mode={self.playback_mode}")
         self.updateInfoTimer.Stop()
         self.streamWatchdogTimer.Stop()
         self.current_station_id = None

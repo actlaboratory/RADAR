@@ -7,7 +7,26 @@ import subprocess
 import base64
 import shlex
 import logging
+import socket
 from sys import argv
+import constants
+
+# 認証リクエストのタイムアウト(秒)。未指定だと応答がないまま待ち続けるため必ず付ける
+AUTH_TIMEOUT_SEC = 15
+
+_log = logging.getLogger("%s.%s" % (constants.LOG_PREFIX, "Token"))
+
+
+def _open(req, step):
+    """認証リクエストを送り、失敗時は原因をログに残して再送出する（トークン等の値は記録しない）"""
+    try:
+        return urllib.request.urlopen(req, timeout=AUTH_TIMEOUT_SEC)
+    except urllib.error.HTTPError as e:
+        _log.warning("%s failed: HTTP %s", step, e.code)
+        raise
+    except (urllib.error.URLError, socket.timeout, OSError) as e:
+        _log.warning("%s failed: %r", step, e)
+        raise
 
 
 class Token:
@@ -32,18 +51,23 @@ class Token:
             "X-Radiko-Device":"pc" ,
         }
         req = urllib.request.Request( url, None, headers  )
-        res = urllib.request.urlopen(req)
+        res = _open(req, "auth1")
         auth_response["body"] = res.read()
         auth_response["headers"] = res.info()
         #print(auth_response)
         return auth_response
 
     def get_partial_key(self, auth_response):
-        authtoken = auth_response["headers"]["x-radiko-authtoken"]
-        offset    = auth_response["headers"]["x-radiko-keyoffset"]
-        length    = auth_response["headers"]["x-radiko-keylength"]
-        offset = int(offset)
-        length = int(length)
+        try:
+            authtoken = auth_response["headers"]["x-radiko-authtoken"]
+            offset    = int(auth_response["headers"]["x-radiko-keyoffset"])
+            length    = int(auth_response["headers"]["x-radiko-keylength"])
+        except (KeyError, TypeError, ValueError) as e:
+            _log.error("auth1 response is missing auth headers: %r", e)
+            raise RuntimeError("radiko の認証応答が不正です。") from e
+        if not authtoken:
+            _log.error("auth1 response has empty auth token")
+            raise RuntimeError("radiko の認証応答が不正です。")
         partialkey= self.auth_key[offset:offset+length]
         partialkey = base64.b64encode(partialkey.encode())
 
@@ -66,8 +90,9 @@ class Token:
             "X-Radiko-Device": 'pc' # 'pc' 蝗ｺ螳・
         }
         req  = urllib.request.Request( url, None, headers  )
-        res  = urllib.request.urlopen(req)
+        res  = _open(req, "auth2 (premium)" if radiko_session else "auth2")
         txt = res.read()
         self.area = txt.decode()
+        _log.debug("auth2 succeeded: area=%s", self.area.split(",")[0].strip())
         return self.area
 

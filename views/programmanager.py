@@ -45,9 +45,11 @@ class ProgramManager:
             # プレミアムセッション期限切れの可能性があるため、1回だけ再ログインして認証し直す
             self.log.warning("auth2 with premium session failed (%s); trying relogin", e.code)
             if not premium.session.relogin():
+                self.log.error("premium relogin failed; auth2 cannot be completed")
                 raise
             return self.refresh_auth_session(_retried=True)
         self.area_id = self._extract_area_id(auth2_text)
+        self.log.debug("radiko auth refreshed: area=%s, premium=%s", self.area_id, bool(radiko_session))
         return self.token
 
     def getArea(self):
