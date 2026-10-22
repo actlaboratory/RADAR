@@ -75,6 +75,12 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         if hasattr(main_view, "radio_manager"):
             main_view.radio_manager.update_timefree_command_ui()
 
+    def _on_timefree_playback_start_finished(self, started):
+        """聴き逃し再生の開始結果をボタンに反映する（開始処理の完了時に UI スレッドで呼ばれる）"""
+        if self._is_disposed:
+            return
+        self._update_timefree_button_label()
+
     def onDialogActivated(self, event):
         """ダイアログ再アクティブ時にボタン状態を再同期"""
         if self._is_disposed:
@@ -299,32 +305,11 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 "stream_type": "b",
                 "duration_sec": duration_sec,
             }
-            try:
-                stream_url, headers = self.progs.get_timefree_playback_source(self.stid, start_dt, end_dt)
-                main_view.radio_manager.play_timefree(
-                    stream_url,
-                    station_id=self.stid,
-                    announce_text=announce,
-                    headers=headers,
-                    resume_seconds=0,
-                    timefree_info=timefree_info
-                )
-                self._update_timefree_button_label()
-                return
-            except Exception as e:
-                if self.progs.uses_areafree(self.stid):
-                    # エリアフリーでは最初から type=c のため、互換ソースで再試行しても結果は同じ
-                    raise
-                self.log.warning(f"timefree playback primary source failed: {e!r}; retrying with compat source (type=c)")
-
-            stream_url, headers = self.progs.get_timefree_playback_source_compat(self.stid, start_dt, end_dt)
-            main_view.radio_manager.play_timefree(
-                stream_url,
-                station_id=self.stid,
-                announce_text=announce,
-                headers=headers,
-                resume_seconds=0,
-                timefree_info={**timefree_info, "stream_type": "c"}
+            # 認証・接続は別スレッドで行い、開始できなければ RadioManager がダイアログで知らせる
+            main_view.radio_manager.play_timefree_program(
+                self.progs, self.stid, start_dt, end_dt, announce, timefree_info,
+                error_message="聴き逃し再生に失敗しました。",
+                on_finished=self._on_timefree_playback_start_finished,
             )
             self._update_timefree_button_label()
         except Exception as e:

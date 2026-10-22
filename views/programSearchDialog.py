@@ -801,32 +801,11 @@ class ProgramSearchDialog(BaseDialog):
                 "stream_type": "b",
                 "duration_sec": duration_sec,
             }
-            try:
-                stream_url, headers = progs.get_timefree_playback_source(stid, start_dt, end_dt)
-                rm.play_timefree(
-                    stream_url,
-                    station_id=stid,
-                    announce_text=announce,
-                    headers=headers,
-                    resume_seconds=0,
-                    timefree_info=timefree_info,
-                )
-            except Exception as e1:
-                if progs.uses_areafree(stid):
-                    # エリアフリーでは最初から type=c のため、互換ソースで再試行しても結果は同じ
-                    raise
-                self.log.warning(f"timefree playback primary failed: {e1!r}; retrying with compat source (type=c)")
-                stream_url, headers = progs.get_timefree_playback_source_compat(stid, start_dt, end_dt)
-                rm.play_timefree(
-                    stream_url,
-                    station_id=stid,
-                    announce_text=announce,
-                    headers=headers,
-                    resume_seconds=0,
-                    timefree_info={**timefree_info, "stream_type": "c"},
-                )
-            if hasattr(mv, "program_info_handler"):
-                mv.program_info_handler.show_timefree_program_info(timefree_info)
+            # 認証・接続は別スレッドで行い、開始できなければ RadioManager がダイアログで知らせる
+            rm.play_timefree_program(
+                progs, stid, start_dt, end_dt, announce, timefree_info,
+                error_message=_("聴き逃し再生に失敗しました。"),
+            )
         except Exception as e:
             self.log.error(f"on_play_timefree: {e!r}", exc_info=not isinstance(e, radioManager.PlaybackError))
             simpleDialog.errorDialog(_("聴き逃し再生に失敗しました。") + f"\n{radioManager.describe_playback_exception(e)}")

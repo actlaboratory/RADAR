@@ -661,13 +661,6 @@ class RadioManager:
         except Exception as e:
             self.log.error(f"Failed to reset playback UI: {e}")
 
-    def player(self):
-        """再生用関数。mpv が起動できたら True"""
-        self._player.setSource(self.m3u8)
-        self._player.setVolume(self.volume.GetValue())
-        self.log.info("playing...")
-        return self._player.play()
-
     def play(self, id, progs, program_info=None):
         """ライブ再生を開始する。
 
@@ -795,8 +788,16 @@ class RadioManager:
         except Exception as e:
             self.log.error(f"Failed to announce playback start: {e}")
 
-    def play_timefree(self, stream_url, station_id=None, announce_text=None, headers=None, resume_seconds=0, timefree_info=None):
-        """タイムフリーURLで再生開始"""
+    def play_timefree(self, sources, station_id=None, announce_text=None, resume_seconds=0,
+                      timefree_info=None, error_message=None, on_finished=None):
+        """聴き逃し再生を開始する。
+
+        sources は (再生 URL とヘッダーを返す関数, stream_type) の並び。先頭から順に試し、最初に再生できたものを使う。
+        関数が None を返したら、その配信は試さずに次へ進む。
+        認証・mpv の起動は別スレッドで行い、すぐに戻る（通信が遅くても画面を止めない）。
+        開始できなかった場合は停止状態に戻し、error_message に理由を添えてエラーダイアログで知らせる。
+        on_finished は開始の成否 (bool) を UI スレッドで受け取る（準備中に停止・切替があったときは呼ばない）。
+        """
         if self._shutting_down:
             self.log.info(f"timefree playback request ignored during shutdown: station={station_id}")
             return
@@ -804,57 +805,129 @@ class RadioManager:
             f"timefree playback requested: station={station_id}, resume={resume_seconds}s, "
             f"areafree={premium.session.is_areafree()}"
         )
-        self._begin_playback_change()
-        if self._player.isPlaying():
-            try:
-                self._player.stop()
-            except Exception as e:
-                self.log.warning(f"Failed to stop previous playback: {e}")
-        self.updateInfoTimer.Stop()
-        self.streamWatchdogTimer.Stop()
-        self.log.debug(f"Start timefree playback: station={station_id}, url={stream_url}")
-        self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
-        self.current_station_id = station_id
-        self.events.current_playing_station_id = station_id
-        self.current_progs = None
-        self.playback_mode = "timefree"
-        self.m3u8 = stream_url
+        # 前の再生を止めて停止状態にする（準備中に別の再生・停止をしたら、この要求は取りやめる）
+        self._reset_playback_state()
+        generation = self._playback_generation
         resume_seconds = max(0, int(resume_seconds or 0))
-        self._timefree_reconnect_count = 0
-        self._timefree_last_reconnect_monotonic = None
         self._timefree_resume_position_sec = resume_seconds
-        self._timefree_started_monotonic = time.monotonic()
-        self._timefree_info = dict(timefree_info or {})
-        duration = self._timefree_info.get("duration_sec", 0) if self._timefree_info else 0
-        self._timefree_duration_sec = max(0, int(duration or 0))
+        # 開始できなくても再開位置などの再生情報は残し、メニューから再試行できるようにする
         self._last_timefree_request = {
-            "stream_url": stream_url,
+            "stream_url": None,
             "station_id": station_id,
             "announce_text": announce_text,
-            "headers": headers or {},
+            "headers": {},
             "resume_seconds": resume_seconds,
             "timefree_info": dict(timefree_info or {}),
             "ft_dt": (timefree_info or {}).get("ft_dt"),
             "to_dt": (timefree_info or {}).get("to_dt"),
             "stream_type": (timefree_info or {}).get("stream_type", "b"),
         }
-        self._player.setNonSeekableInput(True)
-        self._player.setHttpHeaders(headers or {})
-        self._player.setStartPosition(0)
-        started = self.player()
-        if started:
-            time.sleep(0.9)
-        if not started or not self._player.isPlaying():
+        self.update_timefree_command_ui()
+        volume = self.volume.GetValue()
+        threading.Thread(
+            target=self._timefree_start_worker,
+            args=(generation, list(sources), station_id, volume, error_message, on_finished),
+            name="TimefreeStart",
+            daemon=True,
+        ).start()
+
+    def _is_playback_changed(self, generation):
+        """generation の時点から、停止・別の再生への切替・終了があったか"""
+        return self._shutting_down or generation != self._playback_generation
+
+    def _start_timefree_player(self, generation, stream_url, headers, volume):
+        """（別スレッド）聴き逃しの mpv を起動する。起動したら True、停止・切替済みなら None"""
+        # 停止・切替との競合を防ぐため、世代の確認と mpv の起動はロック内で行う
+        with self._playback_lock:
+            if self._is_playback_changed(generation):
+                return None
+            if self._player.isPlaying():
+                # 先に試した配信の mpv が残っていれば止める
+                self._player.stop()
+            self.m3u8 = stream_url
+            self._player.setNonSeekableInput(True)
+            self._player.setHttpHeaders(headers or {})
+            self._player.setStartPosition(0)
+            self._player.setSource(stream_url)
+            self._player.setVolume(volume)
+            self.log.info("playing...")
+            return self._player.play()
+
+    def _timefree_start_worker(self, generation, sources, station_id, volume, error_message, on_finished):
+        """（別スレッド）配信を順に試して mpv を起動し、結果を UI スレッドへ渡す"""
+        reason = None
+        for fetch, stream_type in sources:
+            if self._is_playback_changed(generation):
+                return
+            try:
+                source = fetch()
+                if source is None:
+                    continue
+                stream_url, headers = source
+                if not stream_url:
+                    raise RuntimeError("empty stream url")
+            except Exception as e:
+                self.log.error(f"Failed to get timefree stream url: station={station_id}, type={stream_type}: {e!r}")
+                reason = describe_playback_exception(e)
+                continue
+            started_at = time.monotonic()
+            started = self._start_timefree_player(generation, stream_url, headers, volume)
+            if started is None:
+                self.log.info(f"timefree playback start discarded (playback changed): station={station_id}")
+                return
+            if started:
+                # 配信を取得できず mpv がすぐ終了する場合を見分けるため、少し待ってから確かめる
+                time.sleep(0.9)
+                if self._is_playback_changed(generation):
+                    return
+                started = self._player.isPlaying()
+            if started:
+                wx.CallAfter(
+                    self._finish_timefree_start, generation, station_id, error_message, on_finished,
+                    True, None, stream_url, headers, stream_type, started_at,
+                )
+                return
             reason = self._diagnose_stream_failure(stream_url, headers)
             self.log.error(
-                f"Failed to start timefree playback: station={station_id}, reason={reason}, "
+                f"Failed to start timefree playback: station={station_id}, type={stream_type}, reason={reason}, "
                 f"player error={(self._player.getLastError() or '')[:300]}"
             )
-            # 再開位置などの再生情報(_last_timefree_request)は残し、メニューから再試行できるようにする
+        wx.CallAfter(
+            self._finish_timefree_start, generation, station_id, error_message, on_finished,
+            False, reason or "再生 URL を取得できませんでした。", None, None, None, None,
+        )
+
+    def _finish_timefree_start(self, generation, station_id, error_message, on_finished,
+                               started, reason, stream_url, headers, stream_type, started_at):
+        """（UI スレッド）聴き逃し再生の開始結果を画面と状態に反映する"""
+        if self._is_playback_changed(generation):
+            # 起動中に停止・別の再生への切替があった（mpv は停止・切替側で止めている）
+            self.log.info(f"timefree playback start result discarded (playback changed): station={station_id}")
+            return
+        if not started:
             self._reset_playback_state()
-            raise PlaybackError(reason)
+            self._notify_timefree_start_finished(on_finished, False)
+            errorDialog((error_message or _("聴き逃し再生に失敗しました。")) + f"\n{reason}")
+            return
+
+        req = self._last_timefree_request
+        req["stream_url"] = stream_url
+        req["headers"] = headers or {}
+        req["stream_type"] = stream_type
+        req["timefree_info"]["stream_type"] = stream_type
+        self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("再生"))
+        self.current_station_id = station_id
+        self.events.current_playing_station_id = station_id
+        self.current_progs = None
+        self.playback_mode = "timefree"
+        self._timefree_reconnect_count = 0
+        self._timefree_last_reconnect_monotonic = None
+        self._timefree_resume_position_sec = req["resume_seconds"]
+        self._timefree_started_monotonic = started_at
+        self._timefree_info = dict(req["timefree_info"])
+        self._timefree_duration_sec = max(0, int(self._timefree_info.get("duration_sec", 0) or 0))
         self.events.playing = False
-        self.log.info(f"timefree playback started: station={station_id}, position={resume_seconds}s")
+        self.log.info(f"timefree playback started: station={station_id}, position={req['resume_seconds']}s")
         # 以降は表示まわりの更新のみ。失敗しても再生は継続させる
         try:
             self._set_timefree_seek_ui_visible(True)
@@ -867,10 +940,44 @@ class RadioManager:
         except Exception as e:
             self.log.error(f"Failed to update UI after timefree playback start: {e}")
         try:
-            if announce_text:
-                self.parent.app.say(announce_text, interrupt=True)
+            if req.get("announce_text"):
+                self.parent.app.say(req["announce_text"], interrupt=True)
         except Exception as e:
             self.log.error(f"Failed to announce timefree playback start: {e}")
+        self._notify_timefree_start_finished(on_finished, True)
+
+    def _notify_timefree_start_finished(self, on_finished, started):
+        """聴き逃し再生の開始結果を呼び出し元へ知らせる"""
+        if on_finished is None:
+            return
+        try:
+            on_finished(started)
+        except Exception as e:
+            # 呼び出し元のダイアログが閉じられた場合など
+            self.log.warning(f"timefree playback start callback failed: {e!r}")
+
+    def play_timefree_program(self, progs, station_id, start_dt, end_dt, announce_text, timefree_info,
+                              error_message=None, on_finished=None):
+        """番組の聴き逃し再生を始める。通常の配信 (type=b) で再生できなければ互換の配信 (type=c) で試す"""
+        def compat_source():
+            if progs.uses_areafree(station_id):
+                # エリアフリーでは最初から type=c のため、互換ソースで再試行しても結果は同じ
+                return None
+            self.log.warning(f"timefree playback primary source failed; retrying with compat source (type=c): station={station_id}")
+            return progs.get_timefree_playback_source_compat(station_id, start_dt, end_dt)
+
+        self.play_timefree(
+            [
+                (lambda: progs.get_timefree_playback_source(station_id, start_dt, end_dt), "b"),
+                (compat_source, "c"),
+            ],
+            station_id=station_id,
+            announce_text=announce_text,
+            resume_seconds=0,
+            timefree_info=timefree_info,
+            error_message=error_message,
+            on_finished=on_finished,
+        )
 
     def is_timefree_playing(self):
         """聴き逃し再生中かどうか"""
@@ -1024,41 +1131,40 @@ class RadioManager:
         return stream_url, headers
 
     def _replay_timefree_at(self, target_seconds, announce=False):
-        """seek秒位置でURLを再生成してタイムフリー再生"""
+        """seek秒位置でURLを再生成してタイムフリー再生（認証・起動は別スレッドで行う）"""
         req = self._last_timefree_request or {}
         ft_dt = req.get("ft_dt")
         to_dt = req.get("to_dt")
         station_id = req.get("station_id")
         stream_type = req.get("stream_type", "b")
+        info = dict(req.get("timefree_info") or {})
+        info["stream_type"] = stream_type
 
         if ft_dt and to_dt and station_id:
             pm = self._get_program_manager()
-            stream_url, headers = pm.get_timefree_playback_source_with_seek(
-                station_id=station_id,
-                ft_dt=ft_dt,
-                to_dt=to_dt,
-                seek_seconds=target_seconds,
-                stream_type=stream_type,
-            )
-            info = dict(req.get("timefree_info") or {})
-            info["stream_type"] = stream_type
-            self.play_timefree(
-                stream_url,
-                station_id=station_id,
-                announce_text=req.get("announce_text") if announce else None,
-                headers=headers,
-                resume_seconds=target_seconds,
-                timefree_info=info,
-            )
-            return
+
+            def fetch():
+                return pm.get_timefree_playback_source_with_seek(
+                    station_id=station_id,
+                    ft_dt=ft_dt,
+                    to_dt=to_dt,
+                    seek_seconds=target_seconds,
+                    stream_type=stream_type,
+                )
+        else:
+            stream_url = req.get("stream_url")
+            headers = req.get("headers")
+
+            def fetch():
+                return stream_url, headers
 
         self.play_timefree(
-            req.get("stream_url"),
+            [(fetch, stream_type)],
             station_id=station_id,
             announce_text=req.get("announce_text") if announce else None,
-            headers=req.get("headers"),
             resume_seconds=target_seconds,
-            timefree_info=req.get("timefree_info"),
+            timefree_info=info,
+            error_message=_("聴き逃し再生の再開に失敗しました。"),
         )
 
     def stop_timefree(self, announce_text="聴き逃し再生停止", resume_seconds=None):

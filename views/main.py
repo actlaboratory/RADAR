@@ -492,6 +492,7 @@ class Events(BaseEvents):
 				return
 
 		try:
+			# 接続は別スレッドで行い、接続後の失敗は RadioManager がダイアログで知らせる
 			radio_manager.replay_last_timefree()
 		except Exception as e:
 			self.log.warning(f"Failed to replay last timefree stream: {e!r}", exc_info=not isinstance(e, radioManager.PlaybackError))
