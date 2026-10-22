@@ -847,7 +847,14 @@ class RadioManager:
             self.m3u8 = stream_url
             self._player.setNonSeekableInput(True)
             self._player.setHttpHeaders(headers or {})
-            self._player.setStartPosition(0)
+            # 再開位置付きの URL は5秒区間の先頭から始まるため、区間内の残りを読み飛ばす
+            req = self._last_timefree_request or {}
+            start_sec = 0
+            if req.get("ft_dt") and req.get("to_dt"):
+                start_sec = self._get_program_manager().timefree_seek_segment_offset(
+                    req["ft_dt"], req["to_dt"], req.get("resume_seconds", 0)
+                )
+            self._player.setStartPosition(start_sec)
             self._player.setSource(stream_url)
             self._player.setVolume(volume)
             self.log.info("playing...")
@@ -1078,14 +1085,17 @@ class RadioManager:
             # 期限切れなら mpv が終了し、_handle_timefree_player_exit が認証し直して再接続する。
             headers = req.get("headers") or {}
             stream_url = pm.build_timefree_seek_url(station_id, ft_dt, to_dt, target, stream_type)
-        result = self._restart_timefree_player_at(generation, req, stream_url, headers, target)
+        # 配信は5秒区間の先頭から始まるため、区間内の残りを mpv で読み飛ばして target から再生する
+        start_sec = pm.timefree_seek_segment_offset(ft_dt, to_dt, target)
+        self.log.info(f"timefree seek: target={target}s, start_sec={start_sec}, refresh_auth={refresh_auth}")
+        result = self._restart_timefree_player_at(generation, req, stream_url, headers, target, start_sec)
         if result is False:
             raise RuntimeError(
                 f"タイムフリーシークに失敗しました: {self._player.getLastError() or 'unknown'}"
             )
 
-    def _restart_timefree_player_at(self, generation, req, stream_url, headers, target):
-        """シーク先 URL で mpv を起動し直す。
+    def _restart_timefree_player_at(self, generation, req, stream_url, headers, target, start_sec):
+        """シーク先 URL で mpv を起動し直す（URL の先頭から start_sec 秒読み飛ばす）。
 
         戻り値: 起動成功 True / 失敗 False / 停止・切替済みで何もしなかった None
         """
@@ -1093,8 +1103,7 @@ class RadioManager:
             if generation != self._playback_generation or not self.is_timefree_playing():
                 return None
             self._player.setNonSeekableInput(True)
-            self._player.setStartPosition(0)
-            if not self._player.restartWithSource(stream_url, headers):
+            if not self._player.restartWithSource(stream_url, headers, start_sec):
                 return False
             req["stream_url"] = stream_url
             req["headers"] = headers
@@ -1105,7 +1114,7 @@ class RadioManager:
             return True
 
     def _timefree_restart_source(self):
-        """音量/デバイス変更で mpv が再起動されるとき、現在位置から再開する (URL, ヘッダー) を返す。
+        """音量/デバイス変更で mpv が再起動されるとき、現在位置から再開する (URL, ヘッダー, 読み飛ばす秒数) を返す。
 
         聴き逃し再生中以外は None を返し、元のソースのまま再起動させる。
         mpv のロック内から呼ばれるため、ここでは _playback_lock を取らない（取得順の逆転を避ける）。
@@ -1119,7 +1128,8 @@ class RadioManager:
         if not (ft_dt and to_dt and station_id):
             return None
         target = self.get_timefree_position_seconds()
-        stream_url = self._get_program_manager().build_timefree_seek_url(
+        pm = self._get_program_manager()
+        stream_url = pm.build_timefree_seek_url(
             station_id, ft_dt, to_dt, target, req.get("stream_type", "b")
         )
         headers = req.get("headers") or {}
@@ -1128,7 +1138,7 @@ class RadioManager:
         self.m3u8 = stream_url
         self._timefree_resume_position_sec = target
         self._timefree_started_monotonic = time.monotonic()
-        return stream_url, headers
+        return stream_url, headers, pm.timefree_seek_segment_offset(ft_dt, to_dt, target)
 
     def _replay_timefree_at(self, target_seconds, announce=False):
         """seek秒位置でURLを再生成してタイムフリー再生（認証・起動は別スレッドで行う）"""
@@ -1319,8 +1329,22 @@ class RadioManager:
             self.timefree_seek_label.SetLabel(
                 f"{self._format_hhmmss(position)} / {self._format_hhmmss(duration)}"
             )
+            # スライダーが今の再生位置を指している。この値のままのイベントはシーク不要
+            self._last_requested_seek_seconds = int(position)
         finally:
             self._timefree_seek_updating_ui = False
+
+    def _is_timefree_seek_busy(self):
+        """シーク操作中・反映中か（この間はスライダーを再生位置で上書きしない）"""
+        return (
+            self._pending_seek_seconds is not None
+            or self._seek_apply_running
+            or self.timefreeSeekApplyTimer.IsRunning()
+        )
+
+    def _on_timefree_seek_applied(self):
+        if not self._is_timefree_seek_busy():
+            self._sync_timefree_seek_ui_from_player()
 
     def _start_timefree_seek_timer(self):
         if not self.timefreeSeekTimer.IsRunning():
@@ -1335,11 +1359,7 @@ class RadioManager:
     def _on_timefree_seek_timer(self, event):
         if self.is_timefree_playing():
             # 操作中・シーク反映中はスライダーを旧位置へ戻さない
-            if (
-                self._pending_seek_seconds is not None
-                or self._seek_apply_running
-                or self.timefreeSeekApplyTimer.IsRunning()
-            ):
+            if self._is_timefree_seek_busy():
                 return
             if not self._player.isPlaying():
                 self._handle_timefree_player_exit()
@@ -1389,12 +1409,17 @@ class RadioManager:
             f"{self._format_hhmmss(target)} / "
             f"{self._format_hhmmss(max(self.timefree_seek_slider.GetMax(), 1))}"
         )
+        if target == self._last_requested_seek_seconds:
+            # 位置が変わっていない（キーを離したときの EVT_SCROLL_CHANGED、往復して元に戻した等）。
+            # ここでシークすると読み込み中のストリームを無駄に作り直し、再生がもたつく。
+            self._pending_seek_seconds = None
+            return
         if not self.timefreeSeekApplyTimer.IsRunning():
             # 最初の操作は待たずに即反映する
             self._pending_seek_seconds = None
             self._last_requested_seek_seconds = target
             self._apply_timefree_seek_target(target)
-        elif target != self._last_requested_seek_seconds:
+        else:
             # 続く操作（ドラッグ・キーリピート）はまとめ、落ち着いたら最後の位置を1回だけ反映する
             self._pending_seek_seconds = target
         self.timefreeSeekApplyTimer.Start(200, oneShot=True)
@@ -1425,7 +1450,7 @@ class RadioManager:
                 self.seek_timefree(target, generation=generation, refresh_auth=refresh_auth)
             except Exception as e:
                 self.log.error(f"Failed to seek timefree playback: {e}")
-            wx.CallAfter(self._sync_timefree_seek_ui_from_player)
+            wx.CallAfter(self._on_timefree_seek_applied)
 
     def onTimefreeSeekKeyDown(self, event):
         if not self.is_timefree_playing():
@@ -1443,9 +1468,11 @@ class RadioManager:
             target = max(0, current - step)
         else:
             target = min(max_value, current + step)
+        if target == current:
+            # 先頭/末尾で押し続けたときは何もしない
+            return
 
         self.timefree_seek_slider.SetValue(target)
-        self._pending_seek_seconds = target
         self.timefree_seek_label.SetLabel(
             f"{self._format_hhmmss(target)} / "
             f"{self._format_hhmmss(max(max_value, 1))}"

@@ -16,6 +16,8 @@ from views import token
 
 LIVE_PLAYLIST_URL = "https://alliance-stream-radiko.smartstream.ne.jp/so/playlist.m3u8"
 TIMEFREE_PLAYLIST_URL = "https://tf-f-rpaa-radiko.smartstream.ne.jp/tf/playlist.m3u8"
+# タイムフリー配信の音声区間の長さ(秒)。区間は時刻の5秒刻みで始まる
+TIMEFREE_SEGMENT_SEC = 5
 RADIKO_API_BASE = "https://radiko.jp/v3"
 AREA_STATION_LIST_URL = "https://radiko.jp/v2/station/list/{area_id}.xml"
 STATION_REGION_URL = f"{RADIKO_API_BASE}/station/region/full.xml"
@@ -23,6 +25,11 @@ STATION_REGION_URL = f"{RADIKO_API_BASE}/station/region/full.xml"
 # エリアコード -> そのエリアで聴取できる放送局IDの集合（全 ProgramManager で共有）
 _area_station_ids_cache = {}
 _area_station_ids_lock = threading.Lock()
+
+# 放送局ごとの playlist ベース URL（全 ProgramManager で共有）。
+# 番組表などで再生を始めたインスタンスと、シークで使うインスタンスが別でも取り直さないため
+_timefree_playlist_base_cache = {}
+_areafree_playlist_base_cache = {}
 
 
 def get_area_station_ids(area_id):
@@ -89,8 +96,8 @@ class ProgramManager:
         self.token = None
         self.partialkey = None
         self.area_id = ""
-        self._timefree_playlist_base_cache = {}
-        self._areafree_playlist_base_cache = {}
+        self._timefree_playlist_base_cache = _timefree_playlist_base_cache
+        self._areafree_playlist_base_cache = _areafree_playlist_base_cache
 
     def refresh_auth_session(self, _retried=False):
         """radiko認証セッションを毎回更新する"""
@@ -227,12 +234,7 @@ class ProgramManager:
 
     def build_timefree_seek_url(self, station_id, ft_dt, to_dt, seek_seconds=0, stream_type="b"):
         """認証を更新せずに seek 位置付きのタイムフリー再生URLを返す（既存トークンを使い回す場合用）"""
-        if seek_seconds is None:
-            seek_seconds = 0
-        seek_seconds = max(0, int(seek_seconds))
-        total_duration = max(1, int((to_dt - ft_dt).total_seconds()))
-        seek_seconds = min(seek_seconds, total_duration - 1)
-        seek_dt = ft_dt + datetime.timedelta(seconds=seek_seconds)
+        seek_dt = self._timefree_seek_dt(ft_dt, to_dt, seek_seconds)
         return self._build_timefree_playlist_url(
             station_id,
             ft_dt,
@@ -240,6 +242,20 @@ class ProgramManager:
             seek_dt=seek_dt,
             stream_type=stream_type,
         )
+
+    def timefree_seek_segment_offset(self, ft_dt, to_dt, seek_seconds=0):
+        """seek 付き URL の再生は、seek 時刻を含む区間（時刻の5秒刻み）の先頭から始まる。
+        その先頭から seek 位置までの秒数を返す（mpv で読み飛ばして指定位置から再生するため）。
+        """
+        seek_dt = self._timefree_seek_dt(ft_dt, to_dt, seek_seconds)
+        return (seek_dt.minute * 60 + seek_dt.second) % TIMEFREE_SEGMENT_SEC
+
+    @staticmethod
+    def _timefree_seek_dt(ft_dt, to_dt, seek_seconds):
+        seek_seconds = max(0, int(seek_seconds or 0))
+        total_duration = max(1, int((to_dt - ft_dt).total_seconds()))
+        seek_seconds = min(seek_seconds, total_duration - 1)
+        return ft_dt + datetime.timedelta(seconds=seek_seconds)
 
     def get_timefree_recording_segments(self, station_id, ft_dt, to_dt):
         """タイムフリー録音用セグメント (url, headers, duration_sec) のリスト。
