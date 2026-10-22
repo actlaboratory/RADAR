@@ -140,7 +140,7 @@ class MPVAudioPlayer:
             self._http_headers = dict(headers or {})
 
     def setRestartSourceProvider(self, provider):
-        """再起動時に呼ぶ provider() -> (source, headers) または None を登録する。None で解除。"""
+        """再起動時に呼ぶ provider() -> (source, headers, start_sec) または None を登録する。None で解除。"""
         with self._lock:
             self._restart_source_provider = provider
 
@@ -242,9 +242,12 @@ class MPVAudioPlayer:
         return [f"{k}: {v}" for k, v in self._http_headers.items() if v]
 
     def _build_command(self):
-        lavf_opts = "reconnect=1,reconnect_streamed=1,reconnect_delay_max=2"
+        # radiko の medialist は "Range: bytes=0-" 付きで要求すると中身の代わりに "200 OK" だけを返す。
+        # HLS 側の Range 要求を止め (http_seekable=0)、取り直しのための reconnect_streamed は使わない
+        # （EOF のたびに再接続を繰り返し、再生開始・シーク・playlist 更新が毎回約2秒遅れていた）。
+        lavf_opts = "reconnect=1,reconnect_on_network_error=1,reconnect_delay_max=2"
         if self._nonseekable_input:
-            lavf_opts += ",http_seekable=0,seekable=0"
+            lavf_opts += ",seekable=0"
         cmd = [
             constants.MPV_PATH,
             # 起動短縮: ユーザー設定ファイルや音声再生に不要な内蔵スクリプトを読み込まない
@@ -269,6 +272,7 @@ class MPVAudioPlayer:
             "--cache-secs=20",
             "--demuxer-readahead-secs=20",
             f"--stream-lavf-o={lavf_opts}",
+            "--demuxer-lavf-o=http_seekable=0",
             self._source,
         ]
         header_list = self._http_header_list()
@@ -284,23 +288,32 @@ class MPVAudioPlayer:
             cmd.insert(-1, f"--audio-device=wasapi/{self._device_id}")
         if self._start_position_sec > 0:
             cmd.insert(-1, f"--start={self._start_position_sec}")
+            # シーク不可の配信でも、読み込んだ範囲を読み飛ばして開始位置から再生できるようにする
+            cmd.insert(-1, "--force-seekable=yes")
         return cmd
 
-    def restartWithSource(self, source, headers):
+    def restartWithSource(self, source, headers, start_sec=0):
         """シーク用の高速再起動。旧プロセスの正常終了や起動確認を待たずに新しいソースで再生する。
 
+        start_sec はソースの先頭から読み飛ばす秒数。
         起動直後の失敗は検知しないため、呼び出し側で isPlaying() を監視すること。
         プロセスを起動できたら True。
         """
         with self._lock:
             self._source = source
             self._http_headers = dict(headers or {})
+            self._start_position_sec = max(0, int(start_sec or 0))
+            # 起動時の --start が残らないよう、開始位置は 0 でも毎回指定する
+            loadfile = [
+                "loadfile", self._source, "replace", -1,
+                f"start={self._start_position_sec},force-seekable=yes",
+            ]
             # 起動中の mpv があれば、プロセスを作り直さず loadfile で差し替える（最速）。
             # 読み込みに失敗すると mpv は終了する(--idle=no)ため、呼び出し側の監視で検知できる。
             if self._is_running_locked() and self._send_mpv_ipc_commands_locked(
                 [
                     ["set_property", "http-header-fields", self._http_header_list()],
-                    ["loadfile", self._source, "replace"],
+                    loadfile,
                 ],
                 retries=4,
                 delay_sec=0.005,
@@ -444,7 +457,7 @@ class MPVAudioPlayer:
                 self._log.warning("restart source provider failed: %s", e)
                 restart_source = None
             if restart_source:
-                self._source, headers = restart_source
+                self._source, headers, self._start_position_sec = restart_source
                 self._http_headers = dict(headers or {})
         self._stop_locked()
         time.sleep(0.05)
