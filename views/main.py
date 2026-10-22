@@ -651,27 +651,15 @@ class Events(BaseEvents):
 			dialog(_("ログアウト"), _("ログアウトしました。お住まいのエリアの放送局一覧に戻ります。"))
 			return
 
-		d = premiumLoginDialog.Dialog(config[premium.CONFIG_SECTION]["mail"])
+		d = premiumLoginDialog.Dialog(
+			config[premium.CONFIG_SECTION]["mail"],
+			config.getboolean(premium.CONFIG_SECTION, "saveLogin", True),
+		)
 		d.Initialize()
 		if d.Show() == wx.ID_CANCEL:
 			return
+		# パスワードでのログインはダイアログ内で済ませている
 		method, mail, password, save = d.GetValue()
-		if method == premium.METHOD_PASSWORD:
-			try:
-				with wx.BusyCursor():
-					premium.session.login(mail, password)
-			except premium.PremiumAuthError as e:
-				if e.kind != premium.PremiumAuthError.BLOCKED or not premiumBrowserLoginDialog.is_available():
-					errorDialog(premium.describe_auth_error(e))
-					return
-				# アプリからのログインがボット対策で拒否された。ブラウザでのログインに切り替えてもらう
-				result = yesNoDialog(
-					_("ログイン"),
-					premium.describe_auth_error(e) + "\n\n" + _("ブラウザでログインしますか？"),
-				)
-				if result != wx.ID_YES:
-					return
-				method = premium.METHOD_BROWSER
 		if method == premium.METHOD_BROWSER:
 			radiko_session = self._premiumBrowserLogin()
 			if not radiko_session:
@@ -685,6 +673,8 @@ class Events(BaseEvents):
 			premium.save_browser_session(config, radiko_session)
 		else:
 			premium.save_credentials(config, mail, password)
+		# 次回ログインダイアログを開いたときのチェック状態として覚えておく
+		config[premium.CONFIG_SECTION]["saveLogin"] = save
 		config.write()
 		self.update_premium_menu_label()
 		self.onUpdateProgram(None)

@@ -38,6 +38,7 @@ class DefaultSettings:
 		}
 		config["premium"] = {
 			"autoLogin": False,
+			"saveLogin": True,  # ログインダイアログの「ログイン情報を保存」の前回の選択
 			"method": "password",  # password または browser
 			"mail": "",
 			"password": "",  # DPAPIで暗号化して保存
