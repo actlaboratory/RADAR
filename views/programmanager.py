@@ -18,6 +18,7 @@ LIVE_PLAYLIST_URL = "https://alliance-stream-radiko.smartstream.ne.jp/so/playlis
 TIMEFREE_PLAYLIST_URL = "https://tf-f-rpaa-radiko.smartstream.ne.jp/tf/playlist.m3u8"
 RADIKO_API_BASE = "https://radiko.jp/v3"
 AREA_STATION_LIST_URL = "https://radiko.jp/v2/station/list/{area_id}.xml"
+STATION_REGION_URL = f"{RADIKO_API_BASE}/station/region/full.xml"
 
 # エリアコード -> そのエリアで聴取できる放送局IDの集合（全 ProgramManager で共有）
 _area_station_ids_cache = {}
@@ -49,6 +50,37 @@ def get_area_station_ids(area_id):
     return ids
 
 
+# 放送局ID -> 都道府県コード（全 ProgramManager で共有）
+_station_area_ids = None
+_station_area_ids_lock = threading.Lock()
+
+
+def get_station_area_ids():
+    """放送局IDをキー、都道府県コードを値に持つ辞書を返す。取得できなければ空の辞書（次回また取得を試みる）"""
+    global _station_area_ids
+    with _station_area_ids_lock:
+        if _station_area_ids is not None:
+            return _station_area_ids
+        try:
+            response = requests.get(STATION_REGION_URL, headers={"User-Agent": constants.BROWSER_USER_AGENT}, timeout=10)
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+            area_ids = {}
+            for station in root.iter("station"):
+                station_id = station.findtext("id")
+                area_id = station.findtext("area_id")
+                if station_id and area_id:
+                    area_ids[station_id] = area_id
+        except Exception as e:
+            getLogger("%s.%s" % (constants.LOG_PREFIX, "ProgramManager")).warning(
+                "failed to get station region list: %s", e
+            )
+            return {}
+        if area_ids:
+            _station_area_ids = area_ids
+        return area_ids
+
+
 class ProgramManager:
     def __init__(self):
         self.log=getLogger("%s.%s" % (constants.LOG_PREFIX,"ProgramManager"))
@@ -59,7 +91,6 @@ class ProgramManager:
         self.area_id = ""
         self._timefree_playlist_base_cache = {}
         self._areafree_playlist_base_cache = {}
-        self.jpCode()
 
     def refresh_auth_session(self, _retried=False):
         """radiko認証セッションを毎回更新する"""
@@ -447,19 +478,10 @@ class ProgramManager:
             self.log.error(f"Failed to get performers: {e}")
             return []
 
-    def jpCode(self):
-        """stationIdをキー、都道府県コードを値に持つ辞書を作成"""
-        self.values = {}
-        url = f"{self.getprogramlist()}/station/region/full.xml"
-        response = requests.get(url, headers={"User-Agent": constants.BROWSER_USER_AGENT})
-        xml_data = response.content
-        root = ET.fromstring(xml_data)
-        id_elements = root.findall(".//id")
-        area_id_elements = root.findall(".//area_id")
-        station_id = [id.text for id in id_elements]
-        area_id = [areaid.text for areaid in area_id_elements]
-        for station,area in zip(station_id, area_id):
-            self.values[station] = area
+    @property
+    def values(self):
+        """stationIdをキー、都道府県コードを値に持つ辞書（初回参照時に取得）"""
+        return get_station_area_ids()
 
     def getNowProgram(self, id):
         """現在再生中の番組タイトルを返す（エリア単位APIを使用）"""
