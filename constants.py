@@ -28,6 +28,9 @@ KEYMAP_FILE_NAME="keymap.ini"
 FFMPEG_LOG_FILE = "ffmpeg_log.txt"
 PROGRAM_CACHE_DB_NAME = "program_cache.db"
 
+# radiko等へのHTTPリクエストで名乗るUser-Agent。curlやPython既定のUAはbot扱いされやすいため、一般的なブラウザのものを使う
+BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+
 # 過去1週間の日付表示チェック 初期値
 SHOW_PAST_WEEK_DATES_DEFAULT = False
 

@@ -208,7 +208,7 @@ class RadioManager:
                     )
 
                 req = urllib.request.Request(url)
-                req.add_header('User-Agent', 'Mozilla/5.0')
+                req.add_header('User-Agent', constants.BROWSER_USER_AGENT)
                 
                 with urllib.request.urlopen(req, timeout=timeout) as response:
                     return True, response.read().decode()
@@ -542,7 +542,11 @@ class RadioManager:
         if not stream_url:
             return None
         try:
-            response = requests.get(stream_url, headers=headers or {}, timeout=STREAM_PROBE_TIMEOUT_SEC)
+            response = requests.get(
+                stream_url,
+                headers={"User-Agent": constants.BROWSER_USER_AGENT, **(headers or {})},
+                timeout=STREAM_PROBE_TIMEOUT_SEC,
+            )
         except requests.RequestException as e:
             self.log.warning(f"stream probe failed: {e}")
             return None

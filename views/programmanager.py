@@ -33,7 +33,7 @@ def get_area_station_ids(area_id):
     if cached is not None:
         return cached
     try:
-        response = requests.get(AREA_STATION_LIST_URL.format(area_id=area_id), timeout=10)
+        response = requests.get(AREA_STATION_LIST_URL.format(area_id=area_id), headers={"User-Agent": constants.BROWSER_USER_AGENT}, timeout=10)
         response.raise_for_status()
         root = ET.fromstring(response.content)
         ids = frozenset(e.text.strip() for e in root.findall(".//station/id") if e.text and e.text.strip())
@@ -145,7 +145,7 @@ class ProgramManager:
         base_url = default_url
         try:
             url = f"{RADIKO_API_BASE}/station/stream/pc_html5/{station_id}.xml"
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, headers={"User-Agent": constants.BROWSER_USER_AGENT}, timeout=10)
             response.raise_for_status()
             root = ET.fromstring(response.content)
             candidates = []
@@ -252,7 +252,7 @@ class ProgramManager:
         if cached:
             return cached
         url = f"{RADIKO_API_BASE}/station/stream/pc_html5/{station_id}.xml"
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, headers={"User-Agent": constants.BROWSER_USER_AGENT}, timeout=10)
         response.raise_for_status()
         root = ET.fromstring(response.content)
         for item in root.findall(".//url"):
@@ -403,7 +403,7 @@ class ProgramManager:
             self.log.debug(f"Requesting URL: {url}")
 
             # XMLデータを取得
-            response = requests.get(url, timeout=30)
+            response = requests.get(url, headers={"User-Agent": constants.BROWSER_USER_AGENT}, timeout=30)
             response.raise_for_status()
             xml_data = response.content
             
@@ -451,7 +451,7 @@ class ProgramManager:
         """stationIdをキー、都道府県コードを値に持つ辞書を作成"""
         self.values = {}
         url = f"{self.getprogramlist()}/station/region/full.xml"
-        response = requests.get(url)
+        response = requests.get(url, headers={"User-Agent": constants.BROWSER_USER_AGENT})
         xml_data = response.content
         root = ET.fromstring(xml_data)
         id_elements = root.findall(".//id")
@@ -482,7 +482,7 @@ class ProgramManager:
             self.log.debug(f"Fetching now program for {id} (area: {jp_number}): {url}")
             
             try:
-                response = requests.get(url, timeout=10)
+                response = requests.get(url, headers={"User-Agent": constants.BROWSER_USER_AGENT}, timeout=10)
                 response.raise_for_status()
             except requests.RequestException as e:
                 self.log.error(f"Failed to fetch program data by area: {e}")
@@ -621,7 +621,7 @@ class ProgramManager:
     def get_onair_music(self, id):
         """オンエア中の曲情報を取得"""
         url = f'{self.getprogramlist()}/feed/pc/noa/{id}.xml'
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, headers={"User-Agent": constants.BROWSER_USER_AGENT}, timeout=10)
         response.raise_for_status()
         root = ET.fromstring(response.content)
         items = root.xpath(".//item")
@@ -630,7 +630,7 @@ class ProgramManager:
     def get_onair_music_at(self, station_id, target_dt=None):
         """オンエア曲を取得。target_dt が与えられた場合は最も近い過去の曲を返す。"""
         url = f'{self.getprogramlist()}/feed/pc/noa/{station_id}.xml'
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, headers={"User-Agent": constants.BROWSER_USER_AGENT}, timeout=10)
         response.raise_for_status()
         root = ET.fromstring(response.content)
         items = root.xpath(".//item")
