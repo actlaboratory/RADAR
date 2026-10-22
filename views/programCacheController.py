@@ -190,8 +190,8 @@ class ProgramCacheController:
             self.log.error(f"Failed to update database: {e}")
             self._handle_database_error(e)
     
-    def force_weekly_update(self, progress=None):
-        """1週間分のデータを強制的に更新"""
+    def force_weekly_update(self, progress=None, force_refresh=True):
+        """1週間分のデータを強制的に更新（force_refresh が False なら収集済みの局は取得しない）"""
         try:
             if not self.radio_manager or not hasattr(self.radio_manager, 'stid') or not self.radio_manager.stid:
                 self.log.error("RadioManager or station list not available for weekly update")
@@ -207,7 +207,7 @@ class ProgramCacheController:
             radio_date = CalendarUtil().get_radio_date()
             self.log.info(f"Starting forced weekly data collection from radio base date {radio_date}")
             
-            success = self._collect_weekly_data(progress=progress)
+            success = self._collect_weekly_data(progress=progress, force_refresh=force_refresh)
             
             if success:
                 self.log.info("Forced weekly database update completed successfully")
@@ -222,7 +222,7 @@ class ProgramCacheController:
             self.log.error(f"Failed to force weekly update: {e}")
             return False
 
-    def _collect_weekly_data(self, progress=None):
+    def _collect_weekly_data(self, progress=None, force_refresh=False):
         """週間データ収集を実行（progress 指定時のみ進捗UI）"""
         success = False
         with self._weekly_collect_lock:
@@ -231,7 +231,7 @@ class ProgramCacheController:
             try:
                 if progress and self.data_collector:
                     self.data_collector.set_progress_callback(progress.report)
-                success = self.data_collector.collect_weekly_data(force_refresh=True)
+                success = self.data_collector.collect_weekly_data(force_refresh=force_refresh)
                 if success:
                     self.last_update_date = CalendarUtil().get_radio_date()
                     if self.cache_manager:
@@ -295,7 +295,7 @@ class ProgramCacheController:
             
             # 不完全な場合は強制更新
             self.log.info("Weekly cache is incomplete, forcing update")
-            return self.force_weekly_update()
+            return self.force_weekly_update(force_refresh=False)
             
         except Exception as e:
             self.log.error(f"Failed to ensure weekly data: {e}")
