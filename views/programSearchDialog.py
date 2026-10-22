@@ -865,7 +865,7 @@ class ProgramSearchDialog(BaseDialog):
                 input_options=["-http_seekable", "0", "-seekable", "0"],
             )
             if rec:
-                simpleDialog.dialog(_("完了"), _("聴き逃し録音を開始しました。") + f"\n{title}")
+                globalVars.app.sayLater(_("聴き逃し録音を開始しました。") + f" {title}")
                 try:
                     notification_notify(
                         title=_("録音開始"),
@@ -988,7 +988,7 @@ class ProgramSearchDialog(BaseDialog):
                 self.title_combo.Clear()
                 self.performer_combo.Clear()
                 
-                simpleDialog.dialog(_("完了"), _("検索履歴を削除しました。"))
+                globalVars.app.sayLater(_("検索履歴を削除しました。"))
                 self.log.info("Search history cleared by user")
         except Exception as e:
             self.log.error(f"Failed to clear history: {e}")
@@ -1101,7 +1101,7 @@ class ProgramSearchDialog(BaseDialog):
                     + _("週間データの更新に失敗したため、過去・未来の日付は検索できない場合があります。"),
                 )
             else:
-                simpleDialog.dialog(_("完了"), _("データの更新が完了しました。"))
+                globalVars.app.sayLater(_("データの更新が完了しました。"))
             self.update_station_list()
             wx.CallAfter(self._restore_focus_to_search_box)
             wx.CallLater(80, self._restore_focus_to_search_box)
@@ -1304,7 +1304,7 @@ class ProgramSearchDialog(BaseDialog):
                 self.log.error(f"Failed to send recording schedule notification: {e}")
             
             self.log.info(f"Recording scheduled successfully: {program_title}")
-            simpleDialog.dialog(_("完了"), message)
+            globalVars.app.sayLater(message)
             
         except Exception as e:
             self.log.error(f"Error in onScheduleRecording: {e}")

@@ -1018,6 +1018,7 @@ class TimefreeChunkedRecordingHandle:
                     message=f"{self.info} の聴き逃し録音に失敗しました。",
                     app_name="rpb",
                     timeout=10,
+                    speak=True,
                 )
             except Exception:
                 pass
@@ -1464,7 +1465,7 @@ class RecorderManager:
         else:
             message = f"{info} の録音が途中で途切れ、再開できませんでした。途切れるまでの録音は保存されています。"
         try:
-            notification_notify(title="録音失敗", message=message, app_name="rpb", timeout=10)
+            notification_notify(title="録音失敗", message=message, app_name="rpb", timeout=10, speak=True)
             self.logger.info(f"Recording failure notification sent: {info}")
         except Exception as e:
             self.logger.error(f"Failed to send recording failure notification: {e}")
@@ -2045,7 +2046,8 @@ class ScheduleManager:
                             title='録音完了',
                             message=f'{schedule.program_title} の録音が完了しました。',
                             app_name='rpb',
-                            timeout=10
+                            timeout=10,
+                            speak=True,
                         )
                         self.logger.info(f"Recording completion notification sent successfully: {schedule.program_title}")
                     except Exception as e:
@@ -2116,7 +2118,8 @@ class ScheduleManager:
                             title='録音開始',
                             message=message,
                             app_name='rpb',
-                            timeout=10
+                            timeout=10,
+                            speak=True,
                         )
                         self.logger.info(f"Recording start notification sent successfully: {schedule.program_title}")
                     except Exception as e:
@@ -2130,7 +2133,8 @@ class ScheduleManager:
                             title='録音失敗',
                             message=f'{schedule.program_title} の録音開始に失敗しました。',
                             app_name='rpb',
-                            timeout=10
+                            timeout=10,
+                            speak=True,
                         )
                         self.logger.info(f"Recording failure notification sent successfully: {schedule.program_title}")
                     except Exception as e:
@@ -2150,7 +2154,8 @@ class ScheduleManager:
                             title='録音失敗',
                             message=f'{schedule.program_title} の録音に失敗しました。認証エラーが発生しました。',
                             app_name='rpb',
-                            timeout=10
+                            timeout=10,
+                            speak=True,
                         )
                         self.logger.info(f"Recording authentication error notification sent successfully: {schedule.program_title}")
                     except Exception as notify_e:
@@ -2161,7 +2166,8 @@ class ScheduleManager:
                             title='録音失敗',
                             message=f'{schedule.program_title} の録音に失敗しました。エラー: {str(e)[:100]}',
                             app_name='rpb',
-                            timeout=10
+                            timeout=10,
+                            speak=True,
                         )
                         self.logger.info(f"Recording error notification sent successfully: {schedule.program_title}")
                     except Exception as notify_e:

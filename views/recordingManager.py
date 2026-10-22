@@ -20,6 +20,7 @@ from recorder import (
 )
 from notification_util import notify as notification_notify
 import simpleDialog
+import globalVars
 
 
 class RecordingManagerDialog(BaseDialog):
@@ -406,7 +407,7 @@ class RecordingManagerDialog(BaseDialog):
                     simpleDialog.errorDialog(_("予約の取り消しに失敗しました。"), self.wnd)
                     return
                 self.load_all_data()
-                simpleDialog.dialog(_("完了"), _("予約を取り消しました。"), self.wnd)
+                globalVars.app.sayLater(_("予約を取り消しました。"))
 
             elif st in (RECORDING_STATUS_CANCELLED, RECORDING_STATUS_FAILED):
                 result = simpleDialog.yesNoDialog(
@@ -419,7 +420,7 @@ class RecordingManagerDialog(BaseDialog):
                     return
                 schedule_manager.remove_schedule(schedule.id)
                 self.load_all_data()
-                simpleDialog.dialog(_("完了"), _("一覧から削除しました。"), self.wnd)
+                globalVars.app.sayLater(_("一覧から削除しました。"))
             else:
                 simpleDialog.errorDialog(_("この予約はこの操作では処理できません。"), self.wnd)
         except Exception as e:
@@ -451,7 +452,7 @@ class RecordingManagerDialog(BaseDialog):
             err = schedule_manager.reactivate_schedule(schedule.id)
             if err is None:
                 self.load_all_data()
-                simpleDialog.dialog(_("完了"), _("予約を復活し、予約済みに戻しました。"), self.wnd)
+                globalVars.app.sayLater(_("予約を復活し、予約済みに戻しました。"))
                 return
 
             err_messages = {
@@ -480,7 +481,7 @@ class RecordingManagerDialog(BaseDialog):
             if result == wx.ID_YES:
                 removed_count = schedule_manager.clear_all_schedules()
                 self.load_schedules()
-                simpleDialog.dialog(_("完了"), f"すべて一覧から削除しました。\n（{removed_count}件）", self.wnd)
+                globalVars.app.sayLater(f"すべて一覧から削除しました。{removed_count}件")
         except Exception as e:
             self.log.error(f"Error clearing all schedules: {e}")
             simpleDialog.errorDialog(_("すべて削除に失敗しました。") + f"\n{e}", self.wnd)

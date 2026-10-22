@@ -214,15 +214,31 @@ class Events(BaseEvents):
 		self.hide()
 
 	def hide(self):
+		# 戻したときに同じ場所へフォーカスを戻すため、隠す前のフォーカスを覚えておく
+		self._focus_before_hide = wx.Window.FindFocus()
 		self.parent.hFrame.Hide()
 		self.log.info("Minimized to taskbar.")
 		return
 
 	def show(self):
 		self.parent.hFrame.Show()
-		self.parent.hPanel.SetFocus()
+		self._restore_focus_after_show()
 		self.log.info("Window restored.")
 		return
+
+	def _restore_focus_after_show(self):
+		"""隠す前にフォーカスがあった場所へ戻す。戻せなければ放送局一覧へ"""
+		target = getattr(self, "_focus_before_hide", None)
+		self._focus_before_hide = None
+		# 破棄されたウィンドウは偽になる
+		if target and target.IsShownOnScreen() and target.IsEnabled():
+			target.SetFocus()
+			return
+		radio_manager = getattr(self.parent, "radio_manager", None)
+		if radio_manager is not None and hasattr(radio_manager, "tree"):
+			radio_manager.tree.SetFocus()
+			return
+		self.parent.hPanel.SetFocus()
 	
 	def OnExit(self, event):
 		"""Alt+F4などでウィンドウを閉じようとしたときの処理"""

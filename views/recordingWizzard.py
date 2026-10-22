@@ -362,7 +362,7 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 input_options=["-http_seekable", "0", "-seekable", "0"],
             )
             if recorder:
-                simpleDialog.dialog("完了", f"聴き逃し録音を開始しました。\n{title}")
+                globalVars.app.sayLater(f"聴き逃し録音を開始しました。 {title}")
                 try:
                     notification_notify(
                         title="録音開始",

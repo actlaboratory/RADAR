@@ -26,6 +26,11 @@ from views import programmanager
 TIMEFREE_END_MARGIN_SEC = 60
 TIMEFREE_RECONNECT_MAX = 3
 TIMEFREE_RECONNECT_RESET_SEC = 60
+# 聴き逃しシークスライダーの位置を動かすキー
+SEEK_SLIDER_MOVE_KEYS = (
+    wx.WXK_LEFT, wx.WXK_RIGHT, wx.WXK_UP, wx.WXK_DOWN,
+    wx.WXK_HOME, wx.WXK_END, wx.WXK_PAGEUP, wx.WXK_PAGEDOWN,
+)
 # ライブ再生が途切れたときの自動再接続の間隔(秒)。回数がこれを超えたら最後の値で待つ
 LIVE_RECONNECT_INTERVAL_SEC = (5, 10, 20, 30)
 # 途切れてからこの秒数つながらなければ再接続をあきらめる（回線の切り替え・ルーターの再起動などを待つ）
@@ -105,6 +110,10 @@ class RadioManager:
         self._seek_apply_lock = threading.Lock()
         self._seek_apply_running = False
         self._seek_apply_latest = None
+        # シーク位置の読み上げ。キーリピート中は最後の位置だけ読む
+        self._seek_announce_call = None
+        # シークスライダーを隠すときにフォーカスを移したか。直後の読み上げを遅らせるのに使う
+        self._seek_focus_moved = False
         # シーク(mpv 再起動)と再生開始/停止の競合を防ぐ。世代は再生開始/停止ごとに進める。
         self._playback_lock = threading.RLock()
         self._playback_generation = 0
@@ -784,7 +793,7 @@ class RadioManager:
 
         try:
             station_name = self.stid.get(id, id)
-            self.parent.app.say(f"再生開始: {station_name}", interrupt=True)
+            self._announce_playback_change(f"再生開始: {station_name}")
         except Exception as e:
             self.log.error(f"Failed to announce playback start: {e}")
 
@@ -1206,7 +1215,7 @@ class RadioManager:
         if hasattr(self.parent, "program_info_handler"):
             self.parent.program_info_handler.clear_timefree_program_info()
         try:
-            self.parent.app.say(announce_text, interrupt=True)
+            self._announce_playback_change(announce_text)
         except Exception as e:
             self.log.error(f"Failed to announce timefree playback stop: {e}")
 
@@ -1232,7 +1241,7 @@ class RadioManager:
             self.parent.program_info_handler.clear_timefree_program_info()
 
         try:
-            self.parent.app.say("再生停止", interrupt=True)
+            self._announce_playback_change("再生停止")
         except Exception as e:
             self.log.error(f"Failed to announce playback stop: {e}")
 
@@ -1251,14 +1260,49 @@ class RadioManager:
             errorDialog(_("エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください"))
             return
         was_displaying = self.events.displaying
+        # 作り直したあと、直前に選んでいた局（無ければ再生中の局）を選び直す
+        restore_station_id = self._get_selected_station_id() or self.current_station_id
         self.tree.DeleteAllItems()
         # 放送局リスト更新時は番組情報UIを一旦破棄し、メニューを一時的に無効にする。
         self.parent.program_info_handler.destroy_program_info_ui(disable_menu=True)
         self.creator.GetSizer().Layout()
         self.setupradio()
         self.setRadioList()
+        self._select_station_in_tree(restore_station_id)
         self._sync_program_info_menu_after_station_list_reload(was_displaying)
         self.creator.GetSizer().Layout()
+
+    def _get_selected_station_id(self):
+        """放送局一覧で選択中の局 ID を返す（ルートや未選択なら None）"""
+        item = self.tree.GetSelection()
+        if not item.IsOk() or item == self.tree.GetRootItem():
+            return None
+        return self.tree.GetItemData(item)
+
+    def _select_station_in_tree(self, station_id):
+        """放送局一覧で指定した局を選択する。見つからなければ何もしない"""
+        if not station_id:
+            return
+        root = self.tree.GetRootItem()
+        if not root.IsOk():
+            return
+        item = self._find_station_item(root, station_id)
+        if item is not None:
+            # エリアフリーの一覧は地域ごとの入れ子のため、閉じていても EnsureVisible で開く
+            self.tree.EnsureVisible(item)
+            self.tree.SelectItem(item)
+
+    def _find_station_item(self, parent, station_id):
+        item, cookie = self.tree.GetFirstChild(parent)
+        while item.IsOk():
+            if self.tree.GetItemData(item) == station_id:
+                return item
+            if self.tree.ItemHasChildren(item):
+                found = self._find_station_item(item, station_id)
+                if found is not None:
+                    return found
+            item, cookie = self.tree.GetNextChild(parent, cookie)
+        return None
 
     def _sync_program_info_menu_after_station_list_reload(self, was_displaying):
         """放送局一覧の再構築後、番組情報の表示設定とメニューを整合させる"""
@@ -1300,9 +1344,45 @@ class RadioManager:
         ss = total % 60
         return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
+    def _format_spoken_time(self, seconds):
+        """読み上げ用に「1時間2分3秒」の形にする"""
+        total = int(max(0, seconds))
+        hh = total // 3600
+        mm = (total % 3600) // 60
+        ss = total % 60
+        text = ""
+        if hh:
+            text += f"{hh}時間"
+        if hh or mm:
+            text += f"{mm}分"
+        return text + f"{ss}秒"
+
+    def _announce_seek_position(self, target, duration):
+        """シーク先の位置を読み上げる。スライダーの値（秒数）の読み上げより後に話すよう少し待つ"""
+        text = f"{self._format_spoken_time(target)}、全体{self._format_spoken_time(duration)}"
+        if self._seek_announce_call is not None and self._seek_announce_call.IsRunning():
+            self._seek_announce_call.Stop()
+        self._seek_announce_call = wx.CallLater(150, self.app.say, text, interrupt=True)
+
+    def _announce_playback_change(self, text):
+        """再生開始・停止を読み上げる。シークスライダーからフォーカスを移した直後は、
+        移動先の読み上げで消されないよう少し遅らせる"""
+        if self._seek_focus_moved:
+            self._seek_focus_moved = False
+            self.app.sayLater(text)
+        else:
+            self.app.say(text, interrupt=True)
+
+    def _is_seek_slider_focused(self):
+        return hasattr(self, "timefree_seek_slider") and wx.Window.FindFocus() is self.timefree_seek_slider
+
     def _set_timefree_seek_ui_visible(self, visible):
         if not hasattr(self, "timefree_seek_slider"):
             return
+        if not visible and self._is_seek_slider_focused() and hasattr(self, "tree"):
+            # 隠すスライダーにフォーカスが残ると、フォーカスの行き場がなくなる
+            self.tree.SetFocus()
+            self._seek_focus_moved = True
         self.timefree_seek_slider.Show(visible)
         self.timefree_seek_label.Show(visible)
         self.timefree_seek_slider.Enable(visible)
@@ -1312,7 +1392,7 @@ class RadioManager:
         except Exception:
             pass
 
-    def _sync_timefree_seek_ui_from_player(self):
+    def _sync_timefree_seek_ui_from_player(self, force=False):
         if not hasattr(self, "timefree_seek_slider"):
             return
         if not self.is_timefree_playing():
@@ -1322,6 +1402,13 @@ class RadioManager:
         if duration <= 0:
             duration = max(position, 1)
         position = max(0, min(position, duration))
+        if not force and self._is_seek_slider_focused():
+            # フォーカス中に値を書き換えると、スクリーンリーダーが毎秒その値を読み上げてしまう。
+            # 表示だけ更新し、スライダーの値はキー操作の直前に合わせる
+            self.timefree_seek_label.SetLabel(
+                f"{self._format_hhmmss(position)} / {self._format_hhmmss(duration)}"
+            )
+            return
         self._timefree_seek_updating_ui = True
         try:
             self.timefree_seek_slider.SetRange(0, int(duration))
@@ -1414,6 +1501,7 @@ class RadioManager:
             # ここでシークすると読み込み中のストリームを無駄に作り直し、再生がもたつく。
             self._pending_seek_seconds = None
             return
+        self._announce_seek_position(target, max(self.timefree_seek_slider.GetMax(), 1))
         if not self.timefreeSeekApplyTimer.IsRunning():
             # 最初の操作は待たずに即反映する
             self._pending_seek_seconds = None
@@ -1457,6 +1545,9 @@ class RadioManager:
             event.Skip()
             return
         key = event.GetKeyCode()
+        if key in SEEK_SLIDER_MOVE_KEYS and not self._is_timefree_seek_busy():
+            # フォーカス中はスライダーの値を再生位置に合わせていないため、動かす前に合わせる
+            self._sync_timefree_seek_ui_from_player(force=True)
         if key not in (wx.WXK_PAGEUP, wx.WXK_PAGEDOWN):
             event.Skip()
             return
@@ -1477,6 +1568,7 @@ class RadioManager:
             f"{self._format_hhmmss(target)} / "
             f"{self._format_hhmmss(max(max_value, 1))}"
         )
+        self._announce_seek_position(target, max(max_value, 1))
         # PgUp/PgDn は即時反映（タイマー待ちなし）
         self._pending_seek_seconds = None
         self._last_requested_seek_seconds = target

@@ -157,6 +157,10 @@ class MaiｎBase(wx.App):
 		self.speech.braille(s)
 		self.log.debug("speech: " + s + ", interrupt=" + str(interrupt))
 
+	def sayLater(self, s, delay=300):
+		"""少し遅らせて読み上げる。確認ダイアログを閉じた直後など、フォーカス移動の読み上げで消されないようにする。"""
+		wx.CallLater(delay, self.say, s)
+
 	def SetTimeZone(self):
 		bias=win32api.GetTimeZoneInformation(True)[1][0]*-1
 		hours=bias//60
