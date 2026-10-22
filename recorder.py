@@ -172,6 +172,9 @@ class Recorder:
         self.http_headers = dict(http_headers or {})
         self.input_options = list(input_options or [])
         self._completion_cancelled = False
+        self._ffmpeg_path = None
+        self._finalize_lock = threading.Lock()
+        self._output_finalized = False
 
     def _wait_stderr_drain(self, timeout=2.0):
         """stderr 読み取りスレッドが追いつくまで待つ（プロセス終了直後の取りこぼし防止）"""
@@ -351,6 +354,7 @@ class Recorder:
         try:
             self.logger.info(f"Start recording: {self.stream_url} -> {self.output_path}.{self.filetype}")
             ffmpeg_path = self._get_ffmpeg_path()
+            self._ffmpeg_path = ffmpeg_path
 
             # 出力先ディレクトリを保証
             self._ensure_output_directory()
@@ -442,7 +446,9 @@ class Recorder:
                         
             except Exception as e:
                 self.logger.error(f"Error during process termination: {e}")
-        
+
+        self._finalize_output()
+
         # 状態をリセット
         self.recording = False
         self.process = None
@@ -465,6 +471,7 @@ class Recorder:
                     if proc.returncode == 0 and self.recording_seconds:
                         # -t で予定終了した場合
                         self.logger.info(f"Recording process finished by duration limit: {self.output_path}.{self.filetype}")
+                        self._finalize_output()
                         if self.on_success:
                             try:
                                 self.on_success(self)
@@ -671,9 +678,14 @@ class Recorder:
             ]
         elif self.filetype == "m4a":
             # M4A: ラジコAACを再エンコードせずに保存
+            # 通常の m4a は終了時に目次(moov)を書くため、途中で強制終了されると全体が再生できなくなる。
+            # 1秒ごとに完結した断片を書き込み(fragmented MP4)、終了後に _finalize_output で通常の m4a に作り直す。
             return [
                 "-acodec", "copy",
-                "-bsf:a", "aac_adtstoasc"
+                "-bsf:a", "aac_adtstoasc",
+                "-movflags", "+empty_moov",
+                "-frag_duration", "1000000",
+                "-flush_packets", "1",
             ]
         else:
             # デフォルト設定（コピー）
@@ -684,6 +696,64 @@ class Recorder:
     def is_recording(self):
         """録音中かどうかを返す"""
         return self.recording
+
+    def _finalize_output(self):
+        """fragmented MP4 で録音した m4a を通常の m4a に作り直す。失敗したら録音したままのファイルを残す。"""
+        if self.filetype != "m4a":
+            return
+        with self._finalize_lock:
+            if self._output_finalized:
+                return
+            self._output_finalized = True
+            src = f"{self.output_path}.{self.filetype}"
+            if not self._ffmpeg_path or not os.path.isfile(src) or os.path.getsize(src) == 0:
+                return
+            tmp = f"{self.output_path}.remux.{self.filetype}"
+            cmd = [
+                self._ffmpeg_path,
+                "-hide_banner",
+                "-nostats",
+                "-y",
+                "-loglevel", "error",
+                "-i", src,
+                "-c", "copy",
+                "-movflags", "+faststart",
+                tmp,
+            ]
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    startupinfo=startupinfo,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                )
+                process_job.bind_to_current_process(proc)
+                try:
+                    _, stderr = proc.communicate(timeout=300)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    raise RecorderError("remux timed out")
+                if proc.returncode != 0 or not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
+                    raise RecorderError(
+                        f"returncode={proc.returncode}, stderr={stderr.decode(errors='replace').strip()[:500]}"
+                    )
+                os.replace(tmp, src)
+                self.logger.info(f"Remuxed fragmented m4a: {src}")
+            except Exception as e:
+                self.logger.warning(f"Failed to remux m4a (keeping fragmented file): {src}: {e}")
+                try:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                except Exception:
+                    pass
 
 
 def _ffmpeg_header_option(headers):
