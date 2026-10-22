@@ -2,12 +2,14 @@
 # 録音処理ハンドラーモジュール
 
 import wx
+import threading
 import time
 import datetime
 import re
 import os
 from notification_util import notify as notification_notify
 from simpleDialog import *
+from views import programmanager
 from views import recordingManager
 import menuItemsStore
 import errorCodes
@@ -22,6 +24,8 @@ class RecordingHandler:
         self.menu = parent_view.menu
         self.events = parent_view.events
         self.recordingStatusTimer = wx.Timer()
+        # 今すぐ録音を開始処理中の放送局（二重操作で同じ局を2回録音しないため）
+        self._starting_station_ids = set()
         
         # 録音設定の初期化
         self._init_recording_settings()
@@ -126,63 +130,83 @@ class RecordingHandler:
 
     def record_immediately(self, event):
         """録音の開始/停止を処理するメソッド"""
-        if self.events.current_selected_station_id is None:
+        station_id = self.events.current_selected_station_id
+        if station_id is None:
             self.log.debug("No station selected for recording")
             return
 
-        # 選択した放送局の録音状態をチェック
-        from recorder import recorder_manager
-        is_station_recording = self._is_station_recording(self.events.current_selected_station_id)
-        
         # 録音中の場合は停止処理
-        if is_station_recording:
-            self._stop_station_recording(self.events.current_selected_station_id)
+        if self._is_station_recording(station_id):
+            self._stop_station_recording(station_id)
+            return
+        if station_id in self._starting_station_ids:
+            self.log.info(f"Recording is already starting: {station_id}")
             return
 
-        # 録音開始処理
+        # 番組名・認証の取得と録音の開始確認には数秒かかるため、別スレッドで行い画面を止めない
+        self._starting_station_ids.add(station_id)
+        station_name = self.parent.radio_manager.stid.get(station_id, station_id)
+        filetype = self._get_selected_filetype()
+        self.log.info(f"Recording with file type: {filetype}")
         try:
+            self.parent.app.say(f"録音準備中: {station_name}", interrupt=True)
+        except Exception as e:
+            self.log.error(f"Failed to announce recording preparation: {e}")
+        threading.Thread(
+            target=self._record_start_worker,
+            args=(station_id, station_name, filetype),
+            name="RecordStart",
+            daemon=True,
+        ).start()
+
+    def _record_start_worker(self, station_id, station_name, filetype):
+        """（別スレッド）録音を開始し、結果を UI スレッドの _finish_record_start へ渡す"""
+        from recorder import recorder_manager, create_recording_dir
+        result = {"status": "error", "title": "", "detail": ""}
+        try:
+            # 再生中の局の認証情報・番組情報を書き換えないよう、録音用に別の ProgramManager を使う
+            progs = programmanager.ProgramManager()
             # 現在の番組情報を取得
-            title = self.parent.progs.getNowProgram(self.events.current_selected_station_id)
+            title = progs.getNowProgram(station_id)
             if not title:
                 self.log.warning("Failed to get program title, using fallback")
                 current_time = datetime.datetime.now().strftime("%H%M")
                 title = f"番組不明_{current_time}"
             else:
                 # 番組タイトルをファイル名に適した形式に変換
-                title = re.sub(r'[<>:"/\\|?*]', '_', title)
+                title = re.sub(r'[<>:"/\|?*]', '_', title)
                 title = title.strip()
+            result["title"] = title
 
-            if self.stop_duplicate_program_recording_toggle(self.events.current_selected_station_id, title):
+            if recorder_manager.is_duplicate_recording(station_id, title):
+                result["status"] = "duplicate"
                 return
 
             # ストリームURLの取得
-            self.parent.radio_manager.get_streamUrl(self.events.current_selected_station_id, self.parent.progs)
-            if not self.parent.radio_manager.m3u8:
-                self.log.error("Failed to get stream URL")
-                errorDialog(_("ストリームURLの取得に失敗しました。"))
+            try:
+                stream_url, http_headers = progs.get_authenticated_stream_url(station_id)
+            except Exception as e:
+                self.log.error(f"Failed to get stream URL: {e!r}")
+                stream_url = None
+            if not stream_url:
+                result["status"] = "no_stream"
                 return
 
             # ファイル名とディレクトリの準備
             replace = title.replace(" ", "-")
-            station_dir = self.parent.radio_manager.stid[self.events.current_selected_station_id].replace(" ", "_")
-            from recorder import create_recording_dir
+            station_dir = station_name.replace(" ", "_")
             dirs = create_recording_dir(station_dir, title)
             
             # タイムスタンプを追加してファイル名重複を回避（秒以下も含める）
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             file_path = os.path.join(dirs, f"{timestamp}_{replace}")
             
-            # ファイルタイプを取得（現在のメニュー選択状態から）
-            filetype = self._get_selected_filetype()
-            self.log.info(f"Recording with file type: {filetype}")
-            
-            stream_url = self.parent.radio_manager.m3u8
             end_time = time.time() + (8 * 3600)  # 8時間後
-            info = f"{self.parent.radio_manager.stid[self.events.current_selected_station_id]} {title}"
+            info = f"{station_name} {title}"
             
-            # 録音完了時のコールバック
+            # 録音完了時のコールバック（録音のスレッドから呼ばれる）
             def on_recording_complete(recorder):
-                self._update_recording_menu_for_station(self.events.current_selected_station_id)
+                wx.CallAfter(self._update_recording_menu_for_station, station_id)
                 try:
                     notification_notify(
                         title='録音完了',
@@ -201,44 +225,63 @@ class RecordingHandler:
                 end_time,
                 filetype,
                 on_recording_complete,
-                self.events.current_selected_station_id,
+                station_id,
                 title,
-                http_headers=getattr(self.parent.radio_manager, "live_http_headers", None),
+                http_headers=http_headers,
             )
             if recorder:
-                self.log.info(f"Recording started: {title}")
-                self._update_recording_menu_for_station(self.events.current_selected_station_id)
-                
-                # スクリーンリーダーで録音開始を通知
-                try:
-                    station_name = self.parent.radio_manager.stid.get(self.events.current_selected_station_id, self.events.current_selected_station_id)
-                    self.parent.app.say(f"録音開始: {station_name} {title}", interrupt=True)
-                except Exception as e:
-                    self.log.error(f"Failed to announce recording start: {e}")
-                
-                # 録音開始時の通知
-                try:
-                    notification_notify(
-                        title='録音開始',
-                        message=f'{title} の録音を開始しました。',
-                        app_name='rpb',
-                        timeout=10
-                    )
-                    self.log.info(f"Recording start notification sent successfully: {title}")
-                except Exception as e:
-                    self.log.error(f"Failed to send recording start notification: {e}")
+                result["status"] = "started"
             else:
                 self.log.error("Recording failed to start")
-                detail = recorder_manager.get_last_start_error()
-                if detail:
-                    errorDialog(_("録音の開始に失敗しました。") + f"\n\n{detail}")
-                else:
-                    errorDialog(_("録音の開始に失敗しました。"))
-        
+                result["status"] = "start_failed"
+                result["detail"] = recorder_manager.get_last_start_error()
         except Exception as e:
             self.log.error(f"Error during recording start: {e}")
-            errorDialog(_("録音の開始中にエラーが発生しました。"))
-            self._update_recording_menu_for_station(self.events.current_selected_station_id)
+        finally:
+            wx.CallAfter(self._finish_record_start, station_id, station_name, result)
+
+    def _finish_record_start(self, station_id, station_name, result):
+        """（UI スレッド）録音開始の結果を読み上げ・ダイアログ・メニューに反映する"""
+        self._starting_station_ids.discard(station_id)
+        status = result["status"]
+        title = result["title"]
+        if status == "duplicate":
+            self.stop_duplicate_program_recording_toggle(station_id, title)
+            return
+        if status == "started":
+            self.log.info(f"Recording started: {title}")
+            self._update_recording_menu_for_station(station_id)
+            
+            # スクリーンリーダーで録音開始を通知
+            try:
+                self.parent.app.say(f"録音開始: {station_name} {title}", interrupt=True)
+            except Exception as e:
+                self.log.error(f"Failed to announce recording start: {e}")
+            
+            # 録音開始時の通知
+            try:
+                notification_notify(
+                    title='録音開始',
+                    message=f'{title} の録音を開始しました。',
+                    app_name='rpb',
+                    timeout=10
+                )
+                self.log.info(f"Recording start notification sent successfully: {title}")
+            except Exception as e:
+                self.log.error(f"Failed to send recording start notification: {e}")
+            return
+        if status == "no_stream":
+            errorDialog(_("ストリームURLの取得に失敗しました。"))
+            return
+        if status == "start_failed":
+            detail = result["detail"]
+            if detail:
+                errorDialog(_("録音の開始に失敗しました。") + f"\n\n{detail}")
+            else:
+                errorDialog(_("録音の開始に失敗しました。"))
+            return
+        errorDialog(_("録音の開始中にエラーが発生しました。"))
+        self._update_recording_menu_for_station(station_id)
 
     def _get_recording_format_menu_ids(self):
         """録音形式メニューIDの一覧を返す"""

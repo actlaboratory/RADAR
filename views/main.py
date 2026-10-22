@@ -453,16 +453,12 @@ class Events(BaseEvents):
 		return True
 
 	def _start_playback(self):
-		"""再生開始処理"""
+		"""再生開始処理。接続は別スレッドで行い、接続後の失敗は RadioManager がダイアログで知らせる"""
 		try:
 			self.parent.radio_manager.play(self.current_playing_station_id, self.parent.progs)
 			return True
 		except Exception as error:
-			if isinstance(error, radioManager.PlaybackError):
-				# 原因は RadioManager 側で記録済み
-				self.parent.log.error("Playback failure! station=%s: %s", self.current_playing_station_id, error)
-			else:
-				self.parent.log.exception("Unexpected playback failure! station=%s", self.current_playing_station_id)
+			self.parent.log.exception("Unexpected playback failure! station=%s", self.current_playing_station_id)
 			errorDialog(_("再生に失敗しました。\n%(detail)s") % {"detail": radioManager.describe_playback_exception(error)})
 			return False
 
@@ -509,30 +505,10 @@ class Events(BaseEvents):
 		if not self.displaying:
 			return
 		
-		handler = self.parent.program_info_handler
-		handler.ensure_program_info_ui()
-		handler.nplist.Enable()
-		handler.nplist.clear()
-		self.show_program_info()
-		self.show_onair_music()
-		self.show_description()
+		# 番組情報は別スレッドで取得し、取得できたら表示する
+		self.parent.program_info_handler.show_live_program_info(self.current_playing_station_id)
 
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
-
-	def show_description(self):
-		"""番組の説明を表示"""
-		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_description(self.current_playing_station_id)
-
-	def show_program_info(self):
-		"""番組情報を表示"""
-		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_program_info(self.current_playing_station_id)
-
-	def show_onair_music(self):
-		"""オンエア曲情報を表示"""
-		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_onair_music(self.current_playing_station_id)
 
 	def onRadioSelected(self, event):
 		if not hasattr(self.parent, 'radio_manager'):
