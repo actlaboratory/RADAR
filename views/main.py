@@ -505,30 +505,10 @@ class Events(BaseEvents):
 		if not self.displaying:
 			return
 		
-		handler = self.parent.program_info_handler
-		handler.ensure_program_info_ui()
-		handler.nplist.Enable()
-		handler.nplist.clear()
-		self.show_program_info()
-		self.show_onair_music()
-		self.show_description()
+		# 番組情報は別スレッドで取得し、取得できたら表示する
+		self.parent.program_info_handler.show_live_program_info(self.current_playing_station_id)
 
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
-
-	def show_description(self):
-		"""番組の説明を表示"""
-		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_description(self.current_playing_station_id)
-
-	def show_program_info(self):
-		"""番組情報を表示"""
-		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_program_info(self.current_playing_station_id)
-
-	def show_onair_music(self):
-		"""オンエア曲情報を表示"""
-		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_onair_music(self.current_playing_station_id)
 
 	def onRadioSelected(self, event):
 		if not hasattr(self.parent, 'radio_manager'):

@@ -2,8 +2,10 @@
 # 番組情報処理ハンドラーモジュール
 
 import datetime
+import threading
 
 import wx
+from views import programmanager
 from views import recordingWizzard
 import menuItemsStore
 
@@ -19,6 +21,10 @@ class ProgramInfoHandler:
         self.nowprograminfo = None
         self.DSCBOX = None
         self.dscboxLabel = None
+        # 別スレッドでの番組情報の取得ごとに進める。古い取得結果で新しい表示を上書きしないため
+        self._info_request = 0
+        # 直前に表示したオンエア曲 (放送局ID, 曲)。取得し直す間も同じ局なら表示を残す
+        self._last_onair_music = (None, "")
 
     def setup_program_info_ui(self):
         """番組情報関連のUIを設定"""
@@ -88,10 +94,51 @@ class ProgramInfoHandler:
                 return
 
         if hasattr(self.events, 'current_playing_station_id') and self.events.current_playing_station_id:
-            self.nplist.clear()
-            self.show_program_info(self.events.current_playing_station_id)
-            self.show_onair_music(self.events.current_playing_station_id)
-            self.show_description(self.events.current_playing_station_id)
+            self.show_live_program_info(self.events.current_playing_station_id)
+
+    def show_live_program_info(self, station_id):
+        """放送中の番組情報を別スレッドで取得して表示する（通信中も画面を止めない）"""
+        if not self.events.displaying or not station_id:
+            return
+        self.ensure_program_info_ui()
+        station_name = self.parent.radio_manager.stid.get(station_id, station_id)
+        self._load_async(self._fetch_live_program_info, station_id, station_name)
+
+    def _fetch_live_program_info(self, station_id, station_name):
+        """（別スレッド）放送中の番組情報とオンエア曲を取得する"""
+        # 共有の ProgramManager は取得結果を内部に保持するため、取得ごとに別のものを使う
+        progs = programmanager.ProgramManager()
+        return {
+            "station_id": station_id,
+            "station_name": station_name,
+            "title": progs.getNowProgram(station_id) or "",
+            "performer": progs.getnowProgramPfm(station_id) or "",
+            "description": progs.getNowProgramDsc(station_id) or "",
+            "onair_music": self._get_onair_music_safely(progs, station_id) or "",
+        }
+
+    def _load_async(self, fetch, *args):
+        """fetch(*args) を別スレッドで実行し、結果の番組情報を UI スレッドで表示する"""
+        self._info_request += 1
+        request = self._info_request
+
+        def run():
+            try:
+                info = fetch(*args)
+            except Exception as e:
+                self.log.warning(f"Failed to load program info: {e!r}")
+                return
+            wx.CallAfter(self._apply_loaded_info, request, info)
+
+        threading.Thread(target=run, name="ProgramInfo", daemon=True).start()
+
+    def _apply_loaded_info(self, request, info):
+        """（UI スレッド）取得した番組情報を表示する。より新しい取得・表示があれば何もしない"""
+        if request != self._info_request:
+            return
+        if not self.events.displaying or not self._is_program_info_ui_alive():
+            return
+        self._fill_program_details(info)
 
     def show_timefree_program_info(self, info):
         """聴き逃し再生中の番組情報を表示"""
@@ -113,10 +160,40 @@ class ProgramInfoHandler:
         self._timefree_program_info = None
 
     def _render_program_details(self, info, *, include_onair_music=False):
+        """番組情報を表示する。オンエア曲は別スレッドで取得し、取得できたら表示し直す"""
+        info = dict(info)
+        if not info.get("station_name") and info.get("station_id") and hasattr(self.parent, "radio_manager"):
+            info["station_name"] = self.parent.radio_manager.stid.get(info["station_id"], info["station_id"])
+        if not include_onair_music:
+            # 取得中の結果で、この表示を上書きしないようにする
+            self._info_request += 1
+            self._fill_program_details(info)
+            return
+        station_id = info.get("station_id") or getattr(self.events, "current_playing_station_id", None)
+        last_station_id, last_music = self._last_onair_music
+        info["onair_music"] = last_music if station_id and station_id == last_station_id else ""
+        self._fill_program_details(info)
+        if not station_id:
+            self._info_request += 1
+            return
+        target_dt = None
+        use_timefree = self._should_use_timefree_onair_music(info)
+        if use_timefree:
+            target_dt = self._get_timefree_onair_target_dt(info)
+        self._load_async(self._fetch_onair_music_for_details, info, station_id, use_timefree, target_dt)
+
+    def _fetch_onair_music_for_details(self, info, station_id, use_timefree, target_dt):
+        """（別スレッド）番組情報にオンエア曲を加えて返す"""
+        progs = programmanager.ProgramManager()
+        if use_timefree:
+            music = self._get_onair_music_at_safely(progs, station_id, target_dt)
+        else:
+            music = self._get_onair_music_safely(progs, station_id)
+        return dict(info, onair_music=music or "")
+
+    def _fill_program_details(self, info):
+        """（UI スレッド）番組情報の一覧と説明を書き換える。onair_music があればオンエア曲の行も出す"""
         station_name = info.get("station_name", "")
-        station_id = info.get("station_id")
-        if not station_name and station_id and hasattr(self.parent, "radio_manager"):
-            station_name = self.parent.radio_manager.stid.get(station_id, station_id)
         title = info.get("title", "")
         performer = info.get("performer", "")
         description = info.get("description", "")
@@ -126,8 +203,9 @@ class ProgramInfoHandler:
         self.nplist.Append(("放送局", station_name))
         self.nplist.Append(("番組名", title))
         self.nplist.Append(("出演者", performer))
-        if include_onair_music:
-            self._append_onair_music_row(info)
+        if "onair_music" in info:
+            self.nplist.Append(("オンエア曲", info["onair_music"]))
+            self._last_onair_music = (info.get("station_id"), info["onair_music"])
 
         if description:
             self.DSCBOX.Enable()
@@ -140,16 +218,6 @@ class ProgramInfoHandler:
             return
         self.ensure_program_info_ui()
         self._render_program_details(self._timefree_program_info or {}, include_onair_music=True)
-
-    def _append_onair_music_row(self, info):
-        station_id = info.get("station_id") or getattr(self.events, "current_playing_station_id", None)
-        if self._should_use_timefree_onair_music(info):
-            onair_music = self._get_timefree_onair_music(info) if station_id else None
-        elif station_id:
-            onair_music = self._get_onair_music_safely(station_id)
-        else:
-            onair_music = None
-        self.nplist.Append(("オンエア曲", onair_music or ""))
 
     def _should_use_timefree_onair_music(self, info):
         if hasattr(self.parent, "radio_manager") and self.parent.radio_manager.is_timefree_playing():
@@ -173,63 +241,17 @@ class ProgramInfoHandler:
                 pass
         return ft_dt + datetime.timedelta(seconds=position_sec)
 
-    def _get_timefree_onair_music(self, info):
-        station_id = info.get("station_id")
-        if not station_id:
-            return None
-        target_dt = self._get_timefree_onair_target_dt(info)
-        return self._get_onair_music_at_safely(station_id, target_dt)
-
-    def _get_onair_music_at_safely(self, station_id, target_dt):
+    def _get_onair_music_at_safely(self, progs, station_id, target_dt):
         try:
-            return self.parent.progs.get_onair_music_at(station_id, target_dt=target_dt)
+            return progs.get_onair_music_at(station_id, target_dt=target_dt)
         except Exception as e:
             self.log.warning(f"Failed to get onair music at {target_dt}: {e}")
             return None
 
-    def show_description(self, station_id):
-        """番組の説明を表示"""
-        if not self.events.displaying:
-            return
-        self.ensure_program_info_ui()
-        
-        if self.parent.progs.getNowProgramDsc(station_id):
-            self.DSCBOX.Enable()
-            self.DSCBOX.SetValue(self.parent.progs.getNowProgramDsc(station_id))
-        else:
-            self.DSCBOX.SetValue("")
-
-    def show_program_info(self, station_id):
-        """番組情報を表示"""
-        if not self.events.displaying:
-            return
-        self.ensure_program_info_ui()
-        
-        self.nplist.Enable()
-        program_title = self.parent.progs.getNowProgram(station_id)
-        program_pfm = self.parent.progs.getnowProgramPfm(station_id)
-        station_name = self.parent.radio_manager.stid.get(station_id, station_id)
-
-        self.nplist.Append(("放送局", station_name))
-        self.nplist.Append(("番組名", program_title))
-        self.nplist.Append(("出演者", program_pfm))
-
-    def show_onair_music(self, station_id):
-        """オンエア曲情報を表示"""
-        if not self.events.displaying:
-            return
-        self.ensure_program_info_ui()
-        
-        onair_music = self._get_onair_music_safely(station_id)
-        if onair_music:
-            self.nplist.Append(("オンエア曲", onair_music))
-        else:
-            self.nplist.Append(("オンエア曲", ""))
-
-    def _get_onair_music_safely(self, station_id):
+    def _get_onair_music_safely(self, progs, station_id):
         """オンエア曲情報を取得"""
         try:
-            return self.parent.progs.get_onair_music(station_id)
+            return progs.get_onair_music(station_id)
         except Exception as e:
             self.log.warning(f"Failed to get online music: {e}")
             return None
