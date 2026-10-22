@@ -28,6 +28,14 @@ MAX_CONSECUTIVE_FAILURES = 3
 # 打ち切った後、この時間は新たな収集を始めない
 ABORT_COOLDOWN_SEC = 600
 
+# collect_weekly_data の結果（last_outcome）
+OUTCOME_UP_TO_DATE = "up_to_date"  # 全局収集済みで通信しなかった
+OUTCOME_COMPLETED = "completed"  # 取得すべき局をすべて取得した
+OUTCOME_PARTIAL = "partial"  # 通信エラーで取得できなかった局がある
+OUTCOME_ABORTED = "aborted"  # 失敗が続いたため打ち切った
+OUTCOME_STOPPED = "stopped"  # アプリ終了などで停止した
+OUTCOME_NOT_STARTED = "not_started"  # 局一覧が無い・打ち切り後の待機中などで始めなかった
+
 # 放送局ごとの収集済みマーカー（値は収集時のラジオ基準日）。中断後の再開時に取得済みの局を飛ばす
 COLLECTED_KEY_PREFIX = "collected:"
 
@@ -60,6 +68,9 @@ class ProgramDataCollector:
         # 1回の収集で送ったリクエスト数と開始時刻（ログ用。再試行も1回と数える）
         self._request_count = 0
         self._collection_started_at = 0.0
+        # 直近の collect_weekly_data の結果と、取得に失敗した局数
+        self.last_outcome = None
+        self.last_failed_count = 0
 
     def set_radio_manager(self, radio_manager):
         """RadioManagerを設定"""
@@ -281,11 +292,15 @@ class ProgramDataCollector:
             self.log.error(f"Data collection failed: {e}")
             return False
 
-    def collect_weekly_data(self, start_date=None, force_refresh=False):
+    def collect_weekly_data(self, start_date=None, force_refresh=False, on_start=None):
         """ラジオ基準日の前後1週間分のデータを放送局ごとにまとめて収集する。
 
         force_refresh が False なら、同じ基準日で収集済みの放送局は取得しない（中断後の再開用）。
+        on_start(pending_count, total_count) は、取得する局があるときに通信を始める前に呼ぶ。
+        結果の詳細は last_outcome / last_failed_count に残す。
         """
+        self.last_outcome = OUTCOME_NOT_STARTED
+        self.last_failed_count = 0
         if not self.radio_manager:
             self.log.error("RadioManager not set")
             return False
@@ -316,25 +331,30 @@ class ProgramDataCollector:
             return False
 
         station_ids = list(self.radio_manager.stid.keys())
+        pending_ids = [
+            station_id for station_id in station_ids
+            if force_refresh or self.cache_manager.get_metadata(COLLECTED_KEY_PREFIX + station_id) != base_date_str
+        ]
+        skipped_count = len(station_ids) - len(pending_ids)
         self.log.info(
             f"Starting program cache collection from {date_list[0]} to {date_list[-1]} "
-            f"for {len(station_ids)} stations (force_refresh={force_refresh})"
+            f"for {len(pending_ids)}/{len(station_ids)} stations (force_refresh={force_refresh})"
         )
         self._reset_request_stats()
+        if pending_ids and on_start:
+            try:
+                on_start(len(pending_ids), len(station_ids))
+            except Exception as e:
+                self.log.warning(f"on_start callback failed: {e}")
 
         success_count = 0
-        skipped_count = 0
         failed_count = 0
         consecutive_failures = 0
-        total = len(station_ids)
+        total = len(pending_ids)
 
         try:
-            for index, station_id in enumerate(station_ids, start=1):
+            for index, station_id in enumerate(pending_ids, start=1):
                 station_name = self._get_station_name(station_id)
-                collected_key = COLLECTED_KEY_PREFIX + station_id
-                if not force_refresh and self.cache_manager.get_metadata(collected_key) == base_date_str:
-                    skipped_count += 1
-                    continue
                 self._report_progress(
                     index,
                     total,
@@ -348,6 +368,8 @@ class ProgramDataCollector:
                     consecutive_failures += 1
                     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                         self._start_cooldown()
+                        self.last_outcome = OUTCOME_ABORTED
+                        self.last_failed_count = len(pending_ids) - success_count
                         return False
                     continue
                 consecutive_failures = 0
@@ -355,18 +377,26 @@ class ProgramDataCollector:
                 if programs_by_date:
                     self.cache_manager.replace_station_programs(station_id, station_name, programs_by_date)
                 if complete:
-                    self.cache_manager.set_metadata(collected_key, base_date_str)
+                    self.cache_manager.set_metadata(COLLECTED_KEY_PREFIX + station_id, base_date_str)
                     success_count += 1
                 else:
                     failed_count += 1
         except CollectionAborted:
             self.log.info(f"Weekly data collection stopped ({self._request_stats()})")
+            self.last_outcome = OUTCOME_STOPPED
             return False
 
         self.log.info(
             f"Weekly data collection finished: {success_count} collected, "
             f"{skipped_count} already up to date, {failed_count} failed ({self._request_stats()})"
         )
+        self.last_failed_count = failed_count
+        if not pending_ids:
+            self.last_outcome = OUTCOME_UP_TO_DATE
+        elif failed_count:
+            self.last_outcome = OUTCOME_PARTIAL
+        else:
+            self.last_outcome = OUTCOME_COMPLETED
         # ログアウト等で一覧から外れた局の番組は、検索に出ないよう失敗の有無にかかわらず消す
         self.cache_manager.delete_programs_except_stations(station_ids)
         if failed_count == 0:
