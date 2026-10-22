@@ -385,10 +385,6 @@ class RadioManager:
         """エリアを判定する"""
         self.area = progs.getArea()
 
-    def get_streamUrl(self, stationid, progs):
-        """ストリームURLを取得"""
-        self.m3u8, self.live_http_headers = progs.get_authenticated_stream_url(stationid)
-
     def _start_live_recovery_thread(self, target, args, name):
         """ライブ再生の復旧処理（再接続・中断理由の判定）を別スレッドで開始する。
 
@@ -673,12 +669,17 @@ class RadioManager:
         return self._player.play()
 
     def play(self, id, progs, program_info=None):
-        """再生開始。開始できなかった場合は停止状態に戻して PlaybackError を送出する"""
+        """ライブ再生を開始する。
+
+        認証・mpv の起動は別スレッドで行い、すぐに戻る（通信が遅くても画面を止めない）。
+        開始できなかった場合は停止状態に戻し、理由をエラーダイアログで知らせる。
+        """
         if self._shutting_down:
             self.log.info(f"live playback request ignored during shutdown: station={id}")
             return
         self.log.info(f"live playback requested: station={id}, areafree={premium.session.is_areafree()}")
         self._begin_playback_change()
+        generation = self._playback_generation
         if self._player.isPlaying():
             try:
                 self._player.stop()
@@ -686,40 +687,77 @@ class RadioManager:
                 self.log.warning(f"Failed to stop previous playback: {e}")
         self.clear_timefree_menu_live_ack()
         self.streamWatchdogTimer.Stop()
+        volume = self.volume.GetValue()
+        threading.Thread(
+            target=self._live_start_worker,
+            args=(generation, id, progs, program_info, volume),
+            name="LiveStart",
+            daemon=True,
+        ).start()
+
+    def _start_live_player(self, generation, stream_url, headers, volume):
+        """（別スレッド）mpv を起動する。起動したら True、停止・切替済みなら None"""
+        # 停止・切替との競合を防ぐため、世代の確認と mpv の起動はロック内で行う
+        with self._playback_lock:
+            if self._shutting_down or generation != self._playback_generation:
+                return None
+            self.m3u8 = stream_url
+            self.live_http_headers = headers
+            self._player.setNonSeekableInput(True)
+            self._player.setHttpHeaders(headers)
+            self._player.setStartPosition(0)
+            self._player.setSource(stream_url)
+            self._player.setVolume(volume)
+            self.log.info("playing...")
+            return self._player.play()
+
+    def _live_start_worker(self, generation, id, progs, program_info, volume):
+        """（別スレッド）認証して mpv を起動し、結果を UI スレッドへ渡す"""
         try:
-            self.get_streamUrl(id, progs)
-            if not self.m3u8:
+            stream_url, headers = progs.get_authenticated_stream_url(id)
+            if not stream_url:
                 raise RuntimeError("empty stream url")
         except Exception as e:
             self.log.error(f"Failed to get stream url: station={id}: {e!r}")
-            self._reset_playback_state()
-            raise PlaybackError(describe_playback_exception(e)) from e
-
-        self._player.setNonSeekableInput(True)
-        self._player.setHttpHeaders(self.live_http_headers)
-        self._player.setStartPosition(0)
-        started = self.player()
+            wx.CallAfter(self._finish_live_start, generation, id, progs, program_info, False, describe_playback_exception(e))
+            return
+        started = self._start_live_player(generation, stream_url, headers, volume)
+        if started is None:
+            self.log.info(f"live playback start discarded (playback changed): station={id}")
+            return
         status = None
         if not started:
-            status = self._probe_stream_status(self.m3u8, self.live_http_headers)
+            status = self._probe_stream_status(stream_url, headers)
             if status == 403 and self._relogin_for_forbidden_stream(id, progs):
                 try:
-                    self.get_streamUrl(id, progs)
-                    if self.m3u8:
-                        self._player.setHttpHeaders(self.live_http_headers)
-                        started = self.player()
+                    stream_url, headers = progs.get_authenticated_stream_url(id)
+                    if stream_url:
+                        started = self._start_live_player(generation, stream_url, headers, volume)
+                        if started is None:
+                            return
                 except Exception as e:
                     self.log.warning(f"Failed to retry live playback after relogin: station={id}: {e!r}")
                 if not started:
-                    status = self._probe_stream_status(self.m3u8, self.live_http_headers)
+                    status = self._probe_stream_status(stream_url, headers)
+        reason = None
         if not started:
-            reason = self._describe_stream_status(status) if self.m3u8 else "再生 URL を取得できませんでした。"
+            reason = self._describe_stream_status(status) if stream_url else "再生 URL を取得できませんでした。"
             self.log.error(
                 f"Failed to start live playback: station={id}, reason={reason}, "
                 f"player error={(self._player.getLastError() or '')[:300]}"
             )
+        wx.CallAfter(self._finish_live_start, generation, id, progs, program_info, started, reason)
+
+    def _finish_live_start(self, generation, id, progs, program_info, started, reason):
+        """（UI スレッド）再生開始の結果を画面と状態に反映する"""
+        if self._shutting_down or generation != self._playback_generation:
+            # 起動中に停止・別の局への切替があった（mpv は停止・切替側で止めている）
+            self.log.info(f"live playback start result discarded (playback changed): station={id}")
+            return
+        if not started:
             self._reset_playback_state()
-            raise PlaybackError(reason)
+            errorDialog(_("再生に失敗しました。\n%(detail)s") % {"detail": reason})
+            return
 
         self.parent.menu.SetMenuLabel("FUNCTION_PLAY_PLAY", _("停止"))
         self.current_station_id = id

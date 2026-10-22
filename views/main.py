@@ -453,16 +453,12 @@ class Events(BaseEvents):
 		return True
 
 	def _start_playback(self):
-		"""再生開始処理"""
+		"""再生開始処理。接続は別スレッドで行い、接続後の失敗は RadioManager がダイアログで知らせる"""
 		try:
 			self.parent.radio_manager.play(self.current_playing_station_id, self.parent.progs)
 			return True
 		except Exception as error:
-			if isinstance(error, radioManager.PlaybackError):
-				# 原因は RadioManager 側で記録済み
-				self.parent.log.error("Playback failure! station=%s: %s", self.current_playing_station_id, error)
-			else:
-				self.parent.log.exception("Unexpected playback failure! station=%s", self.current_playing_station_id)
+			self.parent.log.exception("Unexpected playback failure! station=%s", self.current_playing_station_id)
 			errorDialog(_("再生に失敗しました。\n%(detail)s") % {"detail": radioManager.describe_playback_exception(error)})
 			return False
 
