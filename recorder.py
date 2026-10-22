@@ -82,6 +82,12 @@ SCHEDULE_CHECK_INTERVAL = 5  # 秒
 SCHEDULE_EXECUTION_WINDOW = 10  # 秒
 MIN_RETRY_INTERVAL = 60  # 秒
 RECORDING_END_TIME_BUFFER = 30  # 秒（ラジコの放送時刻と配信時刻のずれに対応するため、停止時刻を延長する）
+# 録音の開始・再開に失敗したときの再試行間隔（秒）。回数がこれを超えたら最後の値で待つ
+RETRY_WAIT_SECONDS = (2, 5, 10, 20, 30)
+# この秒数以上録音できていたら、途切れたときの再試行回数を数え直す
+RETRY_STABLE_RESET_SECONDS = 60
+# 聴き逃し録音の1区間あたりの取得試行回数
+TIMEFREE_CHUNK_MAX_ATTEMPTS = 4
 
 # ffmpeg 起動検証: 入力オープン失敗などで即終了する場合はここで検出し、録音開始成功とみなさない
 RECORDER_STARTUP_MIN_STABLE_SECONDS = 2.5  # この秒数連続でプロセスが生存し、かつ致命stderrが無いことを確認
@@ -96,6 +102,31 @@ RECORDING_STATUS_RECORDING = "recording"  # 録音中
 RECORDING_STATUS_COMPLETED = "completed"  # 録音が正しく完了している
 RECORDING_STATUS_CANCELLED = "cancelled"  # ユーザーによってキャンセルされた
 RECORDING_STATUS_FAILED = "failed"  # 予約録音がエラーによって失敗した
+
+def _retry_wait_seconds(attempt):
+    """attempt 回目（1始まり）の再試行までの待ち時間"""
+    return RETRY_WAIT_SECONDS[min(max(attempt, 1), len(RETRY_WAIT_SECONDS)) - 1]
+
+
+def _is_non_retryable_error(error_text):
+    """ffmpeg 実行環境の不備など、再試行しても復旧しないエラーか"""
+    text = str(error_text or "")
+    return (
+        "STATUS_DLL_NOT_FOUND" in text or
+        "ffmpeg validation failed" in text or
+        "利用可能なffmpegが見つからない" in text
+    )
+
+
+def _fetch_live_source(station_id):
+    """認証し直して、ライブ録音用の (URL, ヘッダー) を取得する（古いトークンを使い回さない）"""
+    return programmanager.ProgramManager().get_authenticated_stream_url(station_id)
+
+
+def _refresh_timefree_headers():
+    """認証し直して、聴き逃し取得用のヘッダーを返す（聴き逃しの URL 自体にはトークンを含まない）"""
+    return {"X-Radiko-AuthToken": programmanager.ProgramManager().refresh_auth_session()}
+
 
 class RecorderError(Exception):
     """録音関連のエラー"""
@@ -760,6 +791,36 @@ class TimefreeChunkedRecordingHandle:
             env=_spawn_proxy_env(),
         )
 
+    def _build_chunk_command(self, ffmpeg_path, url, headers, sec, part):
+        """1区間を AAC のまま取得する ffmpeg コマンド"""
+        cmd = [
+            ffmpeg_path,
+            "-hide_banner",
+            "-nostats",
+            "-y",
+            "-loglevel",
+            "error",
+            "-fflags",
+            "+discardcorrupt",
+            "-user_agent",
+            constants.BROWSER_USER_AGENT,
+        ]
+        cmd.extend(_ffmpeg_header_option(headers))
+        cmd.extend(self.input_options)
+        cmd.extend([
+            "-i",
+            url,
+            "-t",
+            str(int(sec)),
+            "-vn",
+            "-acodec",
+            "copy",
+            "-bsf:a",
+            "aac_adtstoasc",
+            part,
+        ])
+        return cmd
+
     def _run_ffmpeg(self, cmd):
         proc = self._popen_ffmpeg(cmd)
         with self._proc_lock:
@@ -784,38 +845,35 @@ class TimefreeChunkedRecordingHandle:
             probe = Recorder("", "", "m4a", logger=self.logger)
             ffmpeg_path = probe._get_ffmpeg_path()
             chunk_paths = []
+            # 再試行で認証し直したら、以降の区間も新しいトークンで取得する
+            refreshed_headers = None
             for i, (url, hdr, sec) in enumerate(self.segments):
                 if self._stop.is_set():
                     raise RecordingCancelledError("聴き逃し録音が中断されました。")
                 part = os.path.join(tmp, f"part{i:04d}.m4a")
-                cmd = [
-                    ffmpeg_path,
-                    "-hide_banner",
-                    "-nostats",
-                    "-y",
-                    "-loglevel",
-                    "error",
-                    "-fflags",
-                    "+discardcorrupt",
-                    "-user_agent",
-                    constants.BROWSER_USER_AGENT,
-                ]
-                cmd.extend(_ffmpeg_header_option(hdr))
-                cmd.extend(self.input_options)
-                cmd.extend([
-                    "-i",
-                    url,
-                    "-t",
-                    str(int(sec)),
-                    "-vn",
-                    "-acodec",
-                    "copy",
-                    "-bsf:a",
-                    "aac_adtstoasc",
-                    part,
-                ])
                 self.logger.info("timefree chunk %s/%s (%ss)", i + 1, len(self.segments), sec)
-                self._run_ffmpeg(cmd)
+                for attempt in range(1, TIMEFREE_CHUNK_MAX_ATTEMPTS + 1):
+                    cmd = self._build_chunk_command(ffmpeg_path, url, refreshed_headers or hdr, sec, part)
+                    try:
+                        self._run_ffmpeg(cmd)
+                        break
+                    except RecordingCancelledError:
+                        raise
+                    except RecorderError as e:
+                        if attempt >= TIMEFREE_CHUNK_MAX_ATTEMPTS:
+                            raise
+                        wait = _retry_wait_seconds(attempt)
+                        self.logger.warning(
+                            "timefree chunk %s/%s failed (attempt %s/%s); retrying in %ss: %s",
+                            i + 1, len(self.segments), attempt, TIMEFREE_CHUNK_MAX_ATTEMPTS, wait, e,
+                        )
+                    if self._stop.wait(wait):
+                        raise RecordingCancelledError("聴き逃し録音が中断されました。")
+                    try:
+                        refreshed_headers = _refresh_timefree_headers()
+                    except Exception as e:
+                        # 通信が戻っていない可能性がある。今のトークンのまま次の試行に任せる
+                        self.logger.warning("failed to refresh auth for timefree chunk retry: %r", e)
                 chunk_paths.append(part)
             if self._stop.is_set():
                 raise RecordingCancelledError("聴き逃し録音が中断されました。")
@@ -1028,14 +1086,14 @@ class RecorderManager:
         return station_id in info
 
     def start_recording(self, stream_url, output_path, info, end_time, filetype="mp3", on_complete=None, station_id=None, program_title=None, schedule_id=None, recording_seconds=None, http_headers=None, input_options=None):
-        """録音を開始"""
+        """録音を開始
+
+        途中で途切れた場合、station_id があれば認証し直して再開する。
+        ライブ録音（recording_seconds なし）は終了時刻まで再開を試み続ける。
+        """
         try:
             self.last_start_error = ""
             output_path = allocate_unique_output_base(output_path, filetype, self.logger)
-
-            def on_error(rec, error):
-                self._handle_error(rec, error, info, stream_url, output_path, end_time, filetype, recording_seconds, http_headers, input_options)
-
             start_ts = time.time()
 
             def on_success(rec):
@@ -1049,36 +1107,35 @@ class RecorderManager:
                     program_title=program_title,
                 )
 
-            recorder = Recorder(
-                stream_url,
-                output_path,
-                filetype,
-                on_error=on_error,
-                logger=self.logger,
-                recording_seconds=recording_seconds,
-                http_headers=http_headers,
-                input_options=input_options,
-                on_success=on_success,
-            )
+            rec_entry = {
+                "recorder": None,
+                "info": info,
+                "retry_count": 0,
+                "end_time": end_time,
+                "on_complete": on_complete,
+                "station_id": station_id,
+                "program_title": program_title,
+                "schedule_id": schedule_id,
+                "start_time": start_ts,
+                "recording_seconds": recording_seconds,
+                "stream_url": stream_url,
+                "http_headers": dict(http_headers or {}),
+                "input_options": list(input_options or []),
+                "output_path": output_path,
+                "filetype": filetype,
+                "on_success": on_success,
+                "started_monotonic": time.monotonic(),
+                # 手動停止・終了時刻で set し、再開待ちを打ち切る
+                "cancel_event": threading.Event(),
+            }
+            recorder = self._create_recorder(rec_entry, stream_url, output_path, http_headers)
+            rec_entry["recorder"] = recorder
             recorder.start()
 
             with self.lock:
-                self.recorders.append({
-                    "recorder": recorder,
-                    "info": info,
-                    "retry_count": 0,
-                    "end_time": end_time,
-                    "on_complete": on_complete,
-                    "station_id": station_id,
-                    "program_title": program_title,
-                    "schedule_id": schedule_id,
-                    "start_time": time.time(),
-                    "recording_seconds": recording_seconds,
-                    "http_headers": dict(http_headers or {}),
-                    "input_options": list(input_options or [])
-                })
+                self.recorders.append(rec_entry)
             # 終了タイマー
-            threading.Thread(target=self._schedule_stop, args=(recorder, end_time, on_complete), daemon=True).start()
+            threading.Thread(target=self._schedule_stop, args=(rec_entry, end_time, on_complete), daemon=True).start()
             self.logger.info(f"Recorder started: {info}")
             return recorder
         except Exception as e:
@@ -1130,23 +1187,25 @@ class RecorderManager:
                 program_title=program_title,
             )
             handle.start()
+            rec_entry = {
+                "recorder": handle,
+                "info": info,
+                "retry_count": 0,
+                "end_time": end_time,
+                "on_complete": None,
+                "station_id": station_id,
+                "program_title": program_title,
+                "start_time": time.time(),
+                "recording_seconds": sum(s[2] for s in segments),
+                "http_headers": {},
+                "input_options": list(input_options or []),
+                "cancel_event": threading.Event(),
+            }
             with self.lock:
-                self.recorders.append({
-                    "recorder": handle,
-                    "info": info,
-                    "retry_count": 0,
-                    "end_time": end_time,
-                    "on_complete": None,
-                    "station_id": station_id,
-                    "program_title": program_title,
-                    "start_time": time.time(),
-                    "recording_seconds": sum(s[2] for s in segments),
-                    "http_headers": {},
-                    "input_options": list(input_options or []),
-                })
+                self.recorders.append(rec_entry)
             threading.Thread(
                 target=self._schedule_stop,
-                args=(handle, end_time, None),
+                args=(rec_entry, end_time, None),
                 daemon=True,
             ).start()
             self.logger.info(f"Timefree chunked recorder started: {info} ({len(segments)} segments)")
@@ -1160,27 +1219,49 @@ class RecorderManager:
         """最後の録音開始エラーを取得"""
         return self.last_start_error
 
-    def _schedule_stop(self, recorder, end_time, on_complete=None):
+    def _create_recorder(self, rec_entry, stream_url, output_path, http_headers):
+        """rec_entry の設定で Recorder を作る。エラーは rec_entry ごとに _handle_error で扱う"""
+        def on_error(rec, error):
+            self._handle_error(rec_entry, rec, error)
+
+        return Recorder(
+            stream_url,
+            output_path,
+            rec_entry["filetype"],
+            on_error=on_error,
+            logger=self.logger,
+            recording_seconds=rec_entry["recording_seconds"],
+            http_headers=http_headers,
+            input_options=rec_entry["input_options"],
+            on_success=rec_entry["on_success"],
+        )
+
+    def _schedule_stop(self, rec_entry, end_time, on_complete=None):
         """指定時刻に録音を停止"""
         now = time.time()
         wait = max(0, end_time - now)
         max_wait = self.max_hours * 3600
         wait = min(wait, max_wait)
         self.logger.debug(f"Recorder will stop in {wait} seconds.")
-        time.sleep(wait)
-        if getattr(recorder, "_completion_cancelled", False):
+        cancel_event = rec_entry["cancel_event"]
+        cancel_event.wait(wait)
+        if rec_entry.get("cancelled") or rec_entry.get("failed"):
             self.logger.info(
-                f"Skipping scheduled stop/completion (manual stop): {getattr(recorder, 'output_path', recorder)}"
+                f"Skipping scheduled stop/completion (manual stop or failure): "
+                f"{getattr(rec_entry['recorder'], 'output_path', rec_entry['recorder'])}"
             )
             return
+        # 再開待ちの途中であれば打ち切らせる
+        cancel_event.set()
+        recorder = rec_entry["recorder"]
         recorder.stop()
         self.logger.info(f"Recorder stopped by schedule: {recorder.output_path}")
-        
+
         # レコーダーインスタンスをリストから削除
         with self.lock:
-            self.recorders = [r for r in self.recorders if r["recorder"] != recorder]
+            self.recorders = [r for r in self.recorders if r is not rec_entry]
             self.logger.info(f"Recorder instance removed from manager: {recorder.output_path}")
-        
+
         # 録音完了コールバックを呼び出し
         if on_complete:
             try:
@@ -1189,73 +1270,126 @@ class RecorderManager:
             except Exception as e:
                 self.logger.error(f"Error in recording completion callback: {e}")
 
-    def _handle_error(self, recorder, error, info, stream_url, output_path, end_time, filetype, recording_seconds=None, http_headers=None, input_options=None):
-        """エラー処理とリトライ"""
-        should_retry = False
-        retry_path = output_path
-        on_complete = None
-        retry_station_id = None
-        retry_program_title = None
+    def _handle_error(self, rec_entry, recorder, error):
+        """録音が途中で途切れたときに再開を試み、再開できなければ失敗を通知する"""
         with self.lock:
-            rec_entry = next((r for r in self.recorders if r["recorder"] == recorder), None)
-            if not rec_entry:
-                self.logger.error("Error from unknown recorder.")
+            if rec_entry.get("recorder") is not recorder or not any(r is rec_entry for r in self.recorders):
+                # 開始時の失敗（呼び出し側で扱う）や、停止・差し替え済みの録音
+                self.logger.debug(f"Ignoring error from inactive recorder: {error}")
                 return
-            rec_entry["retry_count"] += 1
-            retry = rec_entry["retry_count"]
-            self.logger.warning(f"Recorder error (attempt {retry}): {error}")
+            if rec_entry.get("retrying"):
+                return
+            rec_entry["retrying"] = True
+        info = rec_entry["info"]
+        self.logger.warning(f"Recorder error: {info}: {error}")
+        try:
             recorder.stop()
+        except Exception as e:
+            self.logger.error(f"Failed to stop failed recorder: {e}")
+        try:
+            result = self._retry_recording(rec_entry, error)
+        except Exception:
+            self.logger.exception(f"Unexpected error while retrying recording: {info}")
+            result = "failed"
+        finally:
+            rec_entry["retrying"] = False
+        if result == "failed":
+            self._fail_recording(rec_entry)
 
-            # ファイル名変更してリトライ
-            if os.path.exists(f"{output_path}.{filetype}"):
-                new_path = f"{output_path}_retry{retry}"
-            else:
-                new_path = output_path
+    def _retry_recording(self, rec_entry, error):
+        """途切れた録音を、認証し直して別ファイルに再開する。
 
-            # ffmpeg実行環境の不備はリトライしても復旧しないため即失敗にする
-            error_text = str(error)
-            non_retryable = (
-                "STATUS_DLL_NOT_FOUND" in error_text or
-                "ffmpeg validation failed" in error_text or
-                "利用可能なffmpegが見つからない" in error_text
-            )
-
-            if retry < MAX_RETRY and not non_retryable:
-                self.logger.info(f"Retrying recording: {new_path}")
-                # 元のコールバックを保持してリトライ
-                on_complete = rec_entry.get("on_complete")
-                should_retry = True
-                retry_path = new_path
-                retry_station_id = rec_entry.get("station_id")
-                retry_program_title = rec_entry.get("program_title")
-                retry_schedule_id = rec_entry.get("schedule_id")
-            else:
+        戻り値: "resumed"（再開した）/ "stopped"（停止・終了時刻のため再開しない）/ "failed"
+        """
+        info = rec_entry["info"]
+        station_id = rec_entry.get("station_id")
+        is_live = not rec_entry["recording_seconds"]
+        cancel_event = rec_entry["cancel_event"]
+        if time.monotonic() - rec_entry["started_monotonic"] >= RETRY_STABLE_RESET_SECONDS:
+            rec_entry["retry_count"] = 0
+        while True:
+            if _is_non_retryable_error(error):
+                self.logger.error(f"Recording cannot be retried: {info}: {error}")
+                return "failed"
+            rec_entry["retry_count"] += 1
+            attempt = rec_entry["retry_count"]
+            # 長さの決まった録音（聴き逃しなど）は回数で打ち切り、ライブ録音は終了時刻まで再開を試みる
+            if not is_live and attempt >= MAX_RETRY:
                 self.logger.error(f"Recording failed after {MAX_RETRY} attempts: {info}")
+                return "failed"
+            wait = _retry_wait_seconds(attempt)
+            if is_live and time.time() + wait >= rec_entry["end_time"]:
+                if attempt == 1:
+                    # 終了間際に途切れただけなので、終了時刻の完了処理に任せる
+                    self.logger.info(f"Recording stopped near end time; not retrying: {info}")
+                    return "stopped"
+                self.logger.error(f"Recording could not be resumed before end time: {info}")
+                return "failed"
+            self.logger.warning(f"Retrying recording in {wait}s (attempt {attempt}): {info}")
+            if cancel_event.wait(wait):
+                return "stopped"
+
+            stream_url = rec_entry["stream_url"]
+            headers = rec_entry["http_headers"]
+            if station_id:
+                # 期限切れのトークンで再試行し続けないよう、毎回認証し直す
                 try:
-                    notification_notify(title="録音失敗", message=f"{info} の録音に失敗しました。", app_name="rpb", timeout=10)
-                    self.logger.info(f"Recording failure notification sent successfully after max retries: {info}")
+                    if is_live:
+                        stream_url, headers = _fetch_live_source(station_id)
+                    else:
+                        headers = _refresh_timefree_headers()
                 except Exception as e:
-                    self.logger.error(f"Failed to send recording failure notification after max retries: {e}")
+                    self.logger.warning(f"Failed to re-authenticate for recording retry: {info}: {e!r}")
+                    error = e
+                    continue
 
-            # 失敗したエントリは必ず取り除く（ゾンビ状態で局が占有されたままになるのを防ぐ）
-            self.recorders = [r for r in self.recorders if r["recorder"] != recorder]
+            output_path = rec_entry["output_path"]
+            if os.path.exists(f"{output_path}.{rec_entry['filetype']}"):
+                output_path = allocate_unique_output_base(
+                    f"{output_path}_retry{attempt}", rec_entry["filetype"], self.logger
+                )
+            new_recorder = self._create_recorder(rec_entry, stream_url, output_path, headers)
+            with self.lock:
+                if cancel_event.is_set():
+                    return "stopped"
+                rec_entry["recorder"] = new_recorder
+            try:
+                new_recorder.start()
+            except Exception as e:
+                if cancel_event.is_set():
+                    return "stopped"
+                self.logger.warning(f"Failed to restart recording: {info}: {e}")
+                error = e
+                continue
+            if cancel_event.is_set():
+                # 起動中に停止された・終了時刻になった
+                new_recorder.stop()
+                return "stopped"
+            rec_entry["stream_url"] = stream_url
+            rec_entry["http_headers"] = dict(headers or {})
+            rec_entry["started_monotonic"] = time.monotonic()
+            self.logger.info(f"Recording resumed: {info} -> {output_path}.{rec_entry['filetype']}")
+            return "resumed"
 
-        # start_recording は lock の外で実行（デッドロック防止）
-        if should_retry:
-            self.start_recording(
-                stream_url,
-                retry_path,
-                info,
-                end_time,
-                filetype,
-                on_complete,
-                station_id=retry_station_id,
-                program_title=retry_program_title,
-                schedule_id=retry_schedule_id,
-                recording_seconds=recording_seconds,
-                http_headers=http_headers,
-                input_options=input_options,
-            )
+    def _fail_recording(self, rec_entry):
+        """再開できなかった録音を一覧から外し、失敗を通知する"""
+        info = rec_entry["info"]
+        rec_entry["failed"] = True
+        with self.lock:
+            self.recorders = [r for r in self.recorders if r is not rec_entry]
+        # 終了時刻を待っているスレッドを終わらせる（完了扱いにしない）
+        rec_entry["cancel_event"].set()
+        if rec_entry.get("schedule_id"):
+            schedule_manager.mark_recording_failed(rec_entry)
+        if rec_entry["recording_seconds"]:
+            message = f"{info} の録音に失敗しました。"
+        else:
+            message = f"{info} の録音が途中で途切れ、再開できませんでした。途切れるまでの録音は保存されています。"
+        try:
+            notification_notify(title="録音失敗", message=message, app_name="rpb", timeout=10)
+            self.logger.info(f"Recording failure notification sent: {info}")
+        except Exception as e:
+            self.logger.error(f"Failed to send recording failure notification: {e}")
 
     def _is_recorder_active(self, recorder):
         """録音中判定を安全に実行"""
@@ -1275,6 +1409,11 @@ class RecorderManager:
         recorder = rec_entry.get("recorder")
         if recorder is not None:
             recorder._completion_cancelled = True
+        rec_entry["cancelled"] = True
+        cancel_event = rec_entry.get("cancel_event")
+        if cancel_event is not None:
+            # 終了時刻の待機と、途切れた録音の再開待ちを打ち切る
+            cancel_event.set()
         if rec_entry.get("on_complete"):
             schedule_manager.mark_recording_interrupted(rec_entry)
 
@@ -1561,6 +1700,8 @@ class ScheduleManager:
         self.program_manager = None
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="schedule_executor")
         self._monitor_stopped = False
+        # 終了時に set し、予約録音の開始の再試行待ちを打ち切る
+        self._stop_event = threading.Event()
         self._cleanup_done = False
         self._executor_shutdown = False
         self.load_schedules()
@@ -1659,6 +1800,22 @@ class ScheduleManager:
                 f"{station_id} {program_title}"
             )
 
+    def mark_recording_failed(self, rec_entry):
+        """録音が途中で途切れて再開できなかった予約録音を失敗にする（完了扱いにしない）。"""
+        schedule_id = rec_entry.get("schedule_id")
+        if not schedule_id:
+            return
+        updated = False
+        with self.lock:
+            for schedule in self.schedules:
+                if schedule.id == schedule_id and schedule.status == RECORDING_STATUS_RECORDING:
+                    schedule.set_status(RECORDING_STATUS_FAILED)
+                    updated = True
+                    break
+        if updated:
+            self.save_schedules()
+            self.logger.info(f"Schedule marked failed after recording could not be resumed: {schedule_id}")
+
     def cancel_schedule(self, schedule_id):
         """予約をキャンセル（ステータスを更新）。録音中なら該当録音を停止する。"""
         station_id = None
@@ -1737,6 +1894,7 @@ class ScheduleManager:
             return
         self._monitor_stopped = True
         self.running = False
+        self._stop_event.set()
         if self.timer and self.timer.is_alive():
             self.timer.join(timeout=1.0)
         self.timer = None
@@ -1760,13 +1918,20 @@ class ScheduleManager:
                 self.logger.error(f"Error in monitor loop: {e}")
                 time.sleep(SCHEDULE_CHECK_INTERVAL)
 
+    def _is_schedule_recording(self, schedule_id):
+        """予約が削除・取り消しされず、録音中の状態のままか"""
+        with self.lock:
+            entry = next((s for s in self.schedules if s.id == schedule_id), None)
+        return entry is not None and entry.status == RECORDING_STATUS_RECORDING
+
     def _get_authenticated_stream_url(self, station_id, max_retries=3):
         """認証済みのストリームURLとHTTPヘッダーを取得（リトライ機能付き）"""
         for attempt in range(max_retries):
             try:
-                if not self.program_manager:
-                    self.program_manager = programmanager.ProgramManager()
-                stream_url, headers = self.program_manager.get_authenticated_stream_url(station_id)
+                # 複数の予約が並行して再試行するため、共有の参照は一度だけ読む
+                program_manager = self.program_manager or programmanager.ProgramManager()
+                self.program_manager = program_manager
+                stream_url, headers = program_manager.get_authenticated_stream_url(station_id)
                 self.logger.debug(f"Authenticated stream URL obtained: {stream_url}")
                 return stream_url, headers
             except Exception as e:
@@ -1789,19 +1954,6 @@ class ScheduleManager:
         # 非同期で認証と録音を実行
         def execute_async():
             try:
-                with self.lock:
-                    entry = next((s for s in self.schedules if s.id == schedule.id), None)
-                if entry is None or entry.status != RECORDING_STATUS_RECORDING:
-                    self.logger.info(
-                        "Skipping scheduled recording (removed or no longer active): "
-                        f"{schedule.program_title} ({schedule.id})"
-                    )
-                    return
-
-                # 認証済みストリームURLの取得
-                stream_url, http_headers = self._get_authenticated_stream_url(schedule.station_id)
-                
-                # 録音開始
                 # ラジコの放送時刻と配信時刻のずれに対応するため、停止時刻を30秒延長
                 end_time = time.mktime(schedule.end_time.timetuple()) + RECORDING_END_TIME_BUFFER
                 info = f"{schedule.station_name} {schedule.program_title}"
@@ -1820,20 +1972,53 @@ class ScheduleManager:
                         self.logger.info(f"Recording completion notification sent successfully: {schedule.program_title}")
                     except Exception as e:
                         self.logger.error(f"Failed to send recording completion notification: {e}")
-                
-                recorder = self.recorder_manager.start_recording(
-                    stream_url, 
-                    schedule.output_path, 
-                    info, 
-                    end_time, 
-                    schedule.filetype,
-                    on_complete=on_recording_complete,
-                    station_id=schedule.station_id,
-                    program_title=schedule.program_title,
-                    schedule_id=schedule.id,
-                    http_headers=http_headers,
-                )
-                
+
+                # 開始時刻に一時的につながらなくても、番組の終了時刻までは開始を試み続ける
+                recorder = None
+                last_error = None
+                attempt = 0
+                while True:
+                    if not self._is_schedule_recording(schedule.id):
+                        self.logger.info(
+                            "Skipping scheduled recording (removed or no longer active): "
+                            f"{schedule.program_title} ({schedule.id})"
+                        )
+                        return
+                    attempt += 1
+                    last_error = None
+                    try:
+                        # 認証済みストリームURLの取得
+                        stream_url, http_headers = self._get_authenticated_stream_url(schedule.station_id)
+                        recorder = self.recorder_manager.start_recording(
+                            stream_url,
+                            schedule.output_path,
+                            info,
+                            end_time,
+                            schedule.filetype,
+                            on_complete=on_recording_complete,
+                            station_id=schedule.station_id,
+                            program_title=schedule.program_title,
+                            schedule_id=schedule.id,
+                            http_headers=http_headers,
+                        )
+                        if recorder:
+                            break
+                        if _is_non_retryable_error(self.recorder_manager.get_last_start_error()):
+                            break
+                    except Exception as e:
+                        last_error = e
+                    wait = _retry_wait_seconds(attempt)
+                    if time.time() + wait >= end_time:
+                        break
+                    self.logger.warning(
+                        f"Scheduled recording could not start (attempt {attempt}); retrying in {wait}s: "
+                        f"{schedule.program_title}: {last_error or self.recorder_manager.get_last_start_error()}"
+                    )
+                    if self._stop_event.wait(wait):
+                        return
+                if not recorder and last_error is not None:
+                    raise last_error
+
                 if recorder:
                     schedule.mark_executed(current_time)
                     self.save_schedules()
