@@ -10,6 +10,7 @@ from logging import getLogger
 import constants
 import globalVars
 import log_util
+import process_job
 from views.audio_output_devices import getDeviceList
 
 
@@ -396,6 +397,8 @@ class MPVAudioPlayer:
             self._process = None
             self._log.error("Failed to start mpv: %s", e)
             return False
+        # 本体が強制終了されても mpv が残らないようにする
+        process_job.bind_to_current_process(self._process)
         self._log.debug("mpv started: pid=%s", self._process.pid)
         return True
 

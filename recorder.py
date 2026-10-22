@@ -11,6 +11,7 @@ import locale
 import re
 import shutil
 import log_util
+import process_job
 from notification_util import notify as notification_notify
 from logging import getLogger
 from views import programmanager
@@ -374,6 +375,10 @@ class Recorder:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
                 env=_spawn_proxy_env(),
             )
+            # 終了時刻のない録音は、本体が強制終了されると ffmpeg が録音し続けてしまうため道連れにする。
+            # -t 指定があれば ffmpeg は自分で終了し、本体が落ちてもファイルを最後まで完成させる。
+            if not self.recording_seconds:
+                process_job.bind_to_current_process(self.process)
             self.logger.info(f"FFmpeg process spawned PID: {self.process.pid}")
 
             # stderr を検証より先に読み始める（パイプ詰まりによる偽生存を防ぎ、致命ログを検出する）
@@ -781,7 +786,7 @@ class TimefreeChunkedRecordingHandle:
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
-        return subprocess.Popen(
+        proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
@@ -790,6 +795,9 @@ class TimefreeChunkedRecordingHandle:
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             env=_spawn_proxy_env(),
         )
+        # 区間の結合は本体で行うため、本体が強制終了されたら ffmpeg を残しても意味がない
+        process_job.bind_to_current_process(proc)
+        return proc
 
     def _build_chunk_command(self, ffmpeg_path, url, headers, sec, part):
         """1区間を AAC のまま取得する ffmpeg コマンド"""
