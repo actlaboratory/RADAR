@@ -264,6 +264,7 @@ class MPVAudioPlayer:
             "--keep-open=no",
             "--really-quiet",
             "--network-timeout=15",
+            f"--user-agent={constants.BROWSER_USER_AGENT}",
             "--cache=yes",
             "--cache-secs=20",
             "--demuxer-readahead-secs=20",

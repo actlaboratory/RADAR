@@ -101,6 +101,7 @@ class PremiumSession:
             response = requests.post(
                 LOGIN_URL,
                 data={"mail": mail, "pass": password},
+                headers={"User-Agent": constants.BROWSER_USER_AGENT},
                 timeout=15,
             )
         except requests.RequestException as e:
@@ -169,6 +170,7 @@ class PremiumSession:
             response = requests.get(
                 LOGIN_CHECK_URL,
                 cookies={"radiko_session": radiko_session},
+                headers={"User-Agent": constants.BROWSER_USER_AGENT},
                 timeout=15,
             )
         except requests.RequestException as e:
@@ -294,7 +296,12 @@ class PremiumSession:
 
     def _post_logout(self, radiko_session):
         try:
-            requests.post(LOGOUT_URL, data={"radiko_session": radiko_session}, timeout=10)
+            requests.post(
+                LOGOUT_URL,
+                data={"radiko_session": radiko_session},
+                headers={"User-Agent": constants.BROWSER_USER_AGENT},
+                timeout=10,
+            )
         except requests.RequestException as e:
             self.log.debug("premium logout request failed: %s", e)
 

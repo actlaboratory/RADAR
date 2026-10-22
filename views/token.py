@@ -43,7 +43,7 @@ class Token:
         auth_response = {}
 
         headers = {
-            "User-Agent": "curl/7.56.1",
+            "User-Agent": constants.BROWSER_USER_AGENT,
             "Accept": "*/*",
             "X-Radiko-App":"pc_html5" ,
             "X-Radiko-App-Version":"0.0.1" ,
@@ -84,6 +84,7 @@ class Token:
             # プレミアム会員セッションを付けるとエリアフリーの権限が付与される
             url += "?" + urllib.parse.urlencode({"radiko_session": radiko_session})
         headers =  {
+            "User-Agent": constants.BROWSER_USER_AGENT,
             "X-Radiko-AuthToken": auth_token,
             "X-Radiko-Partialkey": partialkey,
             "X-Radiko-User": "dummy_user",

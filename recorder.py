@@ -473,6 +473,7 @@ class Recorder:
             "-y",
             "-loglevel", "error",
             "-fflags", "+discardcorrupt",
+            "-user_agent", constants.BROWSER_USER_AGENT,
         ] + (
             ["-headers", header_string] if header_string else []
         ) + self.input_options + [
@@ -796,6 +797,8 @@ class TimefreeChunkedRecordingHandle:
                     "error",
                     "-fflags",
                     "+discardcorrupt",
+                    "-user_agent",
+                    constants.BROWSER_USER_AGENT,
                 ]
                 cmd.extend(_ffmpeg_header_option(hdr))
                 cmd.extend(self.input_options)
