@@ -436,12 +436,12 @@ msgid "プロキシサーバーの情報を手動で設定する(&M)"
 msgstr "&Manually configure proxy information"
 
 #: views\settingsDialog.py:85
-msgid "サーバーURL"
-msgstr "server URL"
+msgid "サーバーURL(&S)"
+msgstr "&Server URL"
 
 #: views\settingsDialog.py:87
-msgid "ポート番号"
-msgstr "port number"
+msgid "ポート番号(&P)"
+msgstr "&Port number"
 
 #: views\updateDialog.py:23
 #, python-format
