@@ -37,6 +37,10 @@ class RecordingManagerDialog(BaseDialog):
         self.selected_active_index = -1
         self.selected_schedule_index = -1
         self.selected_schedule_id = None
+        # 一覧ごとの前回の表示内容。中身が変わったときだけ作り直すのに使う
+        self._list_rows = {}
+        # 開始時刻が分からない録音に表示する時刻
+        self._fallback_start_times = {}
 
     def Initialize(self):
         """ダイアログを初期化"""
@@ -175,10 +179,31 @@ class RecordingManagerDialog(BaseDialog):
         except Exception as e:
             self.log.error(f"Failed to load recordings: {e}")
 
-    def _update_active_list(self):
-        self.active_lst.DeleteAllItems()
+    def _replace_list_rows(self, list_ctrl, rows):
+        """一覧の中身が前回と違うときだけ作り直す。作り直したら True を返す。
 
-        for idx, entry in enumerate(self.active_recorders):
+        自動更新のたびに作り直すと、スクリーンリーダーが同じ行を読み直したり、
+        読んでいる位置を見失ったりするため。
+        """
+        rows = [tuple(str(value) for value in row) for row in rows]
+        if self._list_rows.get(id(list_ctrl)) == rows:
+            return False
+        self._list_rows[id(list_ctrl)] = rows
+        list_ctrl.DeleteAllItems()
+        for idx, values in enumerate(rows):
+            self._set_list_row(list_ctrl, idx, values)
+        return True
+
+    def _fallback_start_time(self, recorder):
+        """開始時刻が分からない録音は、最初に見た時刻を開始時刻として表示し続ける"""
+        key = id(recorder)
+        if key not in self._fallback_start_times:
+            self._fallback_start_times[key] = datetime.datetime.now().strftime("%H:%M:%S")
+        return self._fallback_start_times[key]
+
+    def _update_active_list(self):
+        rows = []
+        for entry in self.active_recorders:
             recorder = entry["recorder"]
             station_name, program_title = self._resolve_recording_display(entry)
             file_name = f"{recorder.output_path}.{recorder.filetype}".split("\\")[-1]
@@ -187,14 +212,12 @@ class RecordingManagerDialog(BaseDialog):
                 try:
                     start_time = datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M:%S")
                 except (TypeError, ValueError, OSError):
-                    start_time = datetime.datetime.now().strftime("%H:%M:%S")
+                    start_time = self._fallback_start_time(recorder)
             else:
-                start_time = datetime.datetime.now().strftime("%H:%M:%S")
-            self._set_list_row(
-                self.active_lst,
-                idx,
-                (station_name, program_title, start_time, _("録音中"), file_name),
-            )
+                start_time = self._fallback_start_time(recorder)
+            rows.append((station_name, program_title, start_time, _("録音中"), file_name))
+        if not self._replace_list_rows(self.active_lst, rows):
+            return
 
         # フォーカス移動後も停止できるよう、前回選択を可能な範囲で復元
         if self.active_recorders:
@@ -206,7 +229,6 @@ class RecordingManagerDialog(BaseDialog):
             self.selected_active_index = -1
 
     def _load_completed_recordings(self):
-        self.completed_lst.DeleteAllItems()
         schedules = schedule_manager.get_schedules()
         completed_schedules = [s for s in schedules if s.status == RECORDING_STATUS_COMPLETED]
         rows = []
@@ -251,8 +273,24 @@ class RecordingManagerDialog(BaseDialog):
                 )
             )
         rows.sort(key=lambda x: x[0], reverse=True)
-        for idx, (_, vals) in enumerate(rows):
-            self._set_list_row(self.completed_lst, idx, vals)
+
+        # 作り直す前に選んでいた行を覚えておき、同じ行を選び直す
+        old_rows = self._list_rows.get(id(self.completed_lst)) or []
+        selected = self.completed_lst.GetFirstSelected()
+        selected_row = old_rows[selected] if 0 <= selected < len(old_rows) else None
+        # ループ変数に _ を使うと、この関数内の _() (翻訳) が使えなくなるため別名にする
+        if not self._replace_list_rows(self.completed_lst, [vals for _end_time, vals in rows]):
+            return
+        if selected < 0:
+            return
+        new_rows = self._list_rows[id(self.completed_lst)]
+        if selected_row in new_rows:
+            restore_index = new_rows.index(selected_row)
+        else:
+            restore_index = min(selected, len(new_rows) - 1)
+        if restore_index >= 0:
+            self.completed_lst.Select(restore_index)
+            self.completed_lst.Focus(restore_index)
 
     def load_schedules(self):
         """予約一覧を読み込み"""
@@ -264,22 +302,20 @@ class RecordingManagerDialog(BaseDialog):
             self.log.error(f"Failed to load schedules: {e}")
 
     def _update_schedule_list(self):
-        self.schedule_lst.DeleteAllItems()
-        for idx, schedule in enumerate(self.schedules):
-            start_time_str = schedule.start_time.strftime("%Y-%m-%d %H:%M")
-            end_time_str = schedule.end_time.strftime("%Y-%m-%d %H:%M")
-            self._set_list_row(
-                self.schedule_lst,
-                idx,
+        rows = []
+        for schedule in self.schedules:
+            rows.append(
                 (
                     schedule.program_title,
                     schedule.station_name,
-                    start_time_str,
-                    end_time_str,
+                    schedule.start_time.strftime("%Y-%m-%d %H:%M"),
+                    schedule.end_time.strftime("%Y-%m-%d %H:%M"),
                     schedule.get_status_display_name(),
                     schedule.output_path,
-                ),
+                )
             )
+        if not self._replace_list_rows(self.schedule_lst, rows):
+            return
 
         # フォーカス移動や自動更新後も選択状態を維持
         if self.schedules:
