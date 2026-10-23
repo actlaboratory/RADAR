@@ -1,4 +1,5 @@
 import atexit
+import itertools
 import json
 import os
 import subprocess
@@ -107,6 +108,8 @@ class MPVAudioPlayer:
         self._last_error = ""
         self._lock = threading.RLock()
         self._ipc_pipe_name = f"radar_mpv_{uuid.uuid4().hex}" if os.name == "nt" else ""
+        # get_property の応答を見分ける番号
+        self._ipc_request_ids = itertools.count(1)
         self._shutdown_done = False
         # 音量/デバイス変更で再起動するとき、再生位置に合わせたソースを返すコールバック
         self._restart_source_provider = None
@@ -220,6 +223,41 @@ class MPVAudioPlayer:
     def getLastError(self):
         with self._lock:
             return self._last_error
+
+    def getProperty(self, name):
+        """mpv IPC でプロパティの値を取得する。取得できなければ None。
+
+        mpv が応答しないと戻らないため、UI スレッドからは呼ばないこと。
+        応答を待つ間はロックを持たない（ほかの操作を止めないため）。
+        """
+        with self._lock:
+            if not self._ipc_pipe_name or not self._is_running_locked():
+                return None
+            path = self._ipc_pipe_path()
+        request_id = next(self._ipc_request_ids)
+        request = json.dumps({"command": ["get_property", name], "request_id": request_id}) + "\n"
+        try:
+            with open(path, "r+b", buffering=0) as pipe:
+                pipe.write(request.encode("utf-8"))
+                buf = b""
+                while True:
+                    chunk = pipe.read(4096)
+                    if not chunk:
+                        return None
+                    buf += chunk
+                    # 応答の前にイベントの通知が届くことがあるため、番号が一致する行を探す
+                    while b"\n" in buf:
+                        line, buf = buf.split(b"\n", 1)
+                        try:
+                            message = json.loads(line)
+                        except ValueError:
+                            continue
+                        if message.get("request_id") == request_id:
+                            if message.get("error") != "success":
+                                return None
+                            return message.get("data")
+        except OSError:
+            return None
 
     def getReturnCode(self):
         """mpv が自然終了した場合の終了コード。実行中・未起動なら None。"""

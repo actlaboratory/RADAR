@@ -22,23 +22,27 @@ from views import premium
 from views import programmanager
 
 
-# 聴き逃し再生の終了判定の余裕(秒)と、途中終了時の自動再接続の上限
+# 聴き逃し再生の終了判定の余裕(秒)
 TIMEFREE_END_MARGIN_SEC = 60
-TIMEFREE_RECONNECT_MAX = 3
-TIMEFREE_RECONNECT_RESET_SEC = 60
+# 聴き逃しの再生位置は mpv から毎秒取得する。取得の間はこの秒数まで経過時間で進める
+# （途切れて mpv が止まっている間に位置を進めないため）
+TIMEFREE_POSITION_MAX_GAP_SEC = 3
+# 聴き逃しの再接続後、mpv がこの秒数終了しなければ聴けているとみなす
+TIMEFREE_RECONNECT_CHECK_SEC = 2
+TIMEFREE_RECONNECTED_SEC = 3
 # 聴き逃しシークスライダーの位置を動かすキー
 SEEK_SLIDER_MOVE_KEYS = (
     wx.WXK_LEFT, wx.WXK_RIGHT, wx.WXK_UP, wx.WXK_DOWN,
     wx.WXK_HOME, wx.WXK_END, wx.WXK_PAGEUP, wx.WXK_PAGEDOWN,
 )
-# ライブ再生が途切れたときの自動再接続の間隔(秒)。回数がこれを超えたら最後の値で待つ
-LIVE_RECONNECT_INTERVAL_SEC = (5, 10, 20, 30)
+# 再生（ライブ・聴き逃し）が途切れたときの自動再接続の間隔(秒)。回数がこれを超えたら最後の値で待つ
+RECONNECT_INTERVAL_SEC = (5, 10, 20, 30)
 # 途切れてからこの秒数つながらなければ再接続をあきらめる（回線の切り替え・ルーターの再起動などを待つ）
-LIVE_RECONNECT_GIVE_UP_SEC = 300
+RECONNECT_GIVE_UP_SEC = 300
 # この秒数以上安定して再生できたら、再接続の状態をリセットする
-LIVE_RECONNECT_RESET_SEC = 60
+RECONNECT_RESET_SEC = 60
 # この回数目の再接続から、途切れていることを読み上げる（一瞬の途切れでは読み上げない）
-LIVE_RECONNECT_ANNOUNCE_COUNT = 2
+RECONNECT_ANNOUNCE_COUNT = 2
 # 再生失敗時に原因を調べるため playlist を取得し直すときのタイムアウト(秒)
 STREAM_PROBE_TIMEOUT_SEC = 8
 
@@ -100,6 +104,13 @@ class RadioManager:
         self._timefree_resume_position_sec = 0
         self._timefree_duration_sec = 0
         self._timefree_info = None
+        # 聴き逃しの再生位置の計算。mpv から取得した time-pos の差分で、実際に再生した秒数を数える
+        # （開始・シーク・mpv の再起動のたびに世代を進め、古い mpv の値を使わない）
+        self._timefree_clock_epoch = 0
+        self._timefree_played_sec = None
+        self._timefree_last_time_pos = None
+        self._timefree_sample_monotonic = None
+        self._timefree_sampling = False
         self.stream_watchdog_interval_ms = 5000
         # ライブ再生の復旧処理（再接続・中断理由の判定）を別スレッドで実行中か
         self._live_recovery_running = False
@@ -121,9 +132,14 @@ class RadioManager:
         # シーク(mpv 再起動)と再生開始/停止の競合を防ぐ。世代は再生開始/停止ごとに進める。
         self._playback_lock = threading.RLock()
         self._playback_generation = 0
-        # 聴き逃し再生中に mpv が途中終了したときの自動再接続回数
+        # 聴き逃し再生中に mpv が途中終了したときの自動再接続の状態
+        self._timefree_recovery_running = False
         self._timefree_reconnect_count = 0
         self._timefree_last_reconnect_monotonic = None
+        self._timefree_outage_started_monotonic = None
+        self._timefree_next_reconnect_monotonic = None
+        self._timefree_outage_announced = False
+        self._timefree_relogged_in = False
         # ライブ再生中に mpv が途中終了したときの自動再接続の状態
         self._live_reconnect_count = 0
         self._live_last_reconnect_monotonic = None
@@ -558,7 +574,7 @@ class RadioManager:
         last = self._live_last_reconnect_monotonic
         if self._player.isPlaying():
             # 一定時間安定して再生できていれば、再接続の状態をリセットする
-            if last is not None and now - last > LIVE_RECONNECT_RESET_SEC:
+            if last is not None and now - last > RECONNECT_RESET_SEC:
                 self.log.info("live playback stable; reset reconnect state")
                 self._reset_live_reconnect_state()
             return
@@ -568,9 +584,9 @@ class RadioManager:
         station_id = self.current_station_id
         if self._live_outage_started_monotonic is None:
             self._live_outage_started_monotonic = now
-        if now - self._live_outage_started_monotonic >= LIVE_RECONNECT_GIVE_UP_SEC:
+        if now - self._live_outage_started_monotonic >= RECONNECT_GIVE_UP_SEC:
             self.log.warning(
-                f"live playback could not be restored for {LIVE_RECONNECT_GIVE_UP_SEC}s "
+                f"live playback could not be restored for {RECONNECT_GIVE_UP_SEC}s "
                 f"({self._live_reconnect_count} reconnects); diagnosing: station={station_id}"
             )
             self._start_live_recovery_thread(
@@ -592,14 +608,14 @@ class RadioManager:
             return
         self._live_reconnect_count += 1
         self._live_last_reconnect_monotonic = now
-        interval = LIVE_RECONNECT_INTERVAL_SEC[min(self._live_reconnect_count, len(LIVE_RECONNECT_INTERVAL_SEC)) - 1]
+        interval = RECONNECT_INTERVAL_SEC[min(self._live_reconnect_count, len(RECONNECT_INTERVAL_SEC)) - 1]
         self._live_next_reconnect_monotonic = now + interval
         self.log.warning(
             f"live playback stopped unexpectedly (returncode={return_code}); reconnecting "
             f"(attempt {self._live_reconnect_count}, next in {interval}s): station={station_id}, "
             f"last player error={last_error[:300] or '(none)'}"
         )
-        if self._live_reconnect_count == LIVE_RECONNECT_ANNOUNCE_COUNT:
+        if self._live_reconnect_count == RECONNECT_ANNOUNCE_COUNT:
             self._live_outage_announced = True
             try:
                 self.parent.app.say("接続が途切れました。再接続しています。", interrupt=True)
@@ -968,10 +984,8 @@ class RadioManager:
         self.events.current_playing_station_id = station_id
         self.current_progs = None
         self.playback_mode = "timefree"
-        self._timefree_reconnect_count = 0
-        self._timefree_last_reconnect_monotonic = None
-        self._timefree_resume_position_sec = req["resume_seconds"]
-        self._timefree_started_monotonic = started_at
+        self._reset_timefree_reconnect_state()
+        self._reset_timefree_clock(req["resume_seconds"], started_at)
         self._timefree_info = dict(req["timefree_info"])
         self._timefree_duration_sec = max(0, int(self._timefree_info.get("duration_sec", 0) or 0))
         self.events.playing = False
@@ -1068,13 +1082,86 @@ class RadioManager:
         """現在の聴き逃し再生位置(秒)"""
         if self.playback_mode != "timefree":
             return int(max(0, self._timefree_resume_position_sec))
+        now = time.monotonic()
         elapsed = 0
-        if self._timefree_started_monotonic:
-            elapsed = max(0, int(time.monotonic() - self._timefree_started_monotonic))
+        if self._timefree_played_sec is not None:
+            # 最後に mpv から位置を取得してからの分は、途切れていても進み過ぎないよう上限を設ける
+            gap = max(0, now - self._timefree_sample_monotonic)
+            elapsed = self._timefree_played_sec + min(gap, TIMEFREE_POSITION_MAX_GAP_SEC)
+        elif self._timefree_started_monotonic:
+            # mpv から位置を取得するまでは、開始からの経過時間で数える
+            elapsed = max(0, now - self._timefree_started_monotonic)
         pos = int(max(0, self._timefree_resume_position_sec + elapsed))
         if self._timefree_duration_sec > 0:
             pos = min(pos, self._timefree_duration_sec)
         return pos
+
+    def _reset_timefree_clock(self, position, started_at=None, running=True):
+        """聴き逃しの再生位置の計算を position 秒から始め直す（開始・シーク・mpv の再起動・停止のたび）。
+        running が False なら、位置を position で止める。
+        """
+        self._timefree_clock_epoch += 1
+        self._timefree_resume_position_sec = position
+        if running:
+            self._timefree_started_monotonic = time.monotonic() if started_at is None else started_at
+        else:
+            self._timefree_started_monotonic = None
+        self._timefree_played_sec = None
+        self._timefree_last_time_pos = None
+        self._timefree_sample_monotonic = None
+
+    def _freeze_timefree_clock(self):
+        """mpv が終了したとき、再生位置をその時点で止める（再接続を待つ間に位置を進めない）"""
+        if self._timefree_played_sec is None:
+            # mpv から位置を取得する前に終了した。ほとんど再生できていないため、開始位置のままにする
+            position = self._timefree_resume_position_sec
+        else:
+            position = self.get_timefree_position_seconds()
+        self._reset_timefree_clock(position, running=False)
+
+    def _sample_timefree_position(self):
+        """（UI スレッド）mpv から実際の再生位置を別スレッドで取得する。
+        途切れて読み込みを待つ間は mpv の位置が進まないため、その間を再生位置に数えずに済む。
+        """
+        if self._timefree_sampling:
+            return
+        self._timefree_sampling = True
+        epoch = self._timefree_clock_epoch
+
+        def run():
+            try:
+                time_pos = self._player.getProperty("time-pos")
+                if not isinstance(time_pos, (int, float)):
+                    time_pos = None
+                with self._playback_lock:
+                    if epoch == self._timefree_clock_epoch and self.is_timefree_playing():
+                        self._apply_timefree_time_pos(time_pos)
+            except Exception as e:
+                self.log.warning(f"Failed to get timefree playback position: {e!r}")
+            finally:
+                self._timefree_sampling = False
+
+        threading.Thread(target=run, name="TimefreePosition", daemon=True).start()
+
+    def _apply_timefree_time_pos(self, time_pos):
+        """mpv の time-pos（取得できなければ None）から、実際に再生した秒数を進める"""
+        now = time.monotonic()
+        if self._timefree_played_sec is None:
+            if time_pos is None or self._timefree_started_monotonic is None:
+                return
+            # 最初に取得できるまでは、開始からの経過時間で数える
+            self._timefree_played_sec = max(0.0, now - self._timefree_started_monotonic)
+        else:
+            wall = max(0.0, now - self._timefree_sample_monotonic)
+            delta = None
+            if time_pos is not None and self._timefree_last_time_pos is not None:
+                delta = time_pos - self._timefree_last_time_pos
+            if delta is None or delta < 0 or delta > wall + 1:
+                # 位置を取得できなかった・値が飛んだ。この間は経過時間で数える
+                delta = wall
+            self._timefree_played_sec += delta
+        self._timefree_last_time_pos = time_pos
+        self._timefree_sample_monotonic = now
 
     def get_timefree_duration_seconds(self):
         """現在の聴き逃し番組の尺(秒)"""
@@ -1150,8 +1237,7 @@ class RadioManager:
             req["headers"] = headers
             req["resume_seconds"] = target
             self.m3u8 = stream_url
-            self._timefree_resume_position_sec = target
-            self._timefree_started_monotonic = time.monotonic()
+            self._reset_timefree_clock(target)
             return True
 
     def _timefree_restart_source(self):
@@ -1177,8 +1263,7 @@ class RadioManager:
         req["stream_url"] = stream_url
         req["resume_seconds"] = target
         self.m3u8 = stream_url
-        self._timefree_resume_position_sec = target
-        self._timefree_started_monotonic = time.monotonic()
+        self._reset_timefree_clock(target)
         return stream_url, headers, pm.timefree_seek_segment_offset(ft_dt, to_dt, target)
 
     def _replay_timefree_at(self, target_seconds, announce=False):
@@ -1227,8 +1312,7 @@ class RadioManager:
             current_pos = max(0, int(resume_seconds))
         if self._last_timefree_request is not None:
             self._last_timefree_request["resume_seconds"] = current_pos
-        self._timefree_resume_position_sec = current_pos
-        self._timefree_started_monotonic = None
+        self._reset_timefree_clock(current_pos, running=False)
         self.log.info(
             f"timefree playback stopped: station={self.current_station_id}, resume={current_pos}s, reason={announce_text}"
         )
@@ -1536,47 +1620,141 @@ class RadioManager:
             self.timefreeSeekApplyTimer.Stop()
 
     def _on_timefree_seek_timer(self, event):
-        if self.is_timefree_playing():
-            # 操作中・シーク反映中はスライダーを旧位置へ戻さない
-            if self._is_timefree_seek_busy():
-                return
-            if not self._player.isPlaying():
-                self._handle_timefree_player_exit()
-                return
-            self._sync_timefree_seek_ui_from_player()
-        else:
+        if not self.is_timefree_playing():
             self._stop_timefree_seek_timer()
+            return
+        # 操作中・シーク反映中はスライダーを旧位置へ戻さない。再接続中は結果を待つ
+        if self._is_timefree_seek_busy() or self._timefree_recovery_running:
+            return
+        if not self._player.isPlaying():
+            self._handle_timefree_player_exit()
+            return
+        self._check_timefree_reconnected()
+        self._sample_timefree_position()
+        self._sync_timefree_seek_ui_from_player()
+
+    def _reset_timefree_reconnect_state(self):
+        self._timefree_reconnect_count = 0
+        self._timefree_last_reconnect_monotonic = None
+        self._timefree_outage_started_monotonic = None
+        self._timefree_next_reconnect_monotonic = None
+        self._timefree_outage_announced = False
+        self._timefree_relogged_in = False
+
+    def _check_timefree_reconnected(self):
+        """（再生中）再接続後に再生が続いていれば、復帰を知らせ、安定したら再接続の状態をリセットする"""
+        last = self._timefree_last_reconnect_monotonic
+        if last is None:
+            return
+        now = time.monotonic()
+        if self._timefree_outage_announced and now - last >= TIMEFREE_RECONNECTED_SEC:
+            self._timefree_outage_announced = False
+            try:
+                self.parent.app.say("再接続しました。", interrupt=True)
+            except Exception as e:
+                self.log.error(f"Failed to announce timefree reconnected: {e}")
+        if now - last > RECONNECT_RESET_SEC:
+            self.log.info("timefree playback stable; reset reconnect state")
+            self._reset_timefree_reconnect_state()
 
     def _handle_timefree_player_exit(self):
-        """聴き逃し再生中に mpv が終了したとき、番組終了なら停止し、途中なら現在位置から再接続する"""
+        """聴き逃し再生中に mpv が終了したとき、番組終了なら停止し、途中なら間隔を空けて再接続する"""
+        # 再接続を待つ間に再生位置が進まないよう、終了した時点で止める
+        self._freeze_timefree_clock()
         position = self.get_timefree_position_seconds()
         duration = self.get_timefree_duration_seconds()
         return_code = self._player.getReturnCode()
-        # 推定位置はバッファ待ちの分だけ実際より遅れるため、終端判定には余裕を持たせる
+        # 位置は mpv から毎秒取得した値のため、取得の間隔の分だけ遅れる。終端判定には余裕を持たせる
         if return_code == 0 and duration > 0 and position >= duration - TIMEFREE_END_MARGIN_SEC:
             self.log.info(f"timefree playback reached end: position={position}, duration={duration}")
             self.stop_timefree(announce_text="聴き逃し再生終了", resume_seconds=0)
             return
 
         now = time.monotonic()
-        last = self._timefree_last_reconnect_monotonic
-        if last is not None and now - last > TIMEFREE_RECONNECT_RESET_SEC:
-            self._timefree_reconnect_count = 0
-        if self._timefree_reconnect_count >= TIMEFREE_RECONNECT_MAX:
+        if self._timefree_outage_started_monotonic is None:
+            self._timefree_outage_started_monotonic = now
+        if now - self._timefree_outage_started_monotonic >= RECONNECT_GIVE_UP_SEC:
             self.log.error(
-                f"timefree playback stopped unexpectedly and reconnect gave up: "
-                f"returncode={return_code}, last error={(self._player.getLastError() or '')[:300]}"
+                f"timefree playback could not be restored for {RECONNECT_GIVE_UP_SEC}s "
+                f"({self._timefree_reconnect_count} reconnects): returncode={return_code}, "
+                f"last error={(self._player.getLastError() or '')[:300]}"
             )
-            self.stop_timefree(announce_text="聴き逃し再生が中断されました", resume_seconds=position)
+            self.stop_timefree(announce_text=f"聴き逃し再生が中断されました。{NETWORK_ERROR_MESSAGE}", resume_seconds=position)
+            return
+        if self._timefree_next_reconnect_monotonic is not None and now < self._timefree_next_reconnect_monotonic:
             return
         self._timefree_reconnect_count += 1
         self._timefree_last_reconnect_monotonic = now
+        interval = RECONNECT_INTERVAL_SEC[min(self._timefree_reconnect_count, len(RECONNECT_INTERVAL_SEC)) - 1]
+        self._timefree_next_reconnect_monotonic = now + interval
         self.log.warning(
-            f"timefree playback stopped unexpectedly (returncode={return_code}); "
-            f"reconnecting at {position}s ({self._timefree_reconnect_count}/{TIMEFREE_RECONNECT_MAX})"
+            f"timefree playback stopped unexpectedly (returncode={return_code}); reconnecting at {position}s "
+            f"(attempt {self._timefree_reconnect_count}, next in {interval}s), "
+            f"last player error={(self._player.getLastError() or '')[:300] or '(none)'}"
         )
-        # トークン期限切れで終了した可能性もあるため、再接続時は認証し直す
-        self._apply_timefree_seek_target(position, refresh_auth=True)
+        if self._timefree_reconnect_count == RECONNECT_ANNOUNCE_COUNT:
+            self._timefree_outage_announced = True
+            try:
+                self.parent.app.say("接続が途切れました。再接続しています。", interrupt=True)
+            except Exception as e:
+                self.log.error(f"Failed to announce timefree reconnecting: {e}")
+        self._start_timefree_recovery(position)
+
+    def _start_timefree_recovery(self, position):
+        """（UI スレッド）聴き逃しの再接続を別スレッドで開始する（認証の通信で画面を止めない）"""
+        generation = self._playback_generation
+        self._timefree_recovery_running = True
+
+        def run():
+            try:
+                self._timefree_reconnect_worker(generation, position)
+            except Exception:
+                self.log.exception("unexpected error in timefree reconnect")
+            finally:
+                self._timefree_recovery_running = False
+
+        try:
+            threading.Thread(target=run, name="TimefreeReconnect", daemon=True).start()
+        except Exception:
+            self._timefree_recovery_running = False
+            self.log.exception("failed to start timefree reconnect thread")
+
+    def _timefree_reconnect_worker(self, generation, position):
+        """（別スレッド）認証し直して position 秒から再生し直す。
+
+        失敗したら次の間隔で再試行する。聴取できない（403・404）とわかったら待っても直らないため中断する。
+        """
+        try:
+            # トークン期限切れで終了した可能性もあるため、認証し直す
+            self.seek_timefree(position, generation=generation, refresh_auth=True)
+        except Exception as e:
+            self.log.warning(f"timefree reconnect failed: {e!r}")
+            return
+        # 配信を読み込めないと mpv はすぐに終了する。終了したら原因を調べる
+        time.sleep(TIMEFREE_RECONNECT_CHECK_SEC)
+        if self._is_playback_changed(generation) or self._player.isPlaying():
+            return
+        req = self._last_timefree_request or {}
+        status = self._probe_stream_status(req.get("stream_url"), req.get("headers"))
+        if status == 403 and not self._timefree_relogged_in:
+            if self._relogin_for_forbidden_stream(req.get("station_id"), self._get_program_manager()):
+                # 次の再接続で新しいセッションで認証し直す
+                self._timefree_relogged_in = True
+                return
+        if status in (403, 404):
+            wx.CallAfter(self._finish_timefree_give_up, generation, self._describe_stream_status(status))
+
+    def _finish_timefree_give_up(self, generation, reason):
+        """（UI スレッド）聴き逃しの再接続を諦めて停止し、理由を読み上げる"""
+        if self._is_playback_changed(generation) or not self.is_timefree_playing():
+            return
+        self.log.error(
+            f"timefree playback gave up after {self._timefree_reconnect_count} reconnects: reason={reason}"
+        )
+        self.stop_timefree(
+            announce_text=f"聴き逃し再生が中断されました。{reason}",
+            resume_seconds=self.get_timefree_position_seconds(),
+        )
 
     def onTimefreeSeekChanged(self, event):
         if self._timefree_seek_updating_ui:
