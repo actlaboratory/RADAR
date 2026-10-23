@@ -48,7 +48,9 @@ class ProgramSearchDialog(BaseDialog):
             self.radio_manager = radio_manager
         
         self.log = getLogger(f"{constants.LOG_PREFIX}.ProgramSearchDialog")
-        
+        # 録音の準備（通信）を別スレッドで行っている間は、続けて押されても始めない
+        self._recording_preparing = False
+
         # 起動時に初期化済みのキャッシュ/検索エンジンを優先的に利用
         self.cache_manager = None
         self.search_engine = None
@@ -834,7 +836,6 @@ class ProgramSearchDialog(BaseDialog):
             if not stid:
                 simpleDialog.errorDialog(_("放送局情報がありません。"))
                 return
-            progs = getattr(globalVars.app.hMainView, "progs", None) or programmanager.ProgramManager()
             title = program.get("title", "")
             station_name = program.get("station_name", "")
             rh = getattr(globalVars.app.hMainView, "recording_handler", None)
@@ -843,8 +844,39 @@ class ProgramSearchDialog(BaseDialog):
             ):
                 return
 
-            segments = progs.get_timefree_recording_segments(stid, start_dt, end_dt)
+            # 認証などの通信には数秒かかるため、別スレッドで行い画面を止めない
+            if not self._begin_recording_preparation(_("聴き逃し録音準備中: ") + title):
+                return
             filetype = get_file_type_from_config()
+            threading.Thread(
+                target=self._timefree_record_worker,
+                args=(stid, station_name, title, start_dt, end_dt, filetype),
+                name="TimefreeRecordStart",
+                daemon=True,
+            ).start()
+        except Exception as e:
+            self.log.error(f"on_record_timefree: {e}")
+            simpleDialog.errorDialog(_("聴き逃し録音に失敗しました。") + f"\n{e}")
+
+    def _begin_recording_preparation(self, announce_text):
+        """録音の準備（通信）を始めてよいか。準備中なら知らせて False を返す"""
+        if self._recording_preparing:
+            globalVars.app.say(_("録音準備中です。"), interrupt=True)
+            return False
+        self._recording_preparing = True
+        try:
+            globalVars.app.say(announce_text, interrupt=True)
+        except Exception as e:
+            self.log.error(f"Failed to announce recording preparation: {e}")
+        return True
+
+    def _timefree_record_worker(self, stid, station_name, title, start_dt, end_dt, filetype):
+        """（別スレッド）聴き逃し録音の準備と開始を行い、結果を UI スレッドへ渡す"""
+        result = {"status": "error", "detail": ""}
+        try:
+            # 再生中の局の認証情報を書き換えないよう、録音用に別の ProgramManager を使う
+            progs = programmanager.ProgramManager()
+            segments = progs.get_timefree_recording_segments(stid, start_dt, end_dt)
             safe_title = re.sub(r'[<>:"/\\|?*]', "_", title).strip()
             replace = safe_title.replace(" ", "-")
             station_dir = station_name.replace(" ", "_")
@@ -865,26 +897,40 @@ class ProgramSearchDialog(BaseDialog):
                 input_options=["-http_seekable", "0", "-seekable", "0"],
             )
             if rec:
-                globalVars.app.sayLater(_("聴き逃し録音を開始しました。") + f" {title}")
-                try:
-                    notification_notify(
-                        title=_("録音開始"),
-                        message=_("聴き逃し録音を開始しました。") + f"\n{title}",
-                        app_name="rpb",
-                        timeout=10,
-                    )
-                except Exception as e:
-                    self.log.error(f"Failed to send timefree recording start notification: {e}")
+                result["status"] = "started"
             else:
-                detail = recorder_manager.get_last_start_error()
-                msg = _("聴き逃し録音の開始に失敗しました。")
-                if detail:
-                    msg += f"\n\n{detail}"
-                simpleDialog.errorDialog(msg)
+                result["status"] = "start_failed"
+                result["detail"] = recorder_manager.get_last_start_error()
         except Exception as e:
             self.log.error(f"on_record_timefree: {e}")
-            simpleDialog.errorDialog(_("聴き逃し録音に失敗しました。") + f"\n{e}")
-    
+            result["detail"] = str(e)
+        finally:
+            wx.CallAfter(self._finish_timefree_record, title, result)
+
+    def _finish_timefree_record(self, title, result):
+        """（UI スレッド）聴き逃し録音の開始の結果を知らせる"""
+        self._recording_preparing = False
+        status = result["status"]
+        if status == "started":
+            globalVars.app.say(_("聴き逃し録音を開始しました。") + f" {title}", interrupt=True)
+            try:
+                notification_notify(
+                    title=_("録音開始"),
+                    message=_("聴き逃し録音を開始しました。") + f"\n{title}",
+                    app_name="rpb",
+                    timeout=10,
+                )
+            except Exception as e:
+                self.log.error(f"Failed to send timefree recording start notification: {e}")
+            return
+        if status == "start_failed":
+            msg = _("聴き逃し録音の開始に失敗しました。")
+            if result["detail"]:
+                msg += f"\n\n{result['detail']}"
+            simpleDialog.errorDialog(msg)
+            return
+        simpleDialog.errorDialog(_("聴き逃し録音に失敗しました。") + f"\n{result['detail']}")
+
     def show_program_detail(self, program):
         """番組詳細を表示"""
         try:
@@ -1131,7 +1177,11 @@ class ProgramSearchDialog(BaseDialog):
         self._poll_data_refresh_completion()
 
     def _start_live_remainder_recording(self, station_id, station_name, program_title, start_dt, end_dt):
-        """放送中の番組を、終了時刻までライブストリームで録音する（番組表ダイアログと同様）。"""
+        """放送中の番組を、終了時刻までライブストリームで録音する（番組表ダイアログと同様）。
+
+        認証などの通信には数秒かかるため、別スレッドで行い画面を止めない。
+        結果は _finish_live_remainder_recording で知らせる。
+        """
         current = datetime.datetime.now()
         if current >= end_dt:
             simpleDialog.errorDialog(_("この番組はすでに終了しています。"))
@@ -1148,52 +1198,86 @@ class ProgramSearchDialog(BaseDialog):
         ):
             return None
 
-        progs = getattr(globalVars.app.hMainView, "progs", None) or programmanager.ProgramManager()
-        try:
-            stream_url, http_headers = progs.get_authenticated_stream_url(station_id)
-        except Exception as e:
-            self.log.error(f"Failed to get live stream URL for remainder recording: {e}")
-            simpleDialog.errorDialog(_("ストリームURLの取得に失敗しました。"))
-            return False
-
-        replace = safe_title.replace(" ", "-")
-        station_dir = (station_name or station_id).replace(" ", "_")
-        dirs = create_recording_dir(station_dir, program_title)
-        timestamp = start_dt.strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(dirs, f"{timestamp}_{replace}")
+        if not self._begin_recording_preparation(f"録音準備中: {station_name or station_id}"):
+            return None
         filetype = get_file_type_from_config()
-        end_wall = time.mktime(end_dt.timetuple()) + RECORDING_END_TIME_BUFFER
-        info = f"{station_name} {safe_title}"
+        threading.Thread(
+            target=self._live_remainder_worker,
+            args=(station_id, station_name, program_title, safe_title, start_dt, end_dt, filetype),
+            name="RemainderRecordStart",
+            daemon=True,
+        ).start()
+        return None
 
-        def on_recording_complete(recorder):
+    def _live_remainder_worker(self, station_id, station_name, program_title, safe_title, start_dt, end_dt, filetype):
+        """（別スレッド）ストリームの認証と録音の開始を行い、結果を UI スレッドへ渡す"""
+        result = {"status": "error", "detail": ""}
+        try:
+            # 再生中の局の認証情報を書き換えないよう、録音用に別の ProgramManager を使う
+            progs = programmanager.ProgramManager()
             try:
-                notification_notify(
-                    title=_("録音完了"),
-                    message=f"{safe_title} の録音が完了しました。",
-                    app_name="rpb",
-                    timeout=10,
-                )
-            except Exception as ex:
-                self.log.error(f"Failed to send remainder recording completion notification: {ex}")
+                stream_url, http_headers = progs.get_authenticated_stream_url(station_id)
+            except Exception as e:
+                self.log.error(f"Failed to get live stream URL for remainder recording: {e}")
+                result["status"] = "no_stream"
+                return
 
-        recorder = recorder_manager.start_recording(
-            stream_url,
-            output_path,
-            info,
-            end_wall,
-            filetype,
-            on_recording_complete,
-            station_id,
-            safe_title,
-            http_headers=http_headers,
-        )
-        if not recorder:
-            detail = recorder_manager.get_last_start_error()
+            replace = safe_title.replace(" ", "-")
+            station_dir = (station_name or station_id).replace(" ", "_")
+            dirs = create_recording_dir(station_dir, program_title)
+            timestamp = start_dt.strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(dirs, f"{timestamp}_{replace}")
+            end_wall = time.mktime(end_dt.timetuple()) + RECORDING_END_TIME_BUFFER
+            info = f"{station_name} {safe_title}"
+
+            def on_recording_complete(recorder):
+                try:
+                    notification_notify(
+                        title=_("録音完了"),
+                        message=f"{safe_title} の録音が完了しました。",
+                        app_name="rpb",
+                        timeout=10,
+                    )
+                except Exception as ex:
+                    self.log.error(f"Failed to send remainder recording completion notification: {ex}")
+
+            recorder = recorder_manager.start_recording(
+                stream_url,
+                output_path,
+                info,
+                end_wall,
+                filetype,
+                on_recording_complete,
+                station_id,
+                safe_title,
+                http_headers=http_headers,
+            )
+            if recorder:
+                result["status"] = "started"
+            else:
+                result["status"] = "start_failed"
+                result["detail"] = recorder_manager.get_last_start_error()
+        except Exception as e:
+            self.log.error(f"Error during remainder recording start: {e}")
+        finally:
+            wx.CallAfter(self._finish_live_remainder_recording, station_name, safe_title, end_dt, result)
+
+    def _finish_live_remainder_recording(self, station_name, safe_title, end_dt, result):
+        """（UI スレッド）放送中番組の録音開始の結果を知らせる"""
+        self._recording_preparing = False
+        status = result["status"]
+        if status == "no_stream":
+            simpleDialog.errorDialog(_("ストリームURLの取得に失敗しました。"))
+            return
+        if status == "start_failed":
             msg = _("録音の開始に失敗しました。")
-            if detail:
-                msg += f"\n\n{detail}"
+            if result["detail"]:
+                msg += f"\n\n{result['detail']}"
             simpleDialog.errorDialog(msg)
-            return False
+            return
+        if status != "started":
+            simpleDialog.errorDialog(_("録音の開始中にエラーが発生しました。"))
+            return
 
         try:
             globalVars.app.say(f"録音開始: {station_name} {safe_title}", interrupt=True)
@@ -1211,8 +1295,7 @@ class ProgramSearchDialog(BaseDialog):
             self.log.error(f"Failed to send remainder recording start notification: {ex}")
 
         self.log.info(f"Live remainder recording started: {safe_title} until {end_dt}")
-        return True
-    
+
     def onScheduleRecording(self, event):
         """選択された番組を予約録音（放送中は番組表と同様にライブ録音）"""
         try:
