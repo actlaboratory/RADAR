@@ -308,7 +308,7 @@ class Events(BaseEvents):
 		
 		if active_recorders:
 			recording_count = len(active_recorders)
-			message = f"現在{recording_count}件の録音が進行中です。\nアプリケーションを終了しますか？\n\n録音を続行する場合は「いいえ」を選択してください。"
+			message = _("現在%(count)d件の録音が進行中です。\nアプリケーションを終了しますか？\n\n録音を続行する場合は「いいえ」を選択してください。") % {"count": recording_count}
 			
 			result = yesNoDialog(_("録音中の終了確認"), message)
 			if result == wx.ID_NO:
@@ -320,7 +320,7 @@ class Events(BaseEvents):
 		
 		pending_schedule_count = schedule_manager.count_pending_schedules_for_exit_warning()
 		if pending_schedule_count > 0:
-			message = f"録音予約が{pending_schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
+			message = _("録音予約が%(count)d件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？") % {"count": pending_schedule_count}
 			
 			result = yesNoDialog(_("予約データ削除の確認"), message)
 			if result == wx.ID_NO:

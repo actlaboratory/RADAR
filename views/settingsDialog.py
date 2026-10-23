@@ -132,7 +132,7 @@ class Dialog(BaseDialog):
 			folder_selector = FolderSelector(self.wnd)
 			is_valid, error_message = folder_selector.validate_folder_path(output_dir)
 			if not is_valid:
-				simpleDialog.errorDialog(f"録音出力先フォルダが無効です: {error_message}")
+				simpleDialog.errorDialog(_("録音出力先フォルダが無効です: %(detail)s") % {"detail": error_message})
 				return
 		
 		result = self._save()
@@ -196,7 +196,7 @@ class Dialog(BaseDialog):
 			if is_valid:
 				self.output_directory.SetValue(selected_path)
 			else:
-				simpleDialog.errorDialog(f"選択されたフォルダが無効です: {error_message}")
+				simpleDialog.errorDialog(_("選択されたフォルダが無効です: %(detail)s") % {"detail": error_message})
 	
 	def browseDir(self, event):
 		target = self.dir
