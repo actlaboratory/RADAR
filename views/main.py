@@ -174,7 +174,7 @@ class Menu(BaseMenu):
 			"HELP_VERSIONINFO": self.parent.events.version,
 		})
 
-		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F))"))
+		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F)"))
 		self.hMenuBar.Append(self.hFunctionMenu, _("再生(&P)"))
 		self.hMenuBar.Append(self.hProgramListMenu, _("番組(&A)"))
 		self.hMenuBar.Append(self.hRecordingMenu, _("録音(&r)"))

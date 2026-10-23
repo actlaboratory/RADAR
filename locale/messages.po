@@ -330,7 +330,7 @@ msgid ""
 msgstr ""
 
 #: views\main.py:69
-msgid "ファイル(&F))"
+msgid "ファイル(&F)"
 msgstr ""
 
 #: views\main.py:71

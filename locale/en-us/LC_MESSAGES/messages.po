@@ -348,7 +348,7 @@ msgstr ""
 "The key combination %(key)s, configured as %(command)s, is reserved.\\n\n"
 
 #: views\main.py:69
-msgid "ファイル(&F))"
+msgid "ファイル(&F)"
 msgstr "&File"
 
 #: views\main.py:71
