@@ -1348,6 +1348,8 @@ class RadioManager:
             # 取得中にユーザーが別の画面（ダイアログなど）へ移っていたら、フォーカスを奪わない
             self._build_station_tree(station_list, take_focus=self.parent.hFrame.IsActive())
             self._select_station_in_tree(restore_station_id)
+            # 前回の聴き逃しの局が一覧から消えていれば（エリアフリーからのログアウトなど）再開できなくする
+            self.update_timefree_command_ui()
             self._sync_program_info_menu_after_station_list_reload(was_displaying)
             self.creator.GetSizer().Layout()
             if station_list[0] != "error":
@@ -1689,6 +1691,7 @@ class RadioManager:
         メニュー「聴き逃し配信の再生/停止」と F2 の有効条件。
         - 聴き逃し再生中: 停止のため有効
         - 再開情報なし: 無効（新規開始は番組表ダイアログから）
+        - 前回聴き逃しの局が今の放送局一覧に無い: 無効（エリア外になった局は再開できない）
         - 無再生かつ再開情報あり: 前回停止位置からの再開が可能なため有効
         - ライブ再生中かつ再開情報あり:
             - ライブの局と前回聴き逃しの局が同一 → 有効（確認後に再開）
@@ -1698,6 +1701,8 @@ class RadioManager:
             return True
         if not self.has_last_timefree_request():
             return False
+        if not self._is_last_timefree_station_listed():
+            return False
         if not self.is_live_playing():
             return True
         live_sid = self.current_station_id
@@ -1706,6 +1711,16 @@ class RadioManager:
             return True
         ack = self._timefree_menu_live_ack_station_id
         return bool(live_sid and ack == live_sid)
+
+    def _is_last_timefree_station_listed(self):
+        """前回の聴き逃しの局が今の放送局一覧にあるか。
+        エリアフリーからのログアウトやセッション切れでエリア外になった局は再開すると失敗するため。
+        一覧の取得に失敗して空のときは判定できないため、あるものとみなす。
+        再開情報は消さないため、再びログインすれば再開できる。
+        """
+        if not self.stid:
+            return True
+        return (self._last_timefree_request or {}).get("station_id") in self.stid
 
     def update_timefree_command_ui(self):
         """聴き逃し配信メニュー・ショートカット(F2)のラベルと有効状態を更新"""
