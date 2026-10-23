@@ -5,6 +5,7 @@
 
 import wx
 import os
+import threading
 import win32com.client
 
 import constants
@@ -196,6 +197,8 @@ class Events(BaseEvents):
 	current_playing_station_id = None
 	current_selected_station_id = None
 	_exit_in_progress = False
+	# radikoプレミアムのログイン・ログアウトの通信を別スレッドで行っている間は True
+	_premium_busy = False
 
 
 	def onUpdateProcess(self, event):
@@ -628,6 +631,10 @@ class Events(BaseEvents):
 	def premiumLogin(self, event):
 		"""radikoプレミアムへのログイン/ログアウト"""
 		config = globalVars.app.config
+		if self._premium_busy:
+			# ログイン・ログアウトの通信中
+			globalVars.app.say(_("処理中です。しばらくお待ちください"), interrupt=True)
+			return
 		if premium.session.is_areafree():
 			result = yesNoDialog(
 				_("確認"),
@@ -635,13 +642,10 @@ class Events(BaseEvents):
 			)
 			if result != wx.ID_YES:
 				return
-			premium.session.logout()
-			premium.clear_credentials(config)
-			config.write()
-			self.update_premium_menu_label()
-			# 番組検索用キャッシュの収集範囲は、新しい一覧（radio_manager.stid）ができてから切り替える
-			self.onUpdateProgram(None, on_finished=self._refresh_program_cache_scope)
-			dialog(_("ログアウト"), _("ログアウトしました。お住まいのエリアの放送局一覧に戻ります。"))
+			# ログアウトの通信には最大で10秒ほどかかるため、別スレッドで行い画面を止めない
+			self._premium_busy = True
+			globalVars.app.say(_("ログアウトしています"), interrupt=True)
+			self._run_in_background(premium.session.logout, self._finish_premium_logout, "PremiumLogout")
 			return
 
 		d = premiumLoginDialog.Dialog(
@@ -654,10 +658,40 @@ class Events(BaseEvents):
 		# パスワードでのログインはダイアログ内で済ませている
 		method, mail, password, save = d.GetValue()
 		if method == premium.METHOD_BROWSER:
-			radiko_session = self._premiumBrowserLogin()
-			if not radiko_session:
-				return
+			self._premiumBrowserLogin(
+				lambda radiko_session: self._complete_premium_login(method, mail, password, save, radiko_session)
+			)
+			return
+		self._complete_premium_login(method, mail, password, save, None)
 
+	def _run_in_background(self, work, on_done, name):
+		"""work() を別スレッドで実行し、on_done(例外または None) を UI スレッドで呼ぶ"""
+		def run():
+			try:
+				work()
+				error = None
+			except Exception as e:
+				error = e
+			wx.CallAfter(on_done, error)
+		threading.Thread(target=run, name=name, daemon=True).start()
+
+	def _finish_premium_logout(self, error):
+		"""（UI スレッド）ログアウトの通信が終わったときに呼ばれる"""
+		self._premium_busy = False
+		if error is not None:
+			# ログイン状態は通信の前に消している。サーバーへの通知に失敗してもログアウトは済んでいる
+			self.log.warning("premium logout request failed: %s", error)
+		config = globalVars.app.config
+		premium.clear_credentials(config)
+		config.write()
+		self.update_premium_menu_label()
+		# 番組検索用キャッシュの収集範囲は、新しい一覧（radio_manager.stid）ができてから切り替える
+		self.onUpdateProgram(None, on_finished=self._refresh_program_cache_scope)
+		dialog(_("ログアウト"), _("ログアウトしました。お住まいのエリアの放送局一覧に戻ります。"))
+
+	def _complete_premium_login(self, method, mail, password, save, radiko_session):
+		"""ログインできたあと、ログイン情報を保存して放送局一覧を作り直す"""
+		config = globalVars.app.config
 		if not save:
 			premium.clear_credentials(config)
 			config[premium.CONFIG_SECTION]["method"] = method
@@ -680,24 +714,36 @@ class Events(BaseEvents):
 			message += "\n" + _("番組検索用に全国の番組データをバックグラウンドで取得します。完了までしばらく時間がかかります。")
 		dialog(_("ログイン"), message)
 
-	def _premiumBrowserLogin(self):
-		"""埋め込みブラウザでログインしてもらい、セッションを検証する。成功すれば radiko_session"""
+	def _premiumBrowserLogin(self, on_success):
+		"""埋め込みブラウザでログインしてもらい、セッションを検証する。成功すれば on_success(radiko_session) を呼ぶ"""
 		d = premiumBrowserLoginDialog.Dialog()
 		d.Initialize()
 		if d.Show() == wx.ID_CANCEL:
-			return None
+			return
 		radiko_session, areafree = d.GetValue()
-		try:
-			with wx.BusyCursor():
-				premium.session.login_with_session(radiko_session, assume_areafree=areafree)
-		except premium.PremiumAuthError as e:
-			if e.kind == premium.PremiumAuthError.BLOCKED:
+		# セッションの検証の通信には最大で数十秒かかるため、別スレッドで行い画面を止めない
+		self._premium_busy = True
+		globalVars.app.say(_("ログインしています"), interrupt=True)
+
+		def on_done(error):
+			self._premium_busy = False
+			if error is None:
+				on_success(radiko_session)
+				return
+			if isinstance(error, premium.PremiumAuthError) and error.kind == premium.PremiumAuthError.BLOCKED:
 				# 既にブラウザでログインしているため、ブラウザでのログインを勧める説明は使わない
 				errorDialog(_("ログイン状態の確認が、サーバー側の不正アクセス対策によって拒否されました。\n時間をおいて再度お試しください。"))
+			elif isinstance(error, premium.PremiumAuthError):
+				errorDialog(premium.describe_auth_error(error))
 			else:
-				errorDialog(premium.describe_auth_error(e))
-			return None
-		return radiko_session
+				self.log.error(f"Unexpected error during premium browser login: {error!r}")
+				errorDialog(_("ログインに失敗しました。") + f"\n{error}")
+
+		self._run_in_background(
+			lambda: premium.session.login_with_session(radiko_session, assume_areafree=areafree),
+			on_done,
+			"PremiumBrowserLogin",
+		)
 
 	def onPremiumInvalidated(self, error=None):
 		"""再ログイン失敗やセッション切れでプレミアムのセッションが無効化されたときに UI スレッドで呼ばれる"""
