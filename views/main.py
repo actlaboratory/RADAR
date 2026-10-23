@@ -65,6 +65,7 @@ class MainView(BaseView):
 		except premium.PremiumAuthError as e:
 			auto_login_error = e
 		self.events.update_premium_menu_label()
+		self.events.update_startup_menu_label()
 
 		try:
 			self.radio_manager.areaDetermination(self.progs)
@@ -828,9 +829,9 @@ class Events(BaseEvents):
 		search_dialog.Initialize()
 		search_dialog.Show()
 
-	def registerStartup(self, event):
-		"""Windows起動時の自動起動を設定/解除する"""
-		target = os.path.join(
+	def _startup_shortcut_path(self):
+		"""Windows起動時の自動起動に使うショートカットのパス"""
+		return os.path.join(
 			os.environ["appdata"],
 			"Microsoft",
 			"Windows",
@@ -839,14 +840,27 @@ class Events(BaseEvents):
 			"Startup",
 			"%s.lnk" % constants.APP_NAME
 		)
+
+	def update_startup_menu_label(self):
+		"""自動起動の設定状態に応じてメニューの表記を切り替える"""
+		if os.path.exists(self._startup_shortcut_path()):
+			self.parent.menu.SetMenuLabel("OPTION_STARTUP", _("Windows起動時の自動起動を無効化(&W)"))
+		else:
+			self.parent.menu.SetMenuLabel("OPTION_STARTUP")
+
+	def registerStartup(self, event):
+		"""Windows起動時の自動起動を設定/解除する"""
+		target = self._startup_shortcut_path()
 		if os.path.exists(target):
 			d = yesNoDialog(_("確認"), _("Windows起動時の自動起動はすでに設定されています。設定を解除しますか？"))
 			if d == wx.ID_YES:
 				os.remove(target)
+				self.update_startup_menu_label()
 				dialog(_("完了"), _("Windows起動時の自動起動を無効化しました。"))
 			return
 		ws = win32com.client.Dispatch("wscript.shell")
 		shortCut = ws.CreateShortcut(target)
 		shortCut.TargetPath = globalVars.app.getAppPath()
 		shortCut.Save()
+		self.update_startup_menu_label()
 		dialog(_("完了"), _("Windows起動時の自動起動を設定しました。"))
