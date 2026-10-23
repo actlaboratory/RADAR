@@ -114,6 +114,10 @@ class RadioManager:
         self._seek_announce_call = None
         # シークスライダーを隠すときにフォーカスを移したか。直後の読み上げを遅らせるのに使う
         self._seek_focus_moved = False
+        # 放送局一覧の更新（別スレッド）の状態と、終わったときに呼ぶ処理
+        self._station_reload_running = False
+        self._station_reload_again = False
+        self._station_reload_callbacks = []
         # シーク(mpv 再起動)と再生開始/停止の競合を防ぐ。世代は再生開始/停止ごとに進める。
         self._playback_lock = threading.RLock()
         self._playback_generation = 0
@@ -243,50 +247,45 @@ class RadioManager:
                 return False, f"予期せぬエラーが発生しました: {str(e)}"
 
     def setRadioList(self):
-        """ラジオ局リストを設定"""
-        root = self.tree.GetRootItem()
-        self.stid = {}
-        self.station_list_areafree = False
+        """ラジオ局リストを設定（起動時。取得が終わるまで待つ）"""
+        self._build_station_tree(self._fetch_station_list(self.area, premium.session.is_areafree()))
 
+    def _fetch_station_list(self, area, areafree):
+        """放送局一覧を取得する。画面を操作しないので、別スレッドからも呼べる。
+
+        Returns:
+            ("areafree", [(地方名, 自分の地方か, [(局名, 局ID), ...]), ...])
+            ("area", [(局名, 局ID), ...])
+            ("error", 表示するメッセージ（None なら表示しない）)
+        """
         # 認証で得たエリアコードの放送局一覧を取得（再生可能局のみ）
-        if not self.area:
-            errorDialog(_("エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください"))
-            self.tree.SetFocus()
-            self.tree.Expand(root)
-            self.tree.SelectItem(root, select=True)
-            return
+        if not area:
+            return ("error", "エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください")
 
-        if premium.session.is_areafree() and self._append_areafree_stations(root):
-            self.station_list_areafree = True
-            self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
-            self.tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.events.onRadioSelected)
-            self.tree.SetFocus()
-            self.tree.Expand(root)
-            self.tree.SelectItem(root, select=True)
-            return
+        if areafree:
+            regions = self._fetch_areafree_regions(area)
+            if regions:
+                return ("areafree", regions)
 
-        url = f"https://radiko.jp/v2/station/list/{self.area}.xml"
+        url = f"https://radiko.jp/v2/station/list/{area}.xml"
         success, result = self.get_radio_stations(url)
         if not success:
             # v2失敗時のみ従来のv3全体リストをフォールバックとして使用
-            self.log.warning(f"Failed to fetch area station list ({self.area}) via v2 API: {result}")
+            self.log.warning(f"Failed to fetch area station list ({area}) via v2 API: {result}")
             fallback_url = "https://radiko.jp/v3/station/region/full.xml"
             success, result = self.get_radio_stations(fallback_url)
             if not success:
-                errorDialog(_(result))
-                self.tree.SetFocus()
-                self.tree.Expand(root)
-                self.tree.SelectItem(root, select=True)
-                return
+                return ("error", result)
 
+        stations = []
         try:
             # XMLのパース
             parsed = ET.fromstring(result.encode('utf-8'))
 
-            stations = parsed.findall(".//station")
-            if stations:
+            station_elements = parsed.findall(".//station")
+            if station_elements:
                 # v2/station/list/JPxx.xml 形式
-                for station in stations:
+                for station in station_elements:
                     name_element = station.find("name")
                     id_element = station.find("id")
                     if name_element is None or id_element is None:
@@ -295,65 +294,51 @@ class RadioManager:
                     station_id = id_element.text or ""
                     if not station_name or not station_id:
                         continue
-                    self.tree.AppendItem(root, station_name, data=station_id)
-                    self.stid[station_id] = station_name
+                    stations.append((station_name, station_id))
             else:
-                # v3/station/region/full.xml 形式（フォールバック）
+                # v3/station/region/full.xml 形式（フォールバック）。全国の局と、自分の地方の局を載せる
                 for r in parsed:
+                    ascii_name = r.attrib["ascii_name"]
+                    if ascii_name != "ZENKOKU" and ascii_name != self.region[area]:
+                        continue
                     for station in r:
-                        stream = {r.attrib["ascii_name"]: {}}
-                        stream[r.attrib["ascii_name"]] = {
-                            "radioname": station.find("name").text,
-                            "radioid": station.find("id").text
-                        }
-
-                        if "ZENKOKU" in stream:
-                            self.tree.AppendItem(root, stream["ZENKOKU"]["radioname"], data=stream["ZENKOKU"]["radioid"])
-                            self.stid[stream["ZENKOKU"]["radioid"]] = stream["ZENKOKU"]["radioname"]
-
-                        if self.region[self.area] in stream:
-                            self.tree.AppendItem(root, stream[self.region[self.area]]["radioname"], data=stream[self.region[self.area]]["radioid"])
-                            self.stid[stream[self.region[self.area]]["radioid"]] = stream[self.region[self.area]]["radioname"]
+                        stations.append((station.find("name").text, station.find("id").text))
 
         except ET.ParseError:
             self.log.error("Failed to parse xml!")
-            errorDialog(_("放送局情報の取得に失敗しました。\nしばらく時間をおいて再度お試しください。"))
-            return
+            return ("error", "放送局情報の取得に失敗しました。\nしばらく時間をおいて再度お試しください。")
 
         except Exception as e:
             self.log.error(f"An unexpected error occurred: {str(e)}")
-            return
+            return ("error", None)
 
-        # イベントバインドとツリーの設定
-        self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
-        self.tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.events.onRadioSelected)
-        self.tree.SetFocus()
-        self.tree.Expand(root)
-        self.tree.SelectItem(root, select=True)
+        return ("area", stations)
 
-    def _append_areafree_stations(self, root):
-        """エリアフリー時、全国の放送局を地方ごとのノードに分けてツリーへ追加する。
+    def _fetch_areafree_regions(self, area):
+        """エリアフリー時、全国の放送局を地方ごとに分けて返す。画面を操作しないので、別スレッドからも呼べる。
 
-        失敗した場合は False を返し、呼び出し側で通常のエリア内一覧にフォールバックする。
+        失敗した場合は None を返し、呼び出し側で通常のエリア内一覧にフォールバックする。
         """
         success, result = self.get_radio_stations("https://radiko.jp/v3/station/region/full.xml")
         if not success:
             self.log.warning(f"Failed to fetch full station list for areafree: {result}")
-            return False
+            return None
         try:
             parsed = ET.fromstring(result.encode('utf-8'))
         except ET.ParseError:
             self.log.error("Failed to parse full station list xml for areafree")
-            return False
+            return None
 
         # エリアフリー非対応（<areafree>0</areafree>。NHK の地域局など）の局は、エリア内で聴ける局だけ載せる
-        local_ids = programmanager.get_area_station_ids(self.area)
-        stid = {}
-        own_region_item = None
+        local_ids = programmanager.get_area_station_ids(area)
+        seen_ids = set()
+        regions = []
+        own_region_found = False
         for region in parsed:
             region_label = region.get("region_name") or region.get("ascii_name") or ""
             is_zenkoku = region.get("ascii_name") == "ZENKOKU"
-            region_item = None
+            stations = []
+            is_own_region = False
             for station in region.findall("station"):
                 name_element = station.find("name")
                 id_element = station.find("id")
@@ -361,7 +346,7 @@ class RadioManager:
                     continue
                 station_name = name_element.text or ""
                 station_id = id_element.text or ""
-                if not station_name or not station_id or station_id in stid:
+                if not station_name or not station_id or station_id in seen_ids:
                     continue
                 area_element = station.find("area_id")
                 areafree_element = station.find("areafree")
@@ -369,26 +354,67 @@ class RadioManager:
                     if local_ids is not None:
                         listenable = station_id in local_ids
                     else:
-                        listenable = area_element is not None and area_element.text == self.area
+                        listenable = area_element is not None and area_element.text == area
                     if not listenable:
                         continue
-                if region_item is None:
-                    region_item = self.tree.AppendItem(root, region_label)
-                self.tree.AppendItem(region_item, station_name, data=station_id)
-                stid[station_id] = station_name
-                if own_region_item is None and not is_zenkoku and area_element is not None and area_element.text == self.area:
-                    own_region_item = region_item
+                stations.append((station_name, station_id))
+                seen_ids.add(station_id)
+                if not own_region_found and not is_zenkoku and area_element is not None and area_element.text == area:
+                    is_own_region = True
+                    own_region_found = True
+            if stations:
+                regions.append((region_label, is_own_region, stations))
 
-        if not stid:
+        if not regions:
             self.log.warning("Full station list for areafree is empty")
-            self.tree.DeleteChildren(root)
-            return False
-        # 番組キャッシュ（番組検索）も self.stid を参照するため、全国の局が収集対象になる
-        self.stid = stid
-        if own_region_item is not None:
-            self.tree.Expand(own_region_item)
-        self.log.info(f"areafree station list: {len(stid)} stations")
-        return True
+            return None
+        return regions
+
+    def _build_station_tree(self, station_list, take_focus=True):
+        """_fetch_station_list で取得した放送局一覧をツリーに描く（UI スレッド）
+
+        take_focus が False のときはツリーへフォーカスを移さない（別の画面を操作中のとき）。
+        """
+        root = self.tree.GetRootItem()
+        self.stid = {}
+        self.station_list_areafree = False
+
+        kind, data = station_list
+        if kind == "error":
+            if data:
+                errorDialog(_(data))
+            if take_focus:
+                self.tree.SetFocus()
+            self.tree.Expand(root)
+            self.tree.SelectItem(root, select=True)
+            return
+
+        if kind == "areafree":
+            own_region_item = None
+            for region_label, is_own_region, stations in data:
+                region_item = self.tree.AppendItem(root, region_label)
+                for station_name, station_id in stations:
+                    self.tree.AppendItem(region_item, station_name, data=station_id)
+                    # 番組キャッシュ（番組検索）も self.stid を参照するため、全国の局が収集対象になる
+                    self.stid[station_id] = station_name
+                if is_own_region:
+                    own_region_item = region_item
+            if own_region_item is not None:
+                self.tree.Expand(own_region_item)
+            self.station_list_areafree = True
+            self.log.info(f"areafree station list: {len(self.stid)} stations")
+        else:
+            for station_name, station_id in data:
+                self.tree.AppendItem(root, station_name, data=station_id)
+                self.stid[station_id] = station_name
+
+        # イベントバインドとツリーの設定
+        self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.events.onRadioActivated)
+        self.tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.events.onRadioSelected)
+        if take_focus:
+            self.tree.SetFocus()
+        self.tree.Expand(root)
+        self.tree.SelectItem(root, select=True)
 
     def areaDetermination(self, progs):
         """エリアを判定する"""
@@ -1250,27 +1276,85 @@ class RadioManager:
         self.updateInfoTimer.Start(self.tmg.replace_milliseconds(3))
         self.updateInfoTimer.Bind(wx.EVT_TIMER, self.events.onUpdateProcess)
 
-    def get_latest_programList(self, progs):
-        """番組リストを最新に更新"""
-        # 認証（エリア判定）を先に行い、失敗したら今の一覧を残す（消してから失敗すると一覧が空になる）
+    def get_latest_programList(self, progs, on_finished=None):
+        """番組リストを最新に更新する。
+
+        認証と放送局一覧の取得には時間がかかる（回線が悪いと数分）ため、別スレッドで行い画面を止めない。
+        on_finished は、成否にかかわらず一覧の更新が終わったときに UI スレッドで呼ばれる。
+        """
+        if on_finished is not None:
+            self._station_reload_callbacks.append(on_finished)
+        if self._station_reload_running:
+            # 取得中にログイン状態が変わった可能性があるため、終わったらもう一度取得し直す
+            self._station_reload_again = True
+            self.app.say(_("放送局一覧を更新しています"), interrupt=True)
+            return
+        self._station_reload_running = True
+        self._station_reload_again = False
+        # 「再生停止」などの直前の読み上げを切らないよう、割り込まずに続けて読む
+        self.app.say(_("放送局一覧を更新しています"))
+        areafree = premium.session.is_areafree()
+        threading.Thread(
+            target=self._station_reload_worker,
+            args=(progs, areafree),
+            name="StationListReload",
+            daemon=True,
+        ).start()
+
+    def _station_reload_worker(self, progs, areafree):
+        """（別スレッド）エリア判定と放送局一覧の取得を行い、結果を UI スレッドへ渡す"""
         try:
-            self.areaDetermination(progs)
+            area = progs.getArea()
         except Exception as e:
             self.log.error(f"Failed to determine area while reloading station list: {e!r}")
-            errorDialog(_("エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください"))
+            wx.CallAfter(self._finish_station_list_reload, progs, None, None)
             return
-        was_displaying = self.events.displaying
-        # 作り直したあと、直前に選んでいた局（無ければ再生中の局）を選び直す
-        restore_station_id = self._get_selected_station_id() or self.current_station_id
-        self.tree.DeleteAllItems()
-        # 放送局リスト更新時は番組情報UIを一旦破棄し、メニューを一時的に無効にする。
-        self.parent.program_info_handler.destroy_program_info_ui(disable_menu=True)
-        self.creator.GetSizer().Layout()
-        self.setupradio()
-        self.setRadioList()
-        self._select_station_in_tree(restore_station_id)
-        self._sync_program_info_menu_after_station_list_reload(was_displaying)
-        self.creator.GetSizer().Layout()
+        try:
+            station_list = self._fetch_station_list(area, areafree)
+        except Exception as e:
+            self.log.error(f"Failed to fetch station list: {e!r}")
+            station_list = ("error", None)
+        wx.CallAfter(self._finish_station_list_reload, progs, area, station_list)
+
+    def _finish_station_list_reload(self, progs, area, station_list):
+        """（UI スレッド）取得した放送局一覧でツリーを作り直す"""
+        self._station_reload_running = False
+        if self._shutting_down:
+            return
+        if self._station_reload_again:
+            # 取得中にもう一度更新を求められた。古い結果は捨てて取得し直す
+            self.get_latest_programList(progs)
+            return
+
+        if area is None:
+            # 認証（エリア判定）に失敗したら今の一覧を残す（消してから失敗すると一覧が空になる）
+            errorDialog(_("エリア情報の取得に失敗しました。\nインターネットの接続状況をご確認ください"))
+        else:
+            self.area = area
+            was_displaying = self.events.displaying
+            # 作り直したあと、直前に選んでいた局（無ければ再生中の局）を選び直す
+            restore_station_id = self._get_selected_station_id() or self.current_station_id
+            self.tree.DeleteAllItems()
+            # 放送局リスト更新時は番組情報UIを一旦破棄し、メニューを一時的に無効にする。
+            self.parent.program_info_handler.destroy_program_info_ui(disable_menu=True)
+            self.creator.GetSizer().Layout()
+            self.setupradio()
+            # 取得中にユーザーが別の画面（ダイアログなど）へ移っていたら、フォーカスを奪わない
+            self._build_station_tree(station_list, take_focus=self.parent.hFrame.IsActive())
+            self._select_station_in_tree(restore_station_id)
+            self._sync_program_info_menu_after_station_list_reload(was_displaying)
+            self.creator.GetSizer().Layout()
+            if station_list[0] != "error":
+                # ツリーへのフォーカス移動の読み上げで消されないよう、少し遅らせる
+                self.app.sayLater(_("放送局一覧を更新しました"))
+
+        callbacks = self._station_reload_callbacks
+        self._station_reload_callbacks = []
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception as e:
+                self.log.error(f"Error in station list reload callback: {e!r}")
 
     def _get_selected_station_id(self):
         """放送局一覧で選択中の局 ID を返す（ルートや未選択なら None）"""

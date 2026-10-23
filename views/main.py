@@ -110,9 +110,9 @@ class MainView(BaseView):
 		"""ctrl+f5によるリロード処理のときに呼ばれる"""
 		self.program_info_handler.get_latest_info()
 
-	def get_latest_programList(self):
-		"""f5押したら呼ばれる"""
-		self.radio_manager.get_latest_programList(self.progs)
+	def get_latest_programList(self, on_finished=None):
+		"""f5押したら呼ばれる。更新は別スレッドで行い、終わったら on_finished が呼ばれる"""
+		self.radio_manager.get_latest_programList(self.progs, on_finished=on_finished)
 
 class Menu(BaseMenu):
 	def Apply(self, target):
@@ -557,11 +557,11 @@ class Events(BaseEvents):
 		"""リロードを処理する"""
 		self.parent.get_latest_info()
 
-	def onUpdateProgram(self, event):
-		"""最新の番組一覧に更新"""
+	def onUpdateProgram(self, event, on_finished=None):
+		"""最新の番組一覧に更新（on_finished は更新が終わったときに呼ばれる）"""
 		if hasattr(self.parent, 'radio_manager'):
 			self.parent.radio_manager.stop()
-		self.parent.get_latest_programList()
+		self.parent.get_latest_programList(on_finished=on_finished)
 
 	def onRecordMenuSelect(self, event):
 		"""録音品質メニューの動作"""
@@ -639,8 +639,8 @@ class Events(BaseEvents):
 			premium.clear_credentials(config)
 			config.write()
 			self.update_premium_menu_label()
-			self.onUpdateProgram(None)
-			self._refresh_program_cache_scope()
+			# 番組検索用キャッシュの収集範囲は、新しい一覧（radio_manager.stid）ができてから切り替える
+			self.onUpdateProgram(None, on_finished=self._refresh_program_cache_scope)
 			dialog(_("ログアウト"), _("ログアウトしました。お住まいのエリアの放送局一覧に戻ります。"))
 			return
 
@@ -670,7 +670,11 @@ class Events(BaseEvents):
 		config[premium.CONFIG_SECTION]["saveLogin"] = save
 		config.write()
 		self.update_premium_menu_label()
-		self.onUpdateProgram(None)
+		# 番組検索用キャッシュの収集範囲は、全国の放送局一覧（radio_manager.stid）ができてから切り替える
+		self.onUpdateProgram(None, on_finished=self._notify_areafree_enabled)
+
+	def _notify_areafree_enabled(self):
+		"""ログイン後、放送局一覧を作り直し終えたときに呼ばれる"""
 		message = _("エリアフリーが有効になりました。全国の放送局を聴取できます。")
 		if self._refresh_program_cache_scope():
 			message += "\n" + _("番組検索用に全国の番組データをバックグラウンドで取得します。完了までしばらく時間がかかります。")
@@ -704,9 +708,9 @@ class Events(BaseEvents):
 		self.log.warning("premium session invalidated in background; reloading station list")
 		radio_manager = getattr(self.parent, "radio_manager", None)
 		if radio_manager and radio_manager.station_list_areafree:
-			# 再生は止めずに、エリア内の放送局一覧へ作り直す
-			self.parent.get_latest_programList()
-			self._refresh_program_cache_scope()
+			# 再生は止めずに、エリア内の放送局一覧へ作り直す。
+			# 番組検索用キャッシュの収集範囲は、新しい一覧（radio_manager.stid）ができてから切り替える
+			self.parent.get_latest_programList(on_finished=self._refresh_program_cache_scope)
 		if error is not None and error.kind == premium.PremiumAuthError.SESSION_EXPIRED:
 			# ブラウザでログインしたセッションは自動で再ログインできないため、保存済みのセッションも消す
 			config = globalVars.app.config
