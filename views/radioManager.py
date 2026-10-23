@@ -722,6 +722,12 @@ class RadioManager:
             self.log.info(f"live playback request ignored during shutdown: station={id}")
             return
         self.log.info(f"live playback requested: station={id}, areafree={premium.session.is_areafree()}")
+        if self.is_timefree_playing():
+            # 番組表から放送中の番組を選んだときなど、聴き逃しから切り替える。
+            # 聴き逃しのままだと、接続中に mpv の停止を途切れとみなして聴き逃しを再接続してしまう
+            self._remember_timefree_position()
+            self.playback_mode = None
+            self._stop_timefree_seek_timer()
         self._begin_playback_change()
         generation = self._playback_generation
         if self._player.isPlaying():
@@ -1335,8 +1341,18 @@ class RadioManager:
         except Exception as e:
             self.log.error(f"Failed to announce timefree playback stop: {e}")
 
+    def _remember_timefree_position(self):
+        """聴き逃し再生中なら、今の位置を次に再開する位置にする（聴き逃しの停止以外の方法で止めるとき）"""
+        if not self.is_timefree_playing() or self._last_timefree_request is None:
+            return
+        position = self.get_timefree_position_seconds()
+        self._last_timefree_request["resume_seconds"] = position
+        self._reset_timefree_clock(position, running=False)
+
     def stop(self):
         """再生停止"""
+        # 番組一覧の更新・ログイン・ログアウトでは、聴き逃しもこの処理で止める
+        self._remember_timefree_position()
         self._begin_playback_change()
         self.clear_timefree_menu_live_ack()
         self._player.stop()
