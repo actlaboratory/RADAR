@@ -2350,8 +2350,14 @@ def get_create_station_subdir_setting():
 def get_file_type_from_config():
     """設定からファイルタイプを取得（後方互換性）"""
     try:
-        config = ConfigManager.ConfigManager()
-        menu_id = config.getint("record", "menu_id")
+        # 新しく ConfigManager を作ると設定ファイルを読み込んでいないため、常に MP3 になってしまう
+        if not (hasattr(globalVars, 'app') and hasattr(globalVars.app, 'config')):
+            return "mp3"
+        config = globalVars.app.config
+        # 録音形式のメニューでチェックが外れているときは、今すぐ録音と同じく MP3 にする
+        if not config.getboolean("record", "check_menu", True):
+            return "mp3"
+        menu_id = config.getint("record", "menu_id", constants.RECORDING_MP3)
         if menu_id == constants.RECORDING_MP3:  # MP3
             return "mp3"
         elif menu_id == constants.RECORDING_WAV:  # WAV
