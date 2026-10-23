@@ -1399,7 +1399,7 @@ class RadioManager:
         handler = self.parent.program_info_handler
         menu = self.parent.menu
         if was_displaying:
-            menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示(&H)"))
+            menu.SetMenuLabel("HIDE_PROGRAMINFO")
             handler.ensure_program_info_ui()
             handler._set_program_info_menu_enabled(True)
             handler.get_latest_info()

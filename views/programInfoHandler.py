@@ -271,7 +271,7 @@ class ProgramInfoHandler:
             self.events.displaying = False
             self.creator.GetSizer().Layout()
         else:
-            self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報の非表示(&H)"))
+            self.parent.menu.SetMenuLabel("HIDE_PROGRAMINFO")
             self.ensure_program_info_ui()
             self._set_program_info_menu_enabled(True)
             self.events.displaying = True
