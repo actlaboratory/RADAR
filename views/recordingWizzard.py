@@ -546,6 +546,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         super().show_programlist(event, focus_program_list)
         wx.CallAfter(self._update_timefree_button_label)
 
+    def _on_programlist_loaded(self):
+        # 番組表は別スレッドで取得するため、表示し終えたあとにもボタンの表示を合わせる
+        wx.CallAfter(self._update_timefree_button_label)
+
     def on_program_list_selection(self, event):
         """過去番組行を選んだとき、ライブ×別局時のメニュー再開許可フラグを更新"""
         self._notify_past_program_focus_if_applicable()
