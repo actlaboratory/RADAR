@@ -158,9 +158,10 @@ class Menu(BaseMenu):
 		})
 
 		self.RegisterMenuCommand(self.hRecordingMenu, "RECORDING_OPTION", subMenu=self.hRecordingFileTypeMenu)
-		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_MP3, "mp3")
-		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_WAV, "wav")
-		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_M4A, "m4a")
+		# どれか1つだけが必ず選ばれているよう、ラジオ項目にする
+		self.hRecordingFileTypeMenu.AppendRadioItem(constants.RECORDING_MP3, menuItemsDic.dic["RECORDING_MP3"])
+		self.hRecordingFileTypeMenu.AppendRadioItem(constants.RECORDING_WAV, menuItemsDic.dic["RECORDING_WAV"])
+		self.hRecordingFileTypeMenu.AppendRadioItem(constants.RECORDING_M4A, menuItemsDic.dic["RECORDING_M4A"])
 
 		self.RegisterMenuCommand(self.hOptionMenu, {
 			"OPTION_OPTION": self.parent.events.option,
@@ -210,7 +211,8 @@ class Menu(BaseMenu):
 				label, checked, enabled = state
 				shortcut = item.GetItemLabel().partition("\t")[2]
 				item.SetItemLabel("%s\t%s" % (label, shortcut) if shortcut else label)
-				if checked is not None and item.IsCheckable():
+				# ラジオ項目は選ばれていたものを選び直せば、ほかは自動で外れる
+				if checked is not None and item.IsCheckable() and (checked or not item.IsRadio()):
 					item.Check(checked)
 				item.Enable(enabled)
 

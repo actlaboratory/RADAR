@@ -44,13 +44,19 @@ class RecordingHandler:
         check_menu = self.app.config.getboolean("record", "check_menu", True)
         if menu_id not in self._get_recording_format_menu_ids():
             menu_id = constants.RECORDING_MP3
+        # 以前のチェック項目のメニューでチェックを外していた場合は、そのとき録音に使っていた MP3 を選ぶ
+        if not check_menu:
+            menu_id = constants.RECORDING_MP3
+            check_menu = True
+            self.app.config["record"]["menu_id"] = menu_id
+            self.app.config["record"]["check_menu"] = check_menu
         
         # 設定を保存（デフォルト値の場合）
         if not self.app.config.has_section("record"):
             self.app.config["record"]["menu_id"] = menu_id
             self.app.config["record"]["check_menu"] = check_menu
         
-        self.parent.menu.hRecordingFileTypeMenu.Check(menu_id, check_menu)
+        self.parent.menu.hRecordingFileTypeMenu.Check(menu_id, True)
         self._update_schedule_menu_status()
 
     def _start_schedule_monitoring(self):
@@ -74,12 +80,6 @@ class RecordingHandler:
         """録音品質メニューの動作"""
         selected = event.GetId()
 
-        # 排他的選択（ラジオボタン的な動作）
-        if selected in self._get_recording_format_menu_ids() and self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected):
-            for menu_id in self._get_recording_format_menu_ids():
-                if menu_id != selected:
-                    self.parent.menu.hRecordingFileTypeMenu.Check(menu_id, False)
-        
         # 設定を保存
         self.parent.app.config["record"]["menu_id"] = selected
         self.parent.app.config["record"]["check_menu"] = self.parent.menu.hRecordingFileTypeMenu.IsChecked(selected)
