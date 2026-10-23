@@ -715,6 +715,8 @@ class RadioManager:
                 self.log.warning(f"Failed to stop previous playback: {e}")
         self.clear_timefree_menu_live_ack()
         self.streamWatchdogTimer.Stop()
+        # つながるまで数秒かかることがあるため、操作を受け付けたことを先に知らせる
+        self._announce_playback_change(f"接続中: {self.stid.get(id, id)}")
         volume = self.volume.GetValue()
         threading.Thread(
             target=self._live_start_worker,
@@ -858,6 +860,10 @@ class RadioManager:
             "stream_type": (timefree_info or {}).get("stream_type", "b"),
         }
         self.update_timefree_command_ui()
+        if announce_text:
+            # つながるまで数秒かかることがあるため、操作を受け付けたことを先に知らせる
+            # （announce_text が無いのは、利用者の操作によらない内部からの開始）
+            self._announce_playback_change(f"接続中: {self.stid.get(station_id, station_id)}")
         volume = self.volume.GetValue()
         threading.Thread(
             target=self._timefree_start_worker,
