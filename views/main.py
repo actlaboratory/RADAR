@@ -182,6 +182,38 @@ class Menu(BaseMenu):
 		self.hMenuBar.Append(self.hHelpMenu, _("ヘルプ(&H)"))
 		target.SetMenuBar(self.hMenuBar)
 	
+	def _iterItems(self, menu):
+		"""サブメニューも含めて、メニュー項目をすべて返す"""
+		for item in menu.GetMenuItems():
+			if item.IsSeparator():
+				continue
+			yield item
+			if item.GetSubMenu():
+				yield from self._iterItems(item.GetSubMenu())
+
+	def GetItemStates(self):
+		"""メニュー項目ごとの {id: (ショートカットを除いた表記, チェック状態, 有効状態)} を返す"""
+		states = {}
+		for menu, title in self.hMenuBar.GetMenus():
+			for item in self._iterItems(menu):
+				checked = item.IsChecked() if item.IsCheckable() else None
+				states[item.GetId()] = (item.GetItemLabel().split("\t")[0], checked, item.IsEnabled())
+		return states
+
+	def RestoreItemStates(self, states):
+		"""GetItemStates で取っておいた状態を、作り直したメニューに戻す。ショートカットは新しいものを使う"""
+		for menu, title in self.hMenuBar.GetMenus():
+			for item in self._iterItems(menu):
+				state = states.get(item.GetId())
+				if state is None:
+					continue
+				label, checked, enabled = state
+				shortcut = item.GetItemLabel().partition("\t")[2]
+				item.SetItemLabel("%s\t%s" % (label, shortcut) if shortcut else label)
+				if checked is not None and item.IsCheckable():
+					item.Check(checked)
+				item.Enable(enabled)
+
 	def OnMenuOpen(self, event):
 		"""メニューが開かれたときに設定に応じてHIDEメニューを無効化"""
 		if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
@@ -385,9 +417,12 @@ class Events(BaseEvents):
 
 	def keyConfig(self, event):
 		if self.setKeymap(self.parent.identifier, _("ショートカットキーの設定"), filter=keymap.KeyFilter().SetDefault(False, False)):
+			# メニューを作り直すと表記・チェック・有効状態が初期値に戻るため、作り直す前の状態を引き継ぐ
+			states = self.parent.menu.GetItemStates()
 			self.parent.menu.InitShortcut()
 			self.parent.menu.ApplyShortcut(self.parent.hFrame)
 			self.parent.menu.Apply(self.parent.hFrame)
+			self.parent.menu.RestoreItemStates(states)
 			self.update_premium_menu_label()
 
 	def checkUpdate(self, event):
