@@ -58,10 +58,10 @@ GUI は `wxPython`、再生は `mpv`、録音は `ffmpeg` を利用していま�
 ## 実行環境
 
 - OS: Windows 64-bit
-- Python: 32bit版 Python の利用を推奨
+- Python: 32bit版 Python が必要（64bit版の Python では起動しない。`radar.py` で判定している）
 - 同梱または配置が必要な実行ファイル:
   - `bin/mpv.exe`
-  - `ffmpeg.exe`（必要DLL含む）
+  - `bin/ffmpeg.exe`
 
 ## 起動
 
