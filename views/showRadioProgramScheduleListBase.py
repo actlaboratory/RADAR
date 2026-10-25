@@ -54,6 +54,7 @@ class ShowSchedule(BaseDialog):
         self.lst.AppendColumn(_("開始時間"),0,100)
         self.lst.AppendColumn(_("終了時間"),0,100)
         self.lst.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.show_detail)
+        self.lst.Bind(wx.EVT_SET_FOCUS, self._on_program_list_set_focus)
 
         self.cls = self.creator.closebutton(_("閉じる(&C)"), self.onCloseBtn)
         self.cls.SetDefault()
@@ -247,6 +248,23 @@ class ShowSchedule(BaseDialog):
             self.lst.Select(0)
             self.lst.EnsureVisible(0)
             self.lst.SetFocus()
+        except Exception:
+            pass
+
+    def _on_program_list_set_focus(self, event):
+        """タブキーなどで番組一覧へ移ったとき、行が選ばれていなければ先頭行を選ぶ"""
+        event.Skip()
+        wx.CallAfter(self._select_first_program_row_if_none)
+
+    def _select_first_program_row_if_none(self):
+        try:
+            if not self.lst or self.lst.GetItemCount() <= 0:
+                return
+            if self.lst.GetFocusedItem() >= 0 or self.lst.GetFirstSelected() >= 0:
+                return
+            self.lst.Focus(0)
+            self.lst.Select(0)
+            self.lst.EnsureVisible(0)
         except Exception:
             pass
 
