@@ -11,6 +11,11 @@ from views.baseDialog import *
 import tcutil
 import datetime
 import re
+import threading
+
+# 日付を切り替えてから番組表の取得を始めるまでの待ち時間(ミリ秒)。
+# 矢印キーで日付を続けて切り替える間に、通信を何度も始めないため
+LISTING_FETCH_DELAY_MS = 300
 
 class ShowSchedule(BaseDialog):
     def __init__(self, stid, radioname):
@@ -28,6 +33,9 @@ class ShowSchedule(BaseDialog):
         self.lst = None
         self.date_values = []
         self._default_date_values = []
+        # 番組表の取得ごとに進める。古い取得結果で新しい日付の表示を上書きしないため
+        self._listing_request = 0
+        self._listing_fetch_call = None
 
     def Initialize(self):
         self.log.debug("created")
@@ -46,6 +54,7 @@ class ShowSchedule(BaseDialog):
         self.lst.AppendColumn(_("開始時間"),0,100)
         self.lst.AppendColumn(_("終了時間"),0,100)
         self.lst.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.show_detail)
+        self.lst.Bind(wx.EVT_SET_FOCUS, self._on_program_list_set_focus)
 
         self.cls = self.creator.closebutton(_("閉じる(&C)"), self.onCloseBtn)
         self.cls.SetDefault()
@@ -143,6 +152,12 @@ class ShowSchedule(BaseDialog):
         self.pfmlst.clear()
         self.stlst.clear()
         self.enlst.clear()
+        # 番組表の取得（通信）は別スレッドで行い、待つ間も画面を止めない。
+        # 日付を続けて切り替えたときは最後の日付だけ取得・表示する
+        self._listing_request += 1
+        request = self._listing_request
+        if self._listing_fetch_call is not None and self._listing_fetch_call.IsRunning():
+            self._listing_fetch_call.Stop()
         selection = self.cmb.GetSelection()
         self.selection = selection
         if selection == None:
@@ -150,12 +165,53 @@ class ShowSchedule(BaseDialog):
         if selection < 0 or selection >= len(self.date_values):
             return
         date = self.clutl.transform_date(self.date_values[selection])
-        self.progs.retrieveRadioListings(self.stid,date)
-        title = self.progs.gettitle() #番組のタイトル
-        pfm = self.progs.getpfm() #出演者の名前
-        program_ftl = self.progs.get_ftl()
-        program_tol = self.progs.get_tol()
-        description = self.progs.getDescriptions() #番組の説明
+        if event is not None:
+            # 矢印キーで日付を順に聞いていく間は、通信を始めずに待つ
+            self._listing_fetch_call = wx.CallLater(
+                LISTING_FETCH_DELAY_MS, self._start_listing_fetch, request, date, focus_program_list
+            )
+        else:
+            self._start_listing_fetch(request, date, focus_program_list)
+
+    def _start_listing_fetch(self, request, date, focus_program_list):
+        if request != self._listing_request:
+            return
+        threading.Thread(
+            target=self._fetch_listing_worker,
+            args=(request, date, focus_program_list),
+            name="ProgramListing",
+            daemon=True,
+        ).start()
+
+    def _fetch_listing_worker(self, request, date, focus_program_list):
+        """（別スレッド）番組表を取得する"""
+        # 共有の ProgramManager は取得結果を内部に保持するため、取得ごとに別のものを使う
+        progs = programmanager.ProgramManager()
+        listing = None
+        try:
+            progs.retrieveRadioListings(self.stid, date)
+            listing = (
+                progs.gettitle(), #番組のタイトル
+                progs.getpfm(), #出演者の名前
+                progs.get_ftl(),
+                progs.get_tol(),
+                progs.getDescriptions(), #番組の説明
+            )
+        except Exception as e:
+            self.log.error(f"Failed to retrieve program listing: {e!r}")
+        wx.CallAfter(self._apply_listing, request, listing, focus_program_list)
+
+    def _apply_listing(self, request, listing, focus_program_list):
+        """（UI スレッド）取得した番組表を一覧に表示する。より新しい取得があれば何もしない"""
+        if request != self._listing_request or listing is None:
+            return
+        try:
+            if not self.lst:
+                # 取得中にダイアログが閉じられた
+                return
+        except RuntimeError:
+            return
+        title, pfm, program_ftl, program_tol, description = listing
         for t,p,ftl,tol,d in zip(title,pfm,program_ftl,program_tol, description):
             self.lst.Append((t,p, ftl[:2]+":"+ftl[2:4],tol[:2]+":"+tol[2:4]), )
             if d:
@@ -172,6 +228,11 @@ class ShowSchedule(BaseDialog):
 
         if focus_program_list:
             wx.CallAfter(self._ensure_first_program_row_focused)
+        self._on_programlist_loaded()
+
+    def _on_programlist_loaded(self):
+        """番組一覧を表示し終えたときに呼ばれる。派生クラスで上書きする"""
+        pass
 
     def _ensure_first_program_row_focused(self):
         """番組一覧の先頭行を選択し、リストにキーボードフォーカスを置く"""
@@ -187,6 +248,23 @@ class ShowSchedule(BaseDialog):
             self.lst.Select(0)
             self.lst.EnsureVisible(0)
             self.lst.SetFocus()
+        except Exception:
+            pass
+
+    def _on_program_list_set_focus(self, event):
+        """タブキーなどで番組一覧へ移ったとき、行が選ばれていなければ先頭行を選ぶ"""
+        event.Skip()
+        wx.CallAfter(self._select_first_program_row_if_none)
+
+    def _select_first_program_row_if_none(self):
+        try:
+            if not self.lst or self.lst.GetItemCount() <= 0:
+                return
+            if self.lst.GetFocusedItem() >= 0 or self.lst.GetFirstSelected() >= 0:
+                return
+            self.lst.Focus(0)
+            self.lst.Select(0)
+            self.lst.EnsureVisible(0)
         except Exception:
             pass
 

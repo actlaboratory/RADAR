@@ -41,6 +41,14 @@ GUI は `wxPython`、再生は `mpv`、録音は `ffmpeg` を利用していま�
 - シークは `mpv` のローカルシークではなく、`seek` パラメータ付きURLを再生成して再接続。
 - ライブ再生（`F1`）と聴き逃し再生（`F2`）は独立した操作系で管理。
 
+## エリアフリー（radikoプレミアム）
+
+- 「オプション → radikoプレミアムにログイン」から、エリアフリープランを契約した会員アカウントでログインすると、全国の放送局を地方別のツリーで表示・再生/録音できる。
+- ログイン（`v4/api/member/login`）の応答の `areafree` が `1` のときだけ有効化し、auth2 に `radiko_session` を付与してトークンを取得する（`views/premium.py`）。
+- エリアフリー時は、局ごとの stream XML から `areafree="1"` の playlist URL を使い、playlist の `type` を `c` にする（`a`/`b` はエリア内専用で、エリア外の局は 403 になる）。
+- 認証情報を保存する場合、パスワードは DPAPI で暗号化して設定ファイルに保存する。
+- エリアフリー時は番組検索用キャッシュも全国の局を収集する。キャッシュがどの範囲（自エリア/全国）で作られたかを `cache_metadata` の `station_scope` に記録し、ログイン状態と一致しなければ起動時・ログイン/ログアウト時に再収集する。
+
 ## 録音形式
 
 - `mp3`: エンコード保存
@@ -50,10 +58,10 @@ GUI は `wxPython`、再生は `mpv`、録音は `ffmpeg` を利用していま�
 ## 実行環境
 
 - OS: Windows 64-bit
-- Python: 32bit版 Python の利用を推奨
+- Python: 32bit版 Python が必要（64bit版の Python では起動しない。`radar.py` で判定している）
 - 同梱または配置が必要な実行ファイル:
   - `bin/mpv.exe`
-  - `ffmpeg.exe`（必要DLL含む）
+  - `bin/ffmpeg.exe`
 
 ## 起動
 

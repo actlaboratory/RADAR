@@ -44,6 +44,9 @@ class VolumeHandler:
         if not self.events.mute_status:
             self.parent.menu.SetMenuLabel("FUNCTION_PLAY_MUTE", _("ミュートを解除"))
             self.parent.radio_manager._player.setVolume(0)
+            if wx.Window.FindFocus() is self.parent.radio_manager.volume:
+                # 無効にするスライダーにフォーカスが残ると、フォーカスの行き場がなくなる
+                self.parent.radio_manager.tree.SetFocus()
             self.parent.radio_manager.volume.Disable()
             self.events.mute_status = True
         else:

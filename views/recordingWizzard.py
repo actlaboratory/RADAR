@@ -2,6 +2,7 @@ import wx
 import time
 import datetime
 import re
+import threading
 from logging import getLogger
 from notification_util import notify as notification_notify
 import globalVars
@@ -9,6 +10,7 @@ import simpleDialog
 from views import showRadioProgramScheduleListBase
 import views.ViewCreator
 from views import programmanager
+from views import radioManager
 import tcutil
 from recorder import (
     RECORDING_END_TIME_BUFFER,
@@ -32,6 +34,8 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self.filetype = get_file_type_from_config()
         self.current_schedule = None
         self._is_disposed = False
+        # 録音の準備（通信）を別スレッドで行っている間は、続けて押されても始めない
+        self._recording_preparing = False
         self._main_window = globalVars.app.hMainView.hFrame
         super().Initialize()
         self.log = getLogger("recording_wizzard")
@@ -74,6 +78,12 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         if hasattr(main_view, "radio_manager"):
             main_view.radio_manager.update_timefree_command_ui()
 
+    def _on_timefree_playback_start_finished(self, started):
+        """聴き逃し再生の開始結果をボタンに反映する（開始処理の完了時に UI スレッドで呼ばれる）"""
+        if self._is_disposed:
+            return
+        self._update_timefree_button_label()
+
     def onDialogActivated(self, event):
         """ダイアログ再アクティブ時にボタン状態を再同期"""
         if self._is_disposed:
@@ -82,13 +92,34 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         self._update_timefree_button_label()
         event.Skip()
 
+    def _is_dialog_alive(self):
+        """別スレッドでの処理が終わったとき、ダイアログがまだ開いているか"""
+        try:
+            return not self._is_disposed and bool(self.wnd)
+        except RuntimeError:
+            return False
+
+    def _begin_recording_preparation(self, announce_text):
+        """録音の準備（通信）を始めてよいか。準備中なら知らせて False を返す"""
+        if self._recording_preparing:
+            globalVars.app.say(_("録音準備中です。"), interrupt=True)
+            return False
+        self._recording_preparing = True
+        try:
+            globalVars.app.say(announce_text, interrupt=True)
+        except Exception as e:
+            self.log.error(f"Failed to announce recording preparation: {e}")
+        return True
+
     def _start_live_remainder_recording(self, program_title, start_dt, end_dt):
         """放送中の番組を、終了時刻までライブストリームで録音する。
 
+        認証などの通信には数秒かかるため、別スレッドで行い画面を止めない。
+        結果は _finish_live_remainder_recording で知らせ、開始できたらダイアログを閉じる。
+
         Returns:
-            True: 録音を開始した（呼び出し側はダイアログを閉じてよい）
-            False: 開始に失敗した
-            None: 同一番組の録音が既にあったため停止のみ行った（エラーではない）
+            False: 開始前の確認で失敗した
+            None: 録音の準備を始めた、または同一番組の録音を停止した
         """
         current = datetime.datetime.now()
         if current >= end_dt:
@@ -106,52 +137,87 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
         ):
             return None
 
-        try:
-            stream_url, http_headers = self.progs.get_authenticated_stream_url(self.stid)
-        except Exception as e:
-            self.log.error(f"Failed to get live stream URL for remainder recording: {e}")
-            simpleDialog.errorDialog(_("ストリームURLの取得に失敗しました。"))
-            return False
-
-        replace = safe_title.replace(" ", "-")
-        station_dir = self.radioname.replace(" ", "_")
-        dirs = create_recording_dir(station_dir, safe_title)
-        timestamp = start_dt.strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(dirs, f"{timestamp}_{replace}")
-
+        if not self._begin_recording_preparation(f"録音準備中: {self.radioname}"):
+            return None
         filetype = self._refresh_selected_filetype()
-        end_wall = time.mktime(end_dt.timetuple()) + RECORDING_END_TIME_BUFFER
-        info = f"{self.radioname} {safe_title}"
+        threading.Thread(
+            target=self._live_remainder_worker,
+            args=(safe_title, start_dt, end_dt, filetype),
+            name="RemainderRecordStart",
+            daemon=True,
+        ).start()
+        return None
 
-        def on_recording_complete(recorder):
+    def _live_remainder_worker(self, safe_title, start_dt, end_dt, filetype):
+        """（別スレッド）ストリームの認証と録音の開始を行い、結果を UI スレッドへ渡す"""
+        result = {"status": "error", "detail": ""}
+        try:
+            # 再生に使う self.progs の認証情報を書き換えないよう、録音用に別の ProgramManager を使う
+            progs = programmanager.ProgramManager()
             try:
-                notification_notify(
-                    title=_("録音完了"),
-                    message=f"{safe_title} の録音が完了しました。",
-                    app_name="rpb",
-                    timeout=10,
-                )
-            except Exception as ex:
-                self.log.error(f"Failed to send remainder recording completion notification: {ex}")
+                stream_url, http_headers = progs.get_authenticated_stream_url(self.stid)
+            except Exception as e:
+                self.log.error(f"Failed to get live stream URL for remainder recording: {e}")
+                result["status"] = "no_stream"
+                return
 
-        recorder = recorder_manager.start_recording(
-            stream_url,
-            output_path,
-            info,
-            end_wall,
-            filetype,
-            on_recording_complete,
-            self.stid,
-            safe_title,
-            http_headers=http_headers,
-        )
-        if not recorder:
-            detail = recorder_manager.get_last_start_error()
+            replace = safe_title.replace(" ", "-")
+            station_dir = self.radioname.replace(" ", "_")
+            dirs = create_recording_dir(station_dir, safe_title)
+            timestamp = start_dt.strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(dirs, f"{timestamp}_{replace}")
+
+            end_wall = time.mktime(end_dt.timetuple()) + RECORDING_END_TIME_BUFFER
+            info = f"{self.radioname} {safe_title}"
+
+            def on_recording_complete(recorder):
+                try:
+                    notification_notify(
+                        title=_("録音完了"),
+                        message=f"{safe_title} の録音が完了しました。",
+                        app_name="rpb",
+                        timeout=10,
+                    )
+                except Exception as ex:
+                    self.log.error(f"Failed to send remainder recording completion notification: {ex}")
+
+            recorder = recorder_manager.start_recording(
+                stream_url,
+                output_path,
+                info,
+                end_wall,
+                filetype,
+                on_recording_complete,
+                self.stid,
+                safe_title,
+                http_headers=http_headers,
+            )
+            if recorder:
+                result["status"] = "started"
+            else:
+                result["status"] = "start_failed"
+                result["detail"] = recorder_manager.get_last_start_error()
+        except Exception as e:
+            self.log.error(f"Error during remainder recording start: {e}")
+        finally:
+            wx.CallAfter(self._finish_live_remainder_recording, safe_title, end_dt, result)
+
+    def _finish_live_remainder_recording(self, safe_title, end_dt, result):
+        """（UI スレッド）放送中番組の録音開始の結果を知らせ、開始できたらダイアログを閉じる"""
+        self._recording_preparing = False
+        status = result["status"]
+        if status == "no_stream":
+            simpleDialog.errorDialog(_("ストリームURLの取得に失敗しました。"))
+            return
+        if status == "start_failed":
             msg = _("録音の開始に失敗しました。")
-            if detail:
-                msg += f"\n\n{detail}"
+            if result["detail"]:
+                msg += f"\n\n{result['detail']}"
             simpleDialog.errorDialog(msg)
-            return False
+            return
+        if status != "started":
+            simpleDialog.errorDialog(_("録音の開始中にエラーが発生しました。"))
+            return
 
         try:
             station_name = self.radioname
@@ -170,7 +236,9 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             self.log.error(f"Failed to send remainder recording start notification: {ex}")
 
         self.log.info(f"Live remainder recording started: {safe_title} until {end_dt}")
-        return True
+        # 録音を開始できたら番組表を閉じる（準備中に閉じられていれば何もしない）
+        if self._is_dialog_alive():
+            self.Destroy()
 
     def onFinishButton(self, event):
         """録音予約を確定"""
@@ -188,9 +256,8 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 return
 
             if start_dt <= current < end_dt:
-                result = self._start_live_remainder_recording(program_title, start_dt, end_dt)
-                if result is True:
-                    self.Destroy()
+                # 開始できたかは別スレッドでの準備のあとで分かり、そのときにダイアログを閉じる
+                self._start_live_remainder_recording(program_title, start_dt, end_dt)
                 return
             
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', program_title).strip()
@@ -298,34 +365,16 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 "stream_type": "b",
                 "duration_sec": duration_sec,
             }
-            try:
-                stream_url, headers = self.progs.get_timefree_playback_source(self.stid, start_dt, end_dt)
-                main_view.radio_manager.play_timefree(
-                    stream_url,
-                    station_id=self.stid,
-                    announce_text=announce,
-                    headers=headers,
-                    resume_seconds=0,
-                    timefree_info=timefree_info
-                )
-                self._update_timefree_button_label()
-                return
-            except Exception as e:
-                self.log.warning(f"timefree playback primary source failed: {e}")
-
-            stream_url, headers = self.progs.get_timefree_playback_source_compat(self.stid, start_dt, end_dt)
-            main_view.radio_manager.play_timefree(
-                stream_url,
-                station_id=self.stid,
-                announce_text=announce,
-                headers=headers,
-                resume_seconds=0,
-                timefree_info={**timefree_info, "stream_type": "c"}
+            # 認証・接続は別スレッドで行い、開始できなければ RadioManager がダイアログで知らせる
+            main_view.radio_manager.play_timefree_program(
+                self.progs, self.stid, start_dt, end_dt, announce, timefree_info,
+                error_message="聴き逃し再生に失敗しました。",
+                on_finished=self._on_timefree_playback_start_finished,
             )
             self._update_timefree_button_label()
         except Exception as e:
-            self.log.error(f"Error in onPlayTimeFree: {e}")
-            simpleDialog.errorDialog(f"聴き逃し再生に失敗しました: {e}")
+            self.log.error(f"Error in onPlayTimeFree: {e!r}", exc_info=not isinstance(e, radioManager.PlaybackError))
+            simpleDialog.errorDialog(f"聴き逃し再生に失敗しました。\n{radioManager.describe_playback_exception(e)}")
             self._update_timefree_button_label()
 
     def onRecordTimeFree(self, event):
@@ -349,7 +398,26 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
             ):
                 return
 
-            segments = self.progs.get_timefree_recording_segments(self.stid, start_dt, end_dt)
+            # 認証などの通信には数秒かかるため、別スレッドで行い画面を止めない
+            if not self._begin_recording_preparation(f"聴き逃し録音準備中: {title}"):
+                return
+            threading.Thread(
+                target=self._timefree_record_worker,
+                args=(title, start_dt, end_dt, filetype),
+                name="TimefreeRecordStart",
+                daemon=True,
+            ).start()
+        except Exception as e:
+            self.log.error(f"Error in onRecordTimeFree: {e}")
+            simpleDialog.errorDialog(f"聴き逃し録音に失敗しました: {e}")
+
+    def _timefree_record_worker(self, title, start_dt, end_dt, filetype):
+        """（別スレッド）聴き逃し録音の準備と開始を行い、結果を UI スレッドへ渡す"""
+        result = {"status": "error", "detail": ""}
+        try:
+            # 再生に使う self.progs の認証情報を書き換えないよう、録音用に別の ProgramManager を使う
+            progs = programmanager.ProgramManager()
+            segments = progs.get_timefree_recording_segments(self.stid, start_dt, end_dt)
 
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', title).strip()
             replace = safe_title.replace(" ", "-")
@@ -373,25 +441,39 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
                 input_options=["-http_seekable", "0", "-seekable", "0"],
             )
             if recorder:
-                simpleDialog.dialog("完了", f"聴き逃し録音を開始しました。\n{title}")
-                try:
-                    notification_notify(
-                        title="録音開始",
-                        message=f"{title} の聴き逃し録音を開始しました。",
-                        app_name="rpb",
-                        timeout=10,
-                    )
-                except Exception as e:
-                    self.log.error(f"Failed to send timefree recording start notification: {e}")
+                result["status"] = "started"
             else:
-                detail = recorder_manager.get_last_start_error()
-                msg = "聴き逃し録音の開始に失敗しました。"
-                if detail:
-                    msg += f"\n\n{detail}"
-                simpleDialog.errorDialog(msg)
+                result["status"] = "start_failed"
+                result["detail"] = recorder_manager.get_last_start_error()
         except Exception as e:
             self.log.error(f"Error in onRecordTimeFree: {e}")
-            simpleDialog.errorDialog(f"聴き逃し録音に失敗しました: {e}")
+            result["detail"] = str(e)
+        finally:
+            wx.CallAfter(self._finish_timefree_record, title, result)
+
+    def _finish_timefree_record(self, title, result):
+        """（UI スレッド）聴き逃し録音の開始の結果を知らせる"""
+        self._recording_preparing = False
+        status = result["status"]
+        if status == "started":
+            globalVars.app.say(f"聴き逃し録音を開始しました。 {title}", interrupt=True)
+            try:
+                notification_notify(
+                    title="録音開始",
+                    message=f"{title} の聴き逃し録音を開始しました。",
+                    app_name="rpb",
+                    timeout=10,
+                )
+            except Exception as e:
+                self.log.error(f"Failed to send timefree recording start notification: {e}")
+            return
+        if status == "start_failed":
+            msg = "聴き逃し録音の開始に失敗しました。"
+            if result["detail"]:
+                msg += f"\n\n{result['detail']}"
+            simpleDialog.errorDialog(msg)
+            return
+        simpleDialog.errorDialog(f"聴き逃し録音に失敗しました: {result['detail']}")
 
     def _get_selected_program_range(self):
         """選択番組のタイトルと開始/終了日時を返す"""
@@ -462,6 +544,10 @@ class RecordingWizzard(showRadioProgramScheduleListBase.ShowSchedule):
 
     def show_programlist(self, event=None, focus_program_list=True):
         super().show_programlist(event, focus_program_list)
+        wx.CallAfter(self._update_timefree_button_label)
+
+    def _on_programlist_loaded(self):
+        # 番組表は別スレッドで取得するため、表示し終えたあとにもボタンの表示を合わせる
         wx.CallAfter(self._update_timefree_button_label)
 
     def on_program_list_selection(self, event):

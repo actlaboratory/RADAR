@@ -9,8 +9,8 @@ import os.path
 APP_FULL_NAME = "Radio Audio Data Archive and Recorder "#アプリケーションの完全な名前
 APP_NAME="RADAR"#アプリケーションの名前
 APP_ICON = "radar.ico"
-APP_VERSION="1.1.0"
-APP_LAST_RELEASE_DATE="2026-06-26"
+APP_VERSION="1.2.0"
+APP_LAST_RELEASE_DATE="2026-10-26"
 APP_COPYRIGHT_YEAR="2026"
 APP_LICENSE="Apache License 2.0"
 APP_DEVELOPERS="actlaboratory,mayumi pc"
@@ -27,6 +27,9 @@ SETTING_FILE_NAME="settings.ini"
 KEYMAP_FILE_NAME="keymap.ini"
 FFMPEG_LOG_FILE = "ffmpeg_log.txt"
 PROGRAM_CACHE_DB_NAME = "program_cache.db"
+
+# radiko等へのHTTPリクエストで名乗るUser-Agent。curlやPython既定のUAはbot扱いされやすいため、一般的なブラウザのものを使う
+BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 
 # 過去1週間の日付表示チェック 初期値
 SHOW_PAST_WEEK_DATES_DEFAULT = False

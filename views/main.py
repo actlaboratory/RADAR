@@ -5,6 +5,7 @@
 
 import wx
 import os
+import threading
 import win32com.client
 
 import constants
@@ -20,6 +21,9 @@ from simpleDialog import *
 from views import globalKeyConfig
 from views import settingsDialog
 from views import versionDialog
+from views import premium
+from views import premiumLoginDialog
+from views import premiumBrowserLoginDialog
 from views import programmanager
 from views import radioManager
 from views import recordingHandler
@@ -54,7 +58,20 @@ class MainView(BaseView):
 		self.program_info_handler = programInfoHandler.ProgramInfoHandler(self)
 		self.volume_handler = volumeHandler.VolumeHandler(self)
 
-		self.radio_manager.areaDetermination(self.progs)
+		# 保存済みのプレミアム認証情報があれば、エリア判定（auth2）より前にログインしておく
+		auto_login_error = None
+		try:
+			premium.auto_login(self.app.config)
+		except premium.PremiumAuthError as e:
+			auto_login_error = e
+		self.events.update_premium_menu_label()
+		self.events.update_startup_menu_label()
+
+		try:
+			self.radio_manager.areaDetermination(self.progs)
+		except Exception as e:
+			# エリアが取得できなかった旨は放送局一覧の作成時に表示する
+			self.log.error("Failed to determine area: %r", e)
 
 		self.program_cache_controller = programCacheController.ProgramCacheController(self.radio_manager)
 
@@ -64,6 +81,11 @@ class MainView(BaseView):
 		else:
 			if hasattr(self, 'menu'):
 				self.menu.SetMenuLabel("HIDE_PROGRAMINFO", _("番組情報を表示(&P)"))
+
+		# 再ログイン失敗でセッションが裏で無効化されたとき、UI スレッドで画面に反映する
+		premium.session.add_invalidated_listener(lambda error: wx.CallAfter(self.events.onPremiumInvalidated, error))
+		if auto_login_error is not None:
+			wx.CallAfter(self.events.notifyPremiumAutoLoginFailed, auto_login_error)
 
 	def _ensure_output_directory(self):
 		"""outputディレクトリの存在をチェックし、存在しない場合は作成する"""
@@ -90,9 +112,9 @@ class MainView(BaseView):
 		"""ctrl+f5によるリロード処理のときに呼ばれる"""
 		self.program_info_handler.get_latest_info()
 
-	def get_latest_programList(self):
-		"""f5押したら呼ばれる"""
-		self.radio_manager.get_latest_programList(self.progs)
+	def get_latest_programList(self, on_finished=None):
+		"""f5押したら呼ばれる。更新は別スレッドで行い、終わったら on_finished が呼ばれる"""
+		self.radio_manager.get_latest_programList(self.progs, on_finished=on_finished)
 
 class Menu(BaseMenu):
 	def Apply(self, target):
@@ -137,14 +159,16 @@ class Menu(BaseMenu):
 		})
 
 		self.RegisterMenuCommand(self.hRecordingMenu, "RECORDING_OPTION", subMenu=self.hRecordingFileTypeMenu)
-		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_MP3, "mp3")
-		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_WAV, "wav")
-		self.hRecordingFileTypeMenu.AppendCheckItem(constants.RECORDING_M4A, "m4a")
+		# どれか1つだけが必ず選ばれているよう、ラジオ項目にする
+		self.hRecordingFileTypeMenu.AppendRadioItem(constants.RECORDING_MP3, menuItemsDic.dic["RECORDING_MP3"])
+		self.hRecordingFileTypeMenu.AppendRadioItem(constants.RECORDING_WAV, menuItemsDic.dic["RECORDING_WAV"])
+		self.hRecordingFileTypeMenu.AppendRadioItem(constants.RECORDING_M4A, menuItemsDic.dic["RECORDING_M4A"])
 
 		self.RegisterMenuCommand(self.hOptionMenu, {
 			"OPTION_OPTION": self.parent.events.option,
 			"OPTION_KEY_CONFIG": self.parent.events.keyConfig,
 			"OPTION_STARTUP": self.parent.events.registerStartup,
+			"OPTION_PREMIUM_LOGIN": self.parent.events.premiumLogin,
 		})
 
 		self.RegisterMenuCommand(self.hHelpMenu, {
@@ -152,7 +176,7 @@ class Menu(BaseMenu):
 			"HELP_VERSIONINFO": self.parent.events.version,
 		})
 
-		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F))"))
+		self.hMenuBar.Append(self.hFileMenu, _("ファイル(&F)"))
 		self.hMenuBar.Append(self.hFunctionMenu, _("再生(&P)"))
 		self.hMenuBar.Append(self.hProgramListMenu, _("番組(&A)"))
 		self.hMenuBar.Append(self.hRecordingMenu, _("録音(&r)"))
@@ -160,6 +184,39 @@ class Menu(BaseMenu):
 		self.hMenuBar.Append(self.hHelpMenu, _("ヘルプ(&H)"))
 		target.SetMenuBar(self.hMenuBar)
 	
+	def _iterItems(self, menu):
+		"""サブメニューも含めて、メニュー項目をすべて返す"""
+		for item in menu.GetMenuItems():
+			if item.IsSeparator():
+				continue
+			yield item
+			if item.GetSubMenu():
+				yield from self._iterItems(item.GetSubMenu())
+
+	def GetItemStates(self):
+		"""メニュー項目ごとの {id: (ショートカットを除いた表記, チェック状態, 有効状態)} を返す"""
+		states = {}
+		for menu, title in self.hMenuBar.GetMenus():
+			for item in self._iterItems(menu):
+				checked = item.IsChecked() if item.IsCheckable() else None
+				states[item.GetId()] = (item.GetItemLabel().split("\t")[0], checked, item.IsEnabled())
+		return states
+
+	def RestoreItemStates(self, states):
+		"""GetItemStates で取っておいた状態を、作り直したメニューに戻す。ショートカットは新しいものを使う"""
+		for menu, title in self.hMenuBar.GetMenus():
+			for item in self._iterItems(menu):
+				state = states.get(item.GetId())
+				if state is None:
+					continue
+				label, checked, enabled = state
+				shortcut = item.GetItemLabel().partition("\t")[2]
+				item.SetItemLabel("%s\t%s" % (label, shortcut) if shortcut else label)
+				# ラジオ項目は選ばれていたものを選び直せば、ほかは自動で外れる
+				if checked is not None and item.IsCheckable() and (checked or not item.IsRadio()):
+					item.Check(checked)
+				item.Enable(enabled)
+
 	def OnMenuOpen(self, event):
 		"""メニューが開かれたときに設定に応じてHIDEメニューを無効化"""
 		if globalVars.app.config.getboolean("general", "minimizeOnExit", True):
@@ -175,6 +232,8 @@ class Events(BaseEvents):
 	current_playing_station_id = None
 	current_selected_station_id = None
 	_exit_in_progress = False
+	# radikoプレミアムのログイン・ログアウトの通信を別スレッドで行っている間は True
+	_premium_busy = False
 
 
 	def onUpdateProcess(self, event):
@@ -193,15 +252,31 @@ class Events(BaseEvents):
 		self.hide()
 
 	def hide(self):
+		# 戻したときに同じ場所へフォーカスを戻すため、隠す前のフォーカスを覚えておく
+		self._focus_before_hide = wx.Window.FindFocus()
 		self.parent.hFrame.Hide()
 		self.log.info("Minimized to taskbar.")
 		return
 
 	def show(self):
 		self.parent.hFrame.Show()
-		self.parent.hPanel.SetFocus()
+		self._restore_focus_after_show()
 		self.log.info("Window restored.")
 		return
+
+	def _restore_focus_after_show(self):
+		"""隠す前にフォーカスがあった場所へ戻す。戻せなければ放送局一覧へ"""
+		target = getattr(self, "_focus_before_hide", None)
+		self._focus_before_hide = None
+		# 破棄されたウィンドウは偽になる
+		if target and target.IsShownOnScreen() and target.IsEnabled():
+			target.SetFocus()
+			return
+		radio_manager = getattr(self.parent, "radio_manager", None)
+		if radio_manager is not None and hasattr(radio_manager, "tree"):
+			radio_manager.tree.SetFocus()
+			return
+		self.parent.hPanel.SetFocus()
 	
 	def OnExit(self, event):
 		"""Alt+F4などでウィンドウを閉じようとしたときの処理"""
@@ -233,7 +308,7 @@ class Events(BaseEvents):
 		
 		if active_recorders:
 			recording_count = len(active_recorders)
-			message = f"現在{recording_count}件の録音が進行中です。\nアプリケーションを終了しますか？\n\n録音を続行する場合は「いいえ」を選択してください。"
+			message = _("現在%(count)d件の録音が進行中です。\nアプリケーションを終了しますか？\n\n録音を続行する場合は「いいえ」を選択してください。") % {"count": recording_count}
 			
 			result = yesNoDialog(_("録音中の終了確認"), message)
 			if result == wx.ID_NO:
@@ -245,7 +320,7 @@ class Events(BaseEvents):
 		
 		pending_schedule_count = schedule_manager.count_pending_schedules_for_exit_warning()
 		if pending_schedule_count > 0:
-			message = f"録音予約が{pending_schedule_count}件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？"
+			message = _("録音予約が%(count)d件登録されています。\nアプリケーションを終了すると、すべての予約データが削除されます。\n\n終了しますか？") % {"count": pending_schedule_count}
 			
 			result = yesNoDialog(_("予約データ削除の確認"), message)
 			if result == wx.ID_NO:
@@ -260,6 +335,7 @@ class Events(BaseEvents):
 		self._cleanup_radio_manager()
 		self._cleanup_program_cache()
 		self._cleanup_schedule_data()
+		self._cleanup_premium_session()
 		sd.info(
 			"[Shutdown] Phase 2 complete (program cache sqlite closed; MainLoop ends next)"
 		)
@@ -328,6 +404,14 @@ class Events(BaseEvents):
 		except Exception as e:
 			self.log.error("Schedule data cleanup failed: %s", e, exc_info=True)
 
+	def _cleanup_premium_session(self):
+		"""プレミアム会員セッションからログアウト"""
+		try:
+			# ブラウザでログインしたセッションは再ログインできないため、次回起動時に使えるよう残す
+			premium.session.logout(keep_browser_session=True)
+		except Exception as e:
+			self.log.error("premium logout failed: %s", e, exc_info=True)
+
 
 	def option(self, event):
 		d = settingsDialog.Dialog()
@@ -336,9 +420,13 @@ class Events(BaseEvents):
 
 	def keyConfig(self, event):
 		if self.setKeymap(self.parent.identifier, _("ショートカットキーの設定"), filter=keymap.KeyFilter().SetDefault(False, False)):
+			# メニューを作り直すと表記・チェック・有効状態が初期値に戻るため、作り直す前の状態を引き継ぐ
+			states = self.parent.menu.GetItemStates()
 			self.parent.menu.InitShortcut()
 			self.parent.menu.ApplyShortcut(self.parent.hFrame)
 			self.parent.menu.Apply(self.parent.hFrame)
+			self.parent.menu.RestoreItemStates(states)
+			self.update_premium_menu_label()
 
 	def checkUpdate(self, event):
 		update.checkUpdate()
@@ -389,6 +477,12 @@ class Events(BaseEvents):
 	def onRadioActivated(self, event):
 		if not hasattr(self.parent, 'radio_manager'):
 			return
+		station_id = self.parent.radio_manager.tree.GetItemData(
+			self.parent.radio_manager.tree.GetFocusedItem()
+		)
+		if station_id is None:
+			# ルートや地方ノード。再生中の局情報を書き換えず、再生状態も変えない
+			return
 		if self.parent.radio_manager.is_timefree_playing():
 			result = yesNoDialog(
 				_("聴き逃し再生中"),
@@ -401,32 +495,28 @@ class Events(BaseEvents):
 			except Exception as e:
 				self.log.error(f"Failed to stop timefree before live playback: {e}")
 		
-		self.current_playing_station_id = self.parent.radio_manager.tree.GetItemData(
-			self.parent.radio_manager.tree.GetFocusedItem()
-		)
-		if self.current_playing_station_id is None:
-			return
-		
+		self.current_playing_station_id = station_id
+
 		self.parent.log.info("activated" + self.current_playing_station_id)
-		self._handle_playback_toggle()
+		if not self._handle_playback_toggle():
+			return
 		self._update_program_info_display()
 
 	def _handle_playback_toggle(self):
-		"""再生/停止の切り替え処理"""
+		"""再生/停止の切り替え処理。再生開始に失敗した場合は False"""
 		if not self.playing:
-			if not self._start_playback():
-				return
-		else:
-			self._stop_playback()
+			return self._start_playback()
+		self._stop_playback()
+		return True
 
 	def _start_playback(self):
-		"""再生開始処理"""
+		"""再生開始処理。接続は別スレッドで行い、接続後の失敗は RadioManager がダイアログで知らせる"""
 		try:
 			self.parent.radio_manager.play(self.current_playing_station_id, self.parent.progs)
 			return True
-		except urllib.request.HTTPError as error:
-			errorDialog(_("再生に失敗しました。聴取可能な都道府県内であることをご確認ください。\nこの症状が引き続き発生する場合は、放送局一覧を再描画してからお試しください。"))
-			self.parent.log.error("Playback failure!" + str(error))
+		except Exception as error:
+			self.parent.log.exception("Unexpected playback failure! station=%s", self.current_playing_station_id)
+			errorDialog(_("再生に失敗しました。\n%(detail)s") % {"detail": radioManager.describe_playback_exception(error)})
 			return False
 
 	def _stop_playback(self):
@@ -459,10 +549,11 @@ class Events(BaseEvents):
 				return
 
 		try:
+			# 接続は別スレッドで行い、接続後の失敗は RadioManager がダイアログで知らせる
 			radio_manager.replay_last_timefree()
 		except Exception as e:
-			self.log.warning(f"Failed to replay last timefree stream: {e}")
-			errorDialog(_("聴き逃し再生の再開に失敗しました。\n%(detail)s") % {"detail": str(e)}, self.parent.hFrame)
+			self.log.warning(f"Failed to replay last timefree stream: {e!r}", exc_info=not isinstance(e, radioManager.PlaybackError))
+			errorDialog(_("聴き逃し再生の再開に失敗しました。\n%(detail)s") % {"detail": radioManager.describe_playback_exception(e)}, self.parent.hFrame)
 
 	def _update_program_info_display(self):
 		"""番組情報表示の更新"""
@@ -472,30 +563,10 @@ class Events(BaseEvents):
 		if not self.displaying:
 			return
 		
-		handler = self.parent.program_info_handler
-		handler.ensure_program_info_ui()
-		handler.nplist.Enable()
-		handler.nplist.clear()
-		self.show_program_info()
-		self.show_onair_music()
-		self.show_description()
+		# 番組情報は別スレッドで取得し、取得できたら表示する
+		self.parent.program_info_handler.show_live_program_info(self.current_playing_station_id)
 
 		self.parent.menu.hMenuBar.Enable(menuItemsStore.getRef("HIDE_PROGRAMINFO"), True)
-
-	def show_description(self):
-		"""番組の説明を表示"""
-		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_description(self.current_playing_station_id)
-
-	def show_program_info(self):
-		"""番組情報を表示"""
-		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_program_info(self.current_playing_station_id)
-
-	def show_onair_music(self):
-		"""オンエア曲情報を表示"""
-		if hasattr(self.parent, 'program_info_handler'):
-			self.parent.program_info_handler.show_onair_music(self.current_playing_station_id)
 
 	def onRadioSelected(self, event):
 		if not hasattr(self.parent, 'radio_manager'):
@@ -527,11 +598,11 @@ class Events(BaseEvents):
 		"""リロードを処理する"""
 		self.parent.get_latest_info()
 
-	def onUpdateProgram(self, event):
-		"""最新の番組一覧に更新"""
+	def onUpdateProgram(self, event, on_finished=None):
+		"""最新の番組一覧に更新（on_finished は更新が終わったときに呼ばれる）"""
 		if hasattr(self.parent, 'radio_manager'):
 			self.parent.radio_manager.stop()
-		self.parent.get_latest_programList()
+		self.parent.get_latest_programList(on_finished=on_finished)
 
 	def onRecordMenuSelect(self, event):
 		"""録音品質メニューの動作"""
@@ -588,6 +659,169 @@ class Events(BaseEvents):
 		if hasattr(self.parent, 'volume_handler'):
 			self.parent.volume_handler.onVolumeChanged(event)
 
+	def update_premium_menu_label(self):
+		"""ログイン状態に応じてプレミアムメニューの表記を切り替える"""
+		if premium.session.is_areafree():
+			self.parent.menu.SetMenuLabel("OPTION_PREMIUM_LOGIN", _("radikoプレミアムからログアウト(&L)"))
+		else:
+			self.parent.menu.SetMenuLabel("OPTION_PREMIUM_LOGIN")
+
+	def premiumLogin(self, event):
+		"""radikoプレミアムへのログイン/ログアウト"""
+		config = globalVars.app.config
+		if self._premium_busy:
+			# ログイン・ログアウトの通信中
+			globalVars.app.say(_("処理中です。しばらくお待ちください"), interrupt=True)
+			return
+		if premium.session.is_areafree():
+			result = yesNoDialog(
+				_("確認"),
+				_("radikoプレミアムからログアウトしますか？\n保存されている認証情報も削除されます。"),
+			)
+			if result != wx.ID_YES:
+				return
+			# ログアウトの通信には最大で10秒ほどかかるため、別スレッドで行い画面を止めない
+			self._premium_busy = True
+			globalVars.app.say(_("ログアウトしています"), interrupt=True)
+			self._run_in_background(premium.session.logout, self._finish_premium_logout, "PremiumLogout")
+			return
+
+		d = premiumLoginDialog.Dialog(
+			config[premium.CONFIG_SECTION]["mail"],
+			config.getboolean(premium.CONFIG_SECTION, "saveLogin", True),
+		)
+		d.Initialize()
+		if d.Show() == wx.ID_CANCEL:
+			return
+		# パスワードでのログインはダイアログ内で済ませている
+		method, mail, password, save = d.GetValue()
+		if method == premium.METHOD_BROWSER:
+			self._premiumBrowserLogin(
+				lambda radiko_session: self._complete_premium_login(method, mail, password, save, radiko_session)
+			)
+			return
+		self._complete_premium_login(method, mail, password, save, None)
+
+	def _run_in_background(self, work, on_done, name):
+		"""work() を別スレッドで実行し、on_done(例外または None) を UI スレッドで呼ぶ"""
+		def run():
+			try:
+				work()
+				error = None
+			except Exception as e:
+				error = e
+			wx.CallAfter(on_done, error)
+		threading.Thread(target=run, name=name, daemon=True).start()
+
+	def _finish_premium_logout(self, error):
+		"""（UI スレッド）ログアウトの通信が終わったときに呼ばれる"""
+		self._premium_busy = False
+		if error is not None:
+			# ログイン状態は通信の前に消している。サーバーへの通知に失敗してもログアウトは済んでいる
+			self.log.warning("premium logout request failed: %s", error)
+		config = globalVars.app.config
+		premium.clear_credentials(config)
+		config.write()
+		self.update_premium_menu_label()
+		# 番組検索用キャッシュの収集範囲は、新しい一覧（radio_manager.stid）ができてから切り替える
+		self.onUpdateProgram(None, on_finished=self._refresh_program_cache_scope)
+		dialog(_("ログアウト"), _("ログアウトしました。お住まいのエリアの放送局一覧に戻ります。"))
+
+	def _complete_premium_login(self, method, mail, password, save, radiko_session):
+		"""ログインできたあと、ログイン情報を保存して放送局一覧を作り直す"""
+		config = globalVars.app.config
+		if not save:
+			premium.clear_credentials(config)
+			config[premium.CONFIG_SECTION]["method"] = method
+			config[premium.CONFIG_SECTION]["mail"] = mail
+		elif method == premium.METHOD_BROWSER:
+			premium.save_browser_session(config, radiko_session)
+		else:
+			premium.save_credentials(config, mail, password)
+		# 次回ログインダイアログを開いたときのチェック状態として覚えておく
+		config[premium.CONFIG_SECTION]["saveLogin"] = save
+		config.write()
+		self.update_premium_menu_label()
+		# 番組検索用キャッシュの収集範囲は、全国の放送局一覧（radio_manager.stid）ができてから切り替える
+		self.onUpdateProgram(None, on_finished=self._notify_areafree_enabled)
+
+	def _notify_areafree_enabled(self):
+		"""ログイン後、放送局一覧を作り直し終えたときに呼ばれる"""
+		message = _("エリアフリーが有効になりました。全国の放送局を聴取できます。")
+		if self._refresh_program_cache_scope():
+			message += "\n" + _("番組検索用に全国の番組データをバックグラウンドで取得します。完了までしばらく時間がかかります。")
+		dialog(_("ログイン"), message)
+
+	def _premiumBrowserLogin(self, on_success):
+		"""埋め込みブラウザでログインしてもらい、セッションを検証する。成功すれば on_success(radiko_session) を呼ぶ"""
+		d = premiumBrowserLoginDialog.Dialog()
+		d.Initialize()
+		if d.Show() == wx.ID_CANCEL:
+			return
+		radiko_session, areafree = d.GetValue()
+		# セッションの検証の通信には最大で数十秒かかるため、別スレッドで行い画面を止めない
+		self._premium_busy = True
+		globalVars.app.say(_("ログインしています"), interrupt=True)
+
+		def on_done(error):
+			self._premium_busy = False
+			if error is None:
+				on_success(radiko_session)
+				return
+			if isinstance(error, premium.PremiumAuthError) and error.kind == premium.PremiumAuthError.BLOCKED:
+				# 既にブラウザでログインしているため、ブラウザでのログインを勧める説明は使わない
+				errorDialog(_("ログイン状態の確認が、サーバー側の不正アクセス対策によって拒否されました。\n時間をおいて再度お試しください。"))
+			elif isinstance(error, premium.PremiumAuthError):
+				errorDialog(premium.describe_auth_error(error))
+			else:
+				self.log.error(f"Unexpected error during premium browser login: {error!r}")
+				errorDialog(_("ログインに失敗しました。") + f"\n{error}")
+
+		self._run_in_background(
+			lambda: premium.session.login_with_session(radiko_session, assume_areafree=areafree),
+			on_done,
+			"PremiumBrowserLogin",
+		)
+
+	def onPremiumInvalidated(self, error=None):
+		"""再ログイン失敗やセッション切れでプレミアムのセッションが無効化されたときに UI スレッドで呼ばれる"""
+		self.update_premium_menu_label()
+		if premium.session.is_areafree():
+			# 通知が届くまでの間にユーザーが再ログインした
+			return
+		self.log.warning("premium session invalidated in background; reloading station list")
+		radio_manager = getattr(self.parent, "radio_manager", None)
+		if radio_manager and radio_manager.station_list_areafree:
+			# 再生は止めずに、エリア内の放送局一覧へ作り直す。
+			# 番組検索用キャッシュの収集範囲は、新しい一覧（radio_manager.stid）ができてから切り替える
+			self.parent.get_latest_programList(on_finished=self._refresh_program_cache_scope)
+		if error is not None and error.kind == premium.PremiumAuthError.SESSION_EXPIRED:
+			# ブラウザでログインしたセッションは自動で再ログインできないため、保存済みのセッションも消す
+			config = globalVars.app.config
+			premium.clear_saved_session(config)
+			config.write()
+			errorDialog(_("radikoプレミアムのセッションが切れました。再度ログインを行ってください。\nお住まいのエリアの放送局一覧に戻ります。エリアフリーを使うには、オプションメニューからログインしてください。"))
+			return
+		errorDialog(_("radikoプレミアムのログインが無効になりました。お住まいのエリアの放送局一覧に戻ります。\nエリアフリーを使うには、オプションメニューから再度ログインしてください。"))
+
+	def notifyPremiumAutoLoginFailed(self, error):
+		"""起動時の自動ログインに失敗したことを知らせる"""
+		errorDialog(
+			_("radikoプレミアムへの自動ログインに失敗しました。\n%(detail)s\n\nエリアフリーを使うには、オプションメニューから再度ログインしてください。")
+			% {"detail": premium.describe_auth_error(error)}
+		)
+
+	def _refresh_program_cache_scope(self):
+		"""ログイン状態に合わせて番組検索用キャッシュの収集範囲を切り替える"""
+		controller = getattr(self.parent, "program_cache_controller", None)
+		if not controller:
+			return False
+		try:
+			return controller.on_station_scope_changed()
+		except Exception as e:
+			self.log.error("Failed to refresh program cache scope: %s", e, exc_info=True)
+			return False
+
 	def onProgramSearch(self, event):
 		"""番組検索ダイアログを表示"""
 
@@ -595,9 +829,9 @@ class Events(BaseEvents):
 		search_dialog.Initialize()
 		search_dialog.Show()
 
-	def registerStartup(self, event):
-		"""Windows起動時の自動起動を設定/解除する"""
-		target = os.path.join(
+	def _startup_shortcut_path(self):
+		"""Windows起動時の自動起動に使うショートカットのパス"""
+		return os.path.join(
 			os.environ["appdata"],
 			"Microsoft",
 			"Windows",
@@ -606,14 +840,27 @@ class Events(BaseEvents):
 			"Startup",
 			"%s.lnk" % constants.APP_NAME
 		)
+
+	def update_startup_menu_label(self):
+		"""自動起動の設定状態に応じてメニューの表記を切り替える"""
+		if os.path.exists(self._startup_shortcut_path()):
+			self.parent.menu.SetMenuLabel("OPTION_STARTUP", _("Windows起動時の自動起動を無効化(&W)"))
+		else:
+			self.parent.menu.SetMenuLabel("OPTION_STARTUP")
+
+	def registerStartup(self, event):
+		"""Windows起動時の自動起動を設定/解除する"""
+		target = self._startup_shortcut_path()
 		if os.path.exists(target):
 			d = yesNoDialog(_("確認"), _("Windows起動時の自動起動はすでに設定されています。設定を解除しますか？"))
 			if d == wx.ID_YES:
 				os.remove(target)
+				self.update_startup_menu_label()
 				dialog(_("完了"), _("Windows起動時の自動起動を無効化しました。"))
 			return
 		ws = win32com.client.Dispatch("wscript.shell")
 		shortCut = ws.CreateShortcut(target)
 		shortCut.TargetPath = globalVars.app.getAppPath()
 		shortCut.Save()
+		self.update_startup_menu_label()
 		dialog(_("完了"), _("Windows起動時の自動起動を設定しました。"))

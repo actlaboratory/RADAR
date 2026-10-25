@@ -84,20 +84,22 @@ class ProgramCacheManager:
         
         self.conn.commit()
     
-    def update_programs_data(self, programs_data, date):
-        """番組データの一括更新"""
+    def replace_station_programs(self, station_id, station_name, programs_by_date):
+        """1放送局分の番組を日付ごとに置き換える（programs_by_date: {日付: [番組]}）"""
         with self.lock:
             try:
                 cursor = self.conn.cursor()
                 
-                # 既存データを削除（指定日付のデータのみ）
-                cursor.execute("DELETE FROM programs WHERE date = ?", (date,))
+                dates = list(programs_by_date.keys())
+                placeholders = ",".join("?" for _ in dates)
+                cursor.execute(
+                    f"DELETE FROM programs WHERE station_id = ? AND date IN ({placeholders})",
+                    [station_id] + dates,
+                )
                 
-                # 新しいデータを挿入
                 insert_data = []
-                for station_id, station_data in programs_data.items():
-                    station_name = station_data.get('name', '')
-                    for program in station_data.get('programs', []):
+                for date, programs in programs_by_date.items():
+                    for program in programs:
                         insert_data.append((
                             station_id,
                             station_name,
@@ -115,19 +117,30 @@ class ProgramCacheManager:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', insert_data)
                 
-                # メタデータを更新
-                cursor.execute('''
-                    INSERT OR REPLACE INTO cache_metadata (key, value, updated_at)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                ''', ('last_update', datetime.datetime.now().strftime('%Y%m%d')))
-                
                 self.conn.commit()
-                self.log.info(f"Updated {len(insert_data)} programs for date {date}")
+                self.log.debug(f"Updated {len(insert_data)} programs for station {station_id} ({len(dates)} days)")
                 
             except sqlite3.Error as e:
-                self.log.error(f"Failed to update programs data: {e}")
+                self.log.error(f"Failed to update programs for station {station_id}: {e}")
                 self.conn.rollback()
                 raise
+
+    def delete_programs_except_stations(self, station_ids):
+        """指定した放送局以外の番組を削除（ログアウト等で対象外になった局のデータを消す）"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                placeholders = ",".join("?" for _ in station_ids)
+                cursor.execute(f"DELETE FROM programs WHERE station_id NOT IN ({placeholders})", list(station_ids))
+                deleted_count = cursor.rowcount
+                self.conn.commit()
+                if deleted_count:
+                    self.log.info(f"Deleted {deleted_count} programs of stations no longer listed")
+                return deleted_count
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to delete programs of unlisted stations: {e}")
+                self.conn.rollback()
+                return 0
     
     def search_programs(self, search_criteria):
         """番組検索実行"""
@@ -273,6 +286,32 @@ class ProgramCacheManager:
                 self.log.error(f"Failed to get last update time: {e}")
                 return None
     
+    def get_metadata(self, key):
+        """キャッシュメタデータの値を取得"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT value FROM cache_metadata WHERE key = ?", (key,))
+                result = cursor.fetchone()
+                return result[0] if result else None
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to get metadata {key}: {e}")
+                return None
+
+    def set_metadata(self, key, value):
+        """キャッシュメタデータの値を保存"""
+        with self.lock:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO cache_metadata (key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                ''', (key, value))
+                self.conn.commit()
+            except sqlite3.Error as e:
+                self.log.error(f"Failed to set metadata {key}: {e}")
+                self.conn.rollback()
+
     def cleanup_old_data(self, days=7):
         """古いデータの削除"""
         with self.lock:

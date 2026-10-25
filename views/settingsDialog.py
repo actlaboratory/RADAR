@@ -95,9 +95,9 @@ class Dialog(BaseDialog):
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.tab,None,wx.VERTICAL,space=20,label=_("ネットワーク"),style=wx.ALL,margin=20)
 		self.update = creator.checkbox(_("起動時に更新を確認(&U)"))
 		self.usemanualsetting = creator.checkbox(_("プロキシサーバーの情報を手動で設定する(&M)"), self.checkBoxStatusChanged)
-		self.server, static = creator.inputbox(_("サーバーURL"))
+		self.server, static = creator.inputbox(_("サーバーURL(&S)"))
 		self.server.hideScrollBar(wx.HORIZONTAL)
-		self.port, static = creator.spinCtrl(_("ポート番号"), 0, 65535, defaultValue=8080)
+		self.port, static = creator.spinCtrl(_("ポート番号(&P)"), 0, 65535, defaultValue=8080)
 
 		# buttons
 		creator=views.ViewCreator.ViewCreator(self.viewMode,self.panel,self.sizer,wx.HORIZONTAL,style=wx.ALIGN_RIGHT)
@@ -132,7 +132,7 @@ class Dialog(BaseDialog):
 			folder_selector = FolderSelector(self.wnd)
 			is_valid, error_message = folder_selector.validate_folder_path(output_dir)
 			if not is_valid:
-				simpleDialog.errorDialog(f"録音出力先フォルダが無効です: {error_message}")
+				simpleDialog.errorDialog(_("録音出力先フォルダが無効です: %(detail)s") % {"detail": error_message})
 				return
 		
 		result = self._save()
@@ -196,7 +196,7 @@ class Dialog(BaseDialog):
 			if is_valid:
 				self.output_directory.SetValue(selected_path)
 			else:
-				simpleDialog.errorDialog(f"選択されたフォルダが無効です: {error_message}")
+				simpleDialog.errorDialog(_("選択されたフォルダが無効です: %(detail)s") % {"detail": error_message})
 	
 	def browseDir(self, event):
 		target = self.dir

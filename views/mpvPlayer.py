@@ -1,4 +1,5 @@
 import atexit
+import itertools
 import json
 import os
 import subprocess
@@ -9,6 +10,8 @@ from logging import getLogger
 
 import constants
 import globalVars
+import log_util
+import process_job
 from views.audio_output_devices import getDeviceList
 
 
@@ -60,6 +63,7 @@ def _spawn_proxy_env():
     return env
 
 
+
 try:
     from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
     HAS_PYCAW = True
@@ -104,7 +108,11 @@ class MPVAudioPlayer:
         self._last_error = ""
         self._lock = threading.RLock()
         self._ipc_pipe_name = f"radar_mpv_{uuid.uuid4().hex}" if os.name == "nt" else ""
+        # get_property の応答を見分ける番号
+        self._ipc_request_ids = itertools.count(1)
         self._shutdown_done = False
+        # 音量/デバイス変更で再起動するとき、再生位置に合わせたソースを返すコールバック
+        self._restart_source_provider = None
         self._load_device_from_config()
 
     def _load_device_from_config(self):
@@ -134,6 +142,11 @@ class MPVAudioPlayer:
     def setHttpHeaders(self, headers):
         with self._lock:
             self._http_headers = dict(headers or {})
+
+    def setRestartSourceProvider(self, provider):
+        """再起動時に呼ぶ provider() -> (source, headers, start_sec) または None を登録する。None で解除。"""
+        with self._lock:
+            self._restart_source_provider = provider
 
     def setVolume(self, value):
         with self._lock:
@@ -184,10 +197,12 @@ class MPVAudioPlayer:
             self._nonseekable_input = bool(enabled)
 
     def play(self):
+        """再生を開始する。起動直後に mpv が終了しなければ True（失敗理由は getLastError()）"""
         with self._lock:
             if not self._source:
-                return
-            self._start_locked()
+                self._last_error = "no source"
+                return False
+            return self._start_locked()
 
     def stop(self):
         with self._lock:
@@ -209,6 +224,48 @@ class MPVAudioPlayer:
         with self._lock:
             return self._last_error
 
+    def getProperty(self, name):
+        """mpv IPC でプロパティの値を取得する。取得できなければ None。
+
+        mpv が応答しないと戻らないため、UI スレッドからは呼ばないこと。
+        応答を待つ間はロックを持たない（ほかの操作を止めないため）。
+        """
+        with self._lock:
+            if not self._ipc_pipe_name or not self._is_running_locked():
+                return None
+            path = self._ipc_pipe_path()
+        request_id = next(self._ipc_request_ids)
+        request = json.dumps({"command": ["get_property", name], "request_id": request_id}) + "\n"
+        try:
+            with open(path, "r+b", buffering=0) as pipe:
+                pipe.write(request.encode("utf-8"))
+                buf = b""
+                while True:
+                    chunk = pipe.read(4096)
+                    if not chunk:
+                        return None
+                    buf += chunk
+                    # 応答の前にイベントの通知が届くことがあるため、番号が一致する行を探す
+                    while b"\n" in buf:
+                        line, buf = buf.split(b"\n", 1)
+                        try:
+                            message = json.loads(line)
+                        except ValueError:
+                            continue
+                        if message.get("request_id") == request_id:
+                            if message.get("error") != "success":
+                                return None
+                            return message.get("data")
+        except OSError:
+            return None
+
+    def getReturnCode(self):
+        """mpv が自然終了した場合の終了コード。実行中・未起動なら None。"""
+        with self._lock:
+            if self._process is None:
+                return None
+            return self._process.poll()
+
     def _is_active_device_id(self, device_id):
         for d in getDeviceList():
             if d["id"] == device_id:
@@ -220,28 +277,46 @@ class MPVAudioPlayer:
             return ""
         return rf"\\.\pipe\{self._ipc_pipe_name}"
 
+    def _http_header_list(self):
+        return [f"{k}: {v}" for k, v in self._http_headers.items() if v]
+
     def _build_command(self):
-        lavf_opts = "reconnect=1,reconnect_streamed=1,reconnect_delay_max=2"
+        # radiko の medialist は "Range: bytes=0-" 付きで要求すると中身の代わりに "200 OK" だけを返す。
+        # HLS 側の Range 要求を止め (http_seekable=0)、取り直しのための reconnect_streamed は使わない
+        # （EOF のたびに再接続を繰り返し、再生開始・シーク・playlist 更新が毎回約2秒遅れていた）。
+        lavf_opts = "reconnect=1,reconnect_on_network_error=1,reconnect_delay_max=2"
         if self._nonseekable_input:
-            lavf_opts += ",http_seekable=0,seekable=0"
+            lavf_opts += ",seekable=0"
         cmd = [
             constants.MPV_PATH,
+            # 起動短縮: ユーザー設定ファイルや音声再生に不要な内蔵スクリプトを読み込まない
+            "--no-config",
+            "--ytdl=no",
+            "--load-scripts=no",
+            "--load-stats-overlay=no",
+            "--load-console=no",
+            "--load-auto-profiles=no",
+            "--load-select=no",
+            "--load-positioning=no",
+            "--load-commands=no",
+            "--osc=no",
             "--no-video",
             "--force-window=no",
             "--no-terminal",
             "--keep-open=no",
             "--really-quiet",
             "--network-timeout=15",
+            f"--user-agent={constants.BROWSER_USER_AGENT}",
             "--cache=yes",
             "--cache-secs=20",
             "--demuxer-readahead-secs=20",
             f"--stream-lavf-o={lavf_opts}",
+            "--demuxer-lavf-o=http_seekable=0",
             self._source,
         ]
-        if self._http_headers:
-            header_str = ",".join([f"{k}: {v}" for k, v in self._http_headers.items() if v])
-            if header_str:
-                cmd.insert(-1, f"--http-header-fields={header_str}")
+        header_list = self._http_header_list()
+        if header_list:
+            cmd.insert(-1, f"--http-header-fields={','.join(header_list)}")
         proxy_url = _mpv_proxy_url()
         if proxy_url:
             cmd.insert(-1, f"--http-proxy={proxy_url}")
@@ -252,36 +327,60 @@ class MPVAudioPlayer:
             cmd.insert(-1, f"--audio-device=wasapi/{self._device_id}")
         if self._start_position_sec > 0:
             cmd.insert(-1, f"--start={self._start_position_sec}")
+            # シーク不可の配信でも、読み込んだ範囲を読み飛ばして開始位置から再生できるようにする
+            cmd.insert(-1, "--force-seekable=yes")
         return cmd
 
-    def _start_locked(self):
-        self._stop_locked()
-        self._last_error = ""
+    def restartWithSource(self, source, headers, start_sec=0):
+        """シーク用の高速再起動。旧プロセスの正常終了や起動確認を待たずに新しいソースで再生する。
 
-        startupinfo = None
-        creationflags = 0
-        if os.name == "nt":
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-            creationflags = subprocess.CREATE_NO_WINDOW
+        start_sec はソースの先頭から読み飛ばす秒数。
+        起動直後の失敗は検知しないため、呼び出し側で isPlaying() を監視すること。
+        プロセスを起動できたら True。
+        """
+        with self._lock:
+            self._source = source
+            self._http_headers = dict(headers or {})
+            self._start_position_sec = max(0, int(start_sec or 0))
+            # 起動時の --start が残らないよう、開始位置は 0 でも毎回指定する
+            loadfile = [
+                "loadfile", self._source, "replace", -1,
+                f"start={self._start_position_sec},force-seekable=yes",
+            ]
+            # 起動中の mpv があれば、プロセスを作り直さず loadfile で差し替える（最速）。
+            # 読み込みに失敗すると mpv は終了する(--idle=no)ため、呼び出し側の監視で検知できる。
+            if self._is_running_locked() and self._send_mpv_ipc_commands_locked(
+                [
+                    ["set_property", "http-header-fields", self._http_header_list()],
+                    loadfile,
+                ],
+                retries=4,
+                delay_sec=0.005,
+            ):
+                return True
+            self._kill_locked()
+            if not self._spawn_locked():
+                return False
+            self._apply_runtime_volume_async()
+            return True
 
-        try:
-            self._log.debug("Starting mpv command: %s", " ".join(self._build_command()))
-            self._process = subprocess.Popen(
-                self._build_command(),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                startupinfo=startupinfo,
-                creationflags=creationflags,
-                env=_spawn_proxy_env(),
-            )
-        except Exception as e:
-            self._last_error = str(e)
-            self._process = None
-            self._log.error("Failed to start mpv: %s", e)
+    def _kill_locked(self):
+        """終了処理を待たずに mpv を即座に終了させる"""
+        proc = self._process
+        self._process = None
+        if proc is None or proc.poll() is not None:
             return
+        try:
+            proc.kill()
+            proc.wait(timeout=0.5)
+        except Exception as e:
+            self._log.warning("mpv kill failed pid=%s: %s", proc.pid, e)
+
+    def _start_locked(self):
+        """mpv を起動し、起動直後に終了していなければ True"""
+        self._stop_locked()
+        if not self._spawn_locked():
+            return False
 
         time.sleep(0.6)
         if self._process and self._process.poll() is not None:
@@ -293,18 +392,53 @@ class MPVAudioPlayer:
                 self._last_error = f"mpv exited immediately (returncode={return_code})"
             self._log.error("mpv exited immediately: %s", self._last_error)
             self._process = None
-            return
+            return False
 
         if self._device_id:
             time.sleep(0.8)
-            if self._process.poll() is not None:
+            if self._process is None or self._process.poll() is not None:
                 stderr = self._read_process_stderr_locked()
                 self._last_error = stderr.strip() or "mpv exited after device selection"
                 self._log.error("mpv exited after device selection: %s", self._last_error[:500])
                 self._process = None
-                return
+                return False
 
         self._apply_runtime_volume_async()
+        return True
+
+    def _spawn_locked(self):
+        """mpv プロセスを起動する。起動できたら True。"""
+        self._last_error = ""
+
+        startupinfo = None
+        creationflags = 0
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            creationflags = subprocess.CREATE_NO_WINDOW
+
+        try:
+            cmd = self._build_command()
+            self._log.debug("Starting mpv command: %s", log_util.mask_command(cmd))
+            self._process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+                env=_spawn_proxy_env(),
+            )
+        except Exception as e:
+            self._last_error = str(e)
+            self._process = None
+            self._log.error("Failed to start mpv: %s", e)
+            return False
+        # 本体が強制終了されても mpv が残らないようにする
+        process_job.bind_to_current_process(self._process)
+        self._log.debug("mpv started: pid=%s", self._process.pid)
+        return True
 
     def _stop_locked(self):
         if not self._is_running_locked():
@@ -357,6 +491,15 @@ class MPVAudioPlayer:
     def _restart_locked(self):
         if not self._source:
             return
+        if self._restart_source_provider:
+            try:
+                restart_source = self._restart_source_provider()
+            except Exception as e:
+                self._log.warning("restart source provider failed: %s", e)
+                restart_source = None
+            if restart_source:
+                self._source, headers, self._start_position_sec = restart_source
+                self._http_headers = dict(headers or {})
         self._stop_locked()
         time.sleep(0.05)
         self._start_locked()
@@ -380,14 +523,18 @@ class MPVAudioPlayer:
         return self._send_mpv_ipc_command_locked(["set_property", "volume", vol])
 
     def _send_mpv_ipc_command_locked(self, command, retries=30, delay_sec=0.05):
+        return self._send_mpv_ipc_commands_locked([command], retries, delay_sec)
+
+    def _send_mpv_ipc_commands_locked(self, commands, retries=30, delay_sec=0.05):
+        """複数コマンドを1接続で送る（mpv は接続ごとに処理するため、順序を保証するには同一接続が必要）"""
         if not self._ipc_pipe_name or not self._is_running_locked():
             return False
         path = self._ipc_pipe_path()
-        line = json.dumps({"command": command}) + "\n"
+        data = "".join(json.dumps({"command": c}) + "\n" for c in commands)
         for _ in range(max(1, int(retries))):
             try:
                 with open(path, "w", encoding="utf-8", newline="\n") as pipe:
-                    pipe.write(line)
+                    pipe.write(data)
                 return True
             except OSError:
                 time.sleep(max(0.0, float(delay_sec)))

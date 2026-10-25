@@ -330,7 +330,7 @@ msgid ""
 msgstr ""
 
 #: views\main.py:69
-msgid "ファイル(&F))"
+msgid "ファイル(&F)"
 msgstr ""
 
 #: views\main.py:71
@@ -418,11 +418,11 @@ msgid "プロキシサーバーの情報を手動で設定する(&M)"
 msgstr ""
 
 #: views\settingsDialog.py:85
-msgid "サーバーURL"
+msgid "サーバーURL(&S)"
 msgstr ""
 
 #: views\settingsDialog.py:87
-msgid "ポート番号"
+msgid "ポート番号(&P)"
 msgstr ""
 
 #: views\updateDialog.py:23

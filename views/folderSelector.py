@@ -70,15 +70,15 @@ class FolderSelector:
             tuple: (is_valid, error_message)
         """
         if not folder_path:
-            return False, "フォルダパスが指定されていません"
+            return False, _("フォルダパスが指定されていません")
         
         # パスが存在するかチェック
         if not os.path.exists(folder_path):
-            return False, "指定されたフォルダが存在しません"
+            return False, _("指定されたフォルダが存在しません")
         
         # ディレクトリかどうかチェック
         if not os.path.isdir(folder_path):
-            return False, "指定されたパスはフォルダではありません"
+            return False, _("指定されたパスはフォルダではありません")
         
         # 書き込み権限があるかチェック
         try:
@@ -87,7 +87,7 @@ class FolderSelector:
                 f.write("test")
             os.remove(test_file)
         except (PermissionError, OSError) as e:
-            return False, f"フォルダへの書き込み権限がありません: {str(e)}"
+            return False, _("フォルダへの書き込み権限がありません: %(detail)s") % {"detail": e}
         
         # システムディレクトリかどうかチェック（Windows）
         if os.name == 'nt':
@@ -100,7 +100,7 @@ class FolderSelector:
             
             for sys_dir in system_dirs:
                 if folder_path.lower().startswith(sys_dir.lower()):
-                    return False, "システムディレクトリは選択できません"
+                    return False, _("システムディレクトリは選択できません")
         
         return True, ""
     
