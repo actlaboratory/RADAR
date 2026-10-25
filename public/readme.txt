@@ -1,7 +1,7 @@
 		Radio Audio Data Archive and Recorder -RADAR-
 
-	バージョン:　　ver.1.1.0
-	リリース:　　　2026-06-26
+	バージョン:　　ver.1.2.0
+	リリース:　　　2026-10-26
 	開発・配布元:　ACT Laboratory　(https://actlab.org/)
 	主要開発者:　　ACT Laboratory,mayumiPc
 　　ソフト種別:　　オープンソースソフトウェア　(GitHubリポジトリ:https://github.com/actlaboratory/RADAR)
